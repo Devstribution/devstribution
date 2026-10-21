@@ -43,7 +43,11 @@ fn init_dev_pack_verify() {
     );
     let result: serde_json::Value = serde_json::from_str(stdout(&run).trim()).unwrap();
     let greeting = result["outputs"]["greeting"].as_str().unwrap();
-    assert_eq!(fs::read_to_string(greeting).unwrap(), "Hello, Ada!\n");
+    // Text mode writes CRLF on Windows.
+    assert_eq!(
+        fs::read_to_string(greeting).unwrap().replace("\r\n", "\n"),
+        "Hello, Ada!\n"
+    );
     assert!(
         !app.join("__pycache__").exists(),
         "dev must not write into the app folder"
