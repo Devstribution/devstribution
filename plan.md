@@ -1,282 +1,320 @@
-# Piano di progetto: devstribution
+# Project plan: devstribution
 
-## Problema
-Per semplificare e velocizzare processi aziendali, spesso la soluzione più rapida è uno script Python. Il problema è distribuirlo ad aziende e clienti:
-- `.exe` / `.bat` non firmati vengono bloccati da Microsoft (SmartScreen, antivirus).
-- L'utente finale non è in grado di installare Python, dipendenze, ecc.
+## Problem
+To simplify and speed up business processes, the quickest solution is often a Python script. The problem is distributing it to companies and clients:
+- Unsigned `.exe` / `.bat` files are blocked by Microsoft (SmartScreen, antivirus).
+- End users cannot install Python, dependencies, etc.
 
-**Obiettivo:** una piattaforma che semplifichi la ricezione e l'utilizzo di piccoli applicativi, senza `.exe`/`.bat` da distribuire uno per uno.
+**Goal:** a platform that makes it simple to receive and use small applications, without `.exe`/`.bat` files distributed one by one.
 
-## Requisiti emersi
-| Tema | Decisione |
+## Requirements
+| Topic | Decision |
 |---|---|
-| Utenti finali | Chiunque (colleghi e clienti esterni, non tecnici) |
-| Casi d'uso tipici | Interrogare file Excel, SAP, API |
-| Dati | Devono restare **locali** sul PC dell'utente |
-| Eccezione | Pacchetti diagnostici per chi ha sviluppato la app, solo su consenso dell'utente |
-| Modello | Gratuito e open source, inizialmente su GitHub |
-| Sostegno | Donazioni (PayPal / Patreon / Ko-fi / GitHub Sponsors) |
+| End users | Anyone (colleagues and external clients, non-technical) |
+| Typical use cases | Querying Excel files, SAP, APIs |
+| Data | Must stay **local** on the user's PC |
+| Exception | Diagnostic packages for the app's developer, only with the user's consent |
+| Model | Free and open source, initially on GitHub |
+| Support | Donations (PayPal / Patreon / Ko-fi / GitHub Sponsors) |
 
-## Opzioni valutate
-| Approccio | Esito |
+## Options evaluated
+| Approach | Outcome |
 |---|---|
-| A. Server-side con UI generata | Scartato: i dati lascerebbero il PC dell'utente, costi di infrastruttura |
-| B. Nel browser (Pyodide/WASM) | Insufficiente da solo: SAP (COM/RFC) e molte API (CORS) non raggiungibili. Utile solo per tool basati su Excel, eventuale modalità extra |
-| C. Launcher locale firmato | **Scelto**: accesso a SAP, filesystem, rete interna; dati locali |
+| A. Server-side with generated UI | Rejected: data would leave the user's PC, infrastructure costs |
+| B. In the browser (Pyodide/WASM) | Not enough on its own: SAP (COM/RFC) and many APIs (CORS) are unreachable. Useful only for Excel-based tools, possible extra mode |
+| C. Signed local launcher | **Chosen**: access to SAP, filesystem, internal network; data stays local |
 
-Alternative esistenti da studiare: Windmill, Streamlit, Gradio, NiceGUI, marimo / stlite / PyScript, Retool, Appsmith, **PyApp** (exe che al primo avvio scarica Python con `uv`), **Briefcase**.
+Existing alternatives to study: Windmill, Streamlit, Gradio, NiceGUI, marimo / stlite / PyScript, Retool, Appsmith, **PyApp** (exe that downloads Python with `uv` on first run), **Briefcase**.
 
-**Differenziazione**: nessuna di queste unisce (1) un solo launcher firmato per molte app, (2) form generato dal manifest senza scrivere UI, (3) modello di fiducia per autori gestibile dall'IT senza server.
+**Differentiation**: none of these combines (1) a single signed launcher for many apps, (2) a form generated from the manifest without writing UI, (3) an author trust model that IT can manage without a server.
 
-## Rischi principali (da verificare per primi)
-| Rischio | Impatto | Mitigazione |
+## Main risks (to verify first)
+| Risk | Impact | Mitigation |
 |---|---|---|
-| **AppLocker / WDAC** bloccano eseguibili in cartelle scrivibili dall'utente (`%LOCALAPPDATA%`). I Python di `uv` (python-build-standalone) non hanno firma Authenticode; anche il `python.exe` dei venv è una copia dentro la cartella del venv | Le app non partono proprio nei PC aziendali, il target principale | **Fase 0**: test su un PC aziendale bloccato reale. Piano B: modalità per-macchina (vedi sotto) |
-| **SignPath Foundation** chiede progetti open source già avviati | Launcher non firmato nei primi mesi → SmartScreen | Piano B: certificato OV a pagamento, oppure distribuzione via winget/Intune accettando l'avviso per i primi utenti |
-| **SAP**: `pyrfc` archiviato da SAP, SDK NW RFC proprietario e non ridistribuibile; SAP GUI Scripting spesso disattivato dagli admin SAP | Uno dei casi d'uso chiave può non funzionare | Dichiarare i prerequisiti nel manifest (`requires`), il launcher li controlla e spiega cosa manca. Documentare cosa è supportato davvero |
+| **AppLocker / WDAC** block executables in user-writable folders (`%LOCALAPPDATA%`). `uv`'s Pythons (python-build-standalone) have no Authenticode signature; a venv's `python.exe` is also a copy inside the venv folder. **WDAC also enforces on DLLs**, so the `.pyd` files of dependencies (e.g. `pandas`) are blocked too, not just `python.exe` | Apps don't start at all on corporate PCs, the main target | **Phase 0**: test on a real locked-down corporate PC. Plan B: per-machine mode with a signed interpreter and dependencies in an admin-only folder (see below) |
+| **SignPath Foundation** requires open source projects that are already established | Unsigned launcher for the first months → SmartScreen | Plan B: paid OV certificate, or distribution via winget/Intune accepting the warning for early users |
+| **SAP**: `pyrfc` archived by SAP, NW RFC SDK proprietary and not redistributable; SAP GUI Scripting often disabled by SAP admins | One of the key use cases may not work | Declare prerequisites in the manifest (`requires`); the launcher checks them and explains what's missing. Document what is actually supported |
 
-### Modalità di installazione di Python
-- **Per-utente** (default): `uv` gestisce Python e venv in `%LOCALAPPDATA%`. Funziona dove non c'è application control.
-- **Per-macchina** (installer da admin / Intune): l'installer deposita uno o più Python in `Program Files`. Le app girano con quell'interprete, senza venv: dipendenze installate con `uv pip install --target` in una cartella per app, caricata via `sys.path` dal runner. Da verificare nella Fase 0 se le regole DLL di WDAC bloccano i `.pyd` delle dipendenze.
+### Python installation modes
+- **Per-user** (default where there is no application control): `uv` manages Python and venvs in `%LOCALAPPDATA%`.
+- **Per-machine** (for WDAC/AppLocker environments; installer run by an admin / Intune):
+  - **Interpreter**: the official **python.org** build (Authenticode-signed by the Python Software Foundation), installed in `Program Files\devstribution\python\<version>\`. Not python-build-standalone, which is unsigned.
+  - **Dependencies**: installed into `Program Files\devstribution\envs\<id>\<version-hash>\` (admin-writable only, so WDAC path rules and AppLocker default rules allow the `.pyd` files). No venv: the runner adds the folder to `sys.path`.
+  - **Who writes there**: a small **privileged Windows service** (`devstribution-svc`, part of the Rust core, installed by the per-machine installer). The UI asks it over a local named pipe (ACL: interactive users only) to install an app. The service **re-verifies** the package itself (hashes, signature, policy) and never trusts the UI's verdict. It never runs package code: thanks to the wheels-only rule (see "Dependencies"), installing means only verifying hashes and unzipping wheels, so the elevated part does nothing an attacker can steer into running code.
+  - **Alternatives if IT prefers them** (documented, not default): (a) designate the launcher as an Intune/AppLocker **managed installer**, which tags the files it writes as trusted; simpler, but every wheel it downloads becomes trusted, so it relies entirely on the trust policy; (b) the IT team signs dependencies with its own code-signing certificate via an internal mirror.
+  - Phase 0 decides which mode is the default.
 
-## Architettura scelta
-### 1. Un solo programma firmato: launcher Tauri
-- Installato una volta (installer MSI/NSIS generato da Tauri, winget, Intune), niente `.bat`.
-- Firma: SignPath Foundation (gratuita per open source) o certificato OV come piano B.
-- Niente PyInstaller (falsi positivi antivirus): il launcher è un eseguibile nativo.
-- UI in WebView2, comunicazione con il backend via **IPC Tauri**: nessun server HTTP locale, quindi niente superficie CSRF / DNS rebinding.
-- `uv` incluso come **sidecar**, firmato e installato insieme al launcher.
+## Chosen architecture
+### 1. A single signed program: Tauri launcher
+- Installed once (MSI/NSIS installer generated by Tauri, winget, Intune), no `.bat`.
+- Signing: SignPath Foundation (free for open source) or an OV certificate as plan B.
+- No PyInstaller (antivirus false positives): the launcher is a native executable.
+- UI in WebView2, communicating with the backend over **Tauri IPC**: no local HTTP server, so no CSRF / DNS rebinding attack surface.
+- `uv` bundled as a **sidecar**, signed and installed together with the launcher.
+- The **Python runner** is shipped inside the launcher's install folder (see "Execution"), not installed into app environments.
 
-**Divisione del codice**
-| Parte | Linguaggio | Responsabilità |
+**Code split**
+| Part | Language | Responsibility |
 |---|---|---|
-| Core | Rust | Verifica firme (`ed25519-dalek`), policy da HKLM (`winreg`), estrazione sicura, invocazione `uv`, sottoprocessi (Job Object), log, segreti (`keyring`) |
-| UI | TypeScript | Catalogo, schermata permessi e conferma, form generato dal manifest, avanzamento ed esiti |
-| Runner | Python (minimo) | Legge JSON degli input, chiama `run()`, scrive JSON dei risultati |
+| Core | Rust | Signature verification (`ed25519-dalek`), policy from HKLM (`winreg`), safe extraction, `uv` invocation, subprocesses (Job Object), logs, secrets (`keyring`), per-machine service |
+| UI | TypeScript | Catalog, permissions and confirmation screen, form generated from the manifest, progress and results |
+| Runner | Python (minimal, stdlib only) | Reads input JSON, calls `run()`, writes result JSON, handles cancellation and cleanup |
 
-Regola: **nessuna logica del launcher in Python**. Python esiste solo dentro il runner, nell'ambiente dell'app.
+Rule: **no launcher logic in Python**. Python exists only inside the runner, in the app's process.
 
-### 2. Le app sono dati, non eseguibili
-Ogni app è una cartella (repo GitHub o zip) con un `pyproject.toml` standard; il manifest sta in `[tool.devstribution]`. Il launcher legge il manifest, prepara l'ambiente dal lockfile e **genera il form**. Chi sviluppa non scrive UI.
+### 2. Apps are data, not executables
+Each app is a folder (GitHub repo or zip) with a standard `pyproject.toml`; the manifest lives in `[tool.devstribution]`. The launcher reads the manifest, prepares the environment from the lockfile and **generates the form**. Developers don't write UI.
 
-### 3. Distribuzione
-- Installazione con un link: `devstribution://install/<utente-github>/<app>`. **Porta sempre alla schermata di conferma**, anche in modalità gestita: qualunque pagina web può aprire il link, quindi non deve mai installare in silenzio.
-- Catalogo = un repo GitHub con la lista delle app. Nessuna infrastruttura da mantenere.
-- Aggiornamenti dalle release GitHub, versioni fissate con hash.
+### 3. Distribution
+- Install with a link: `devstribution://install/<github-user>/<app>`. **It always leads to the confirmation screen**, even in managed mode: any web page can open the link, so it must never install silently.
+- Catalog = a GitHub repo listing the apps. No infrastructure to maintain.
+- Updates from GitHub releases, versions pinned by hash.
 
 ### 4. Privacy
-- Tutto gira in locale, la piattaforma non riceve dati.
-- **Diagnostica**: in caso di errore il launcher crea uno zip (log, versioni), applica una **redazione automatica** (percorsi utente, nome utente, variabili d'ambiente, valori dei segreti), **mostra all'utente il contenuto**, e lui decide se inviarlo (issue GitHub precompilata o file). Mai invio automatico.
+- Everything runs locally; the platform receives no data.
+- **Diagnostics**: on error the launcher creates a zip (logs, versions), applies **automatic redaction** (user paths, user name, environment variables, secret values), **shows the user the contents**, and the user decides whether to send it (pre-filled GitHub issue or file). Never sent automatically.
 
-### 5. Sicurezza (punto critico)
-Eseguire script di terzi è rischioso:
-- Permessi dichiarati nel manifest (rete, cartelle, SAP). **Sono informativi**: la UI lo dice esplicitamente ("l'autore dichiara che..."), per non dare un falso senso di sicurezza.
-- Conferma dell'utente alla prima esecuzione di ogni app.
-- Badge "verificata" per le app riviste nel catalogo.
-- Hash/versioni fissate per evitare aggiornamenti malevoli silenziosi.
-- Ogni esecuzione in un **Job Object** Windows: kill dell'intero albero di processi su timeout/Annulla, limiti di memoria opzionali.
+### 5. Security (critical point)
+Running third-party scripts is risky:
+- Permissions declared in the manifest (network, folders, SAP). **They are informational**: the UI says so explicitly ("the author declares that..."), to avoid a false sense of security.
+- User confirmation on the first run of each app.
+- "Verified" badge for apps reviewed in the catalog.
+- Pinned hashes/versions to prevent silent malicious updates; **no downgrades** (see trust model).
+- **No code runs at install time**: wheels only, no source builds (see "Dependencies").
+- **Origin shown to the user**: files downloaded from the internet show where they came from (see "Receiving channels").
+- Each run inside a Windows **Job Object**: the whole process tree is killed on timeout/Cancel, optional memory limits. COM servers started outside the tree (Excel) are cleaned up separately (see "Cancellation and cleanup").
 
-## Modello di fiducia e policy
-Principio: **robusto per l'IT, senza attrito per tutti gli altri**. Un solo launcher; il comportamento dipende dalla policy.
+## Trust model and policy
+Principle: **robust for IT, frictionless for everyone else**. One launcher; behaviour depends on the policy.
 
-**Modalità**
-- **Libera** (nessuna policy): avvisi forti e conferma alla prima esecuzione di ogni app, a rischio dell'utente.
-- **Gestita** (policy in HKLM / GPO / Intune): esegue solo app firmate da autori approvati dall'IT.
+**Modes**
+- **Free** (no policy): strong warnings and confirmation on the first run of each app, at the user's own risk.
+- **Managed** (policy in HKLM / GPO / Intune): runs only apps signed by authors approved by IT.
 
-**Ruoli** (solo due, nessun server da amministrare)
-- **Publisher**: genera una chiave (un comando), firma e pubblica app.
-- **Approver**: di solito l'IT; decide di quali autori fidarsi.
+**Roles** (only two, no server to administer)
+- **Publisher**: generates a key (one command), signs and publishes apps.
+- **Approver**: usually IT; decides which authors to trust.
 
-**Decisioni**
-| Tema | Decisione |
+**Binding author, namespace and key**
+- The app `id` is `<author>/<app>`. The `<author>` part is the **namespace**, and it is the only author identity: the manifest has no self-declared `author` or `key` field, because anything in the manifest is written by the publisher.
+- On verification, the launcher identifies the signing key from the signature itself (minisign key ID), then looks up which namespace that key owns:
+  - **Managed mode**: from the policy / imported `.trust` files (`.trust` = author namespace + public keys).
+  - **Free mode**: from the catalog (the catalog countersigns that namespace X belongs to the GitHub user/org that owns the source repo), or else **trust on first use**: the first key seen for a namespace is pinned locally and the user is shown its fingerprint; a later package for that namespace signed by a different key is refused unless it is a declared rotation.
+- **Rule**: the namespace in `id` must be owned by the key that verified the signature, otherwise the package is refused. A trusted author A can therefore never publish or overwrite `B/app`.
+- The signature's **trusted comment** (signed in minisign) contains `id=<id> version=<version> schema=<n>`; the launcher checks that it matches the manifest, so the key facts can be read and checked before extraction.
+
+**Decisions**
+| Topic | Decision |
 |---|---|
-| Chiavi | Chiavi di fiducia (Ed25519), non chiavi di licenza: nessun server, coerente con open source e dati locali |
-| Formato firma | Ed25519 con formato compatibile **minisign** (stesso formato dell'updater di Tauri). Niente Sigstore: richiede rete e identità OIDC, in contrasto con "nessun server / offline" |
-| Firma | Livelli opzionali: autore (sempre) → controfirma catalogo → controfirma IT. La policy dice quali richiedere |
-| Policy | Un file TOML con campi tutti facoltativi (autori ammessi, versione minima launcher, mirror dipendenze, diagnostica on/off, rete). 2-3 modelli pronti: permissivo, standard, restrittivo |
-| Autori esterni | File `.trust` pubblicato dall'autore (chiave pubblica, nome, dominio/repo verificabile). L'IT lo importa con un comando e approva tutte le app e versioni di quell'autore |
-| Blocco | Il messaggio di blocco genera un `.trust` pronto da inoltrare all'IT ("chiedi al tuo IT di fidarsi di X") |
-| Revoca | Lista firmata con cache e scadenza lunga (~30 giorni); può stare anche su share di rete. Rotazione: la chiave successiva è dichiarata e firmata dalla precedente |
-| Enforcement | Policy in HKLM / Intune; non ci si difende da un admin locale (dichiarato nel modello di minaccia) |
-| Audit | Log locale strutturato / Windows Event Log, raccoglibile dall'IT. La piattaforma non invia nulla |
-| Aggiornamenti app | Default: nuova versione dello stesso autore fidato si aggiorna se firma e lockfile sono validi. Opzioni in policy: ring di attesa, approvazione manuale, pin |
-| Aggiornamenti launcher | Plugin updater di Tauri (aggiornamenti firmati), disattivabile dall'IT (distribuzione via Intune/winget) |
-| Dipendenze | La firma copre manifest + lockfile con hash; fuori lockfile = rifiuto. Mirror interno opzionale da policy |
-| Supporto | Doc orientata all'IT, modalità dry-run della policy, nessuna funzione che richieda un server |
-| Modello di minaccia | Una pagina: minaccia → chi la blocca → cosa NON copre. Coperti: autore malevolo o compromesso, link `devstribution://` da siti malevoli, pacchetti manomessi. Non coperti: admin locale, malware preesistente, bug nel codice di app firmate |
+| Keys | Trust keys (Ed25519), not license keys: no server, consistent with open source and local data |
+| Signature format | Ed25519 with a **minisign**-compatible format (same format as the Tauri updater). No Sigstore: it requires network access and an OIDC identity, conflicting with "no server / offline" |
+| Signing | Optional layers: author (always) → catalog countersignature → IT countersignature. The policy says which are required |
+| Policy | A TOML file with all-optional fields (allowed authors, minimum launcher version, dependency mirror, diagnostics on/off, network, pinned/minimum app versions). 2-3 ready-made templates: permissive, standard, restrictive |
+| External authors | `.trust` file published by the author (namespace, public keys, name, verifiable domain/repo). IT imports it with one command and approves all apps and versions **in that namespace** |
+| Blocking | The block message generates a ready-to-forward `.trust` ("ask your IT to trust X") |
+| Revocation | Signed list with cache and long expiry (~30 days); it can also live on a network share. It can revoke a key, a whole app, or **specific versions**. Rotation: the next key is declared and signed by the previous one, and keeps the same namespace |
+| Anti-downgrade | The launcher keeps, per app `id`, the highest version installed and the key that signed it. A lower version is refused. Rollback only: (a) in managed mode, via a pin in the policy; (b) in free mode, via an explicit "install older version" action with a warning. A revoked version is never installable, rollback included |
+| Enforcement | Policy in HKLM / Intune; no defence against a local admin (stated in the threat model) |
+| Audit | Structured local log / Windows Event Log, collectable by IT. The platform sends nothing |
+| App updates | Default: a new version from the same trusted author updates if signature and lockfile are valid and the version is higher. Policy options: waiting ring, manual approval, pin |
+| Launcher updates | Tauri updater plugin (signed updates), can be disabled by IT (distribution via Intune/winget) |
+| Dependencies | The signature covers the manifest + lockfile with hashes; anything outside the lockfile = refused. **Wheels only**: every package in `uv.lock` must have a wheel for the target platform; `devstribution pack` refuses the package otherwise, and installation uses `--no-build`, so no `setup.py` or build backend ever runs. Allowed only in `devstribution dev`. Optional internal mirror from policy |
+| Support | IT-oriented docs, policy dry-run mode, no feature that requires a server |
+| Threat model | One page: threat → what blocks it → what it does NOT cover. Covered: malicious or compromised author, author impersonating another namespace, downgrade to an old vulnerable version, code running at install time, `devstribution://` links from malicious sites, tampered packages. Not covered: local admin, pre-existing malware, bugs in the code of signed apps |
 
-**Ordine di implementazione**: (1) firma autori + modalità libera/gestita + policy minimale, (2) `.trust` e import, (3) revoca, rotazione, log, (4) opzioni avanzate (ring, mirror, pin).
+**Implementation order**: (1) author signatures + namespace binding + free/managed mode + minimal policy, (2) `.trust` and import, (3) revocation, rotation, anti-downgrade, logs, (4) advanced options (ring, mirror, pin).
 
-## Standard del pacchetto app (v1)
-Obiettivo: ricevere un'app come **un file di dati**, verificarla e lanciarla in modo uniforme. Estensione: `.dsapp`.
+## App package standard (v1)
+Goal: receive an app as **a data file**, verify it and launch it in a uniform way. Extension: `.dsapp`.
 
-### Formato del pacchetto
-Uno zip (non un eseguibile, quindi non soggetto a SmartScreen) con questa struttura:
+### Package format
+A zip (not an executable, so not subject to SmartScreen) with this structure:
 ```
-mia-app.dsapp
-  pyproject.toml  # metadati Python standard + manifest in [tool.devstribution]
-  uv.lock         # dipendenze con hash (obbligatorio)
-  main.py         # codice (più moduli/asset a piacere)
-  FILES.sha256    # elenco hash di tutti i file (formato canonico, vedi sotto)
-  FILES.sha256.minisig  # firma Ed25519 dell'autore su FILES.sha256
+my-app.dsapp
+  pyproject.toml  # standard Python metadata + manifest in [tool.devstribution]
+  uv.lock         # dependencies with hashes (required)
+  main.py         # code (plus any other modules/assets)
+  FILES.sha256    # list of hashes of all files (canonical format, see below)
+  FILES.sha256.minisig  # author's Ed25519 signature on FILES.sha256 (trusted comment: id, version, schema)
 ```
-Opzionale: cartella `wheels/` per l'uso offline (installazione senza internet).
+Optional: `wheels/` folder for offline use (install without internet).
 
-**Formato canonico di `FILES.sha256`**: UTF-8, fine riga LF, una riga per file `<sha256 hex>  <percorso>`, percorsi con `/`, ordinati per byte. Tutti i file dello zip devono comparire, esclusi solo `FILES.sha256` e le sue firme; file in più o mancanti = rifiuto.
+**Canonical format of `FILES.sha256`**: UTF-8, LF line endings, one line per file `<sha256 hex>  <path>`, paths with `/`, sorted by bytes. Every file in the zip must appear, except `FILES.sha256` and its signatures; extra or missing files = refused.
 
-**Regole di estrazione** (rifiuto del pacchetto se violate): niente percorsi assoluti o con `..`, niente symlink, niente nomi duplicati (anche solo per maiuscole/minuscole), limite di dimensione totale e di numero di file.
+**Extraction rules** (package refused if violated): no absolute paths or paths with `..`, no symlinks, no duplicate names (including names differing only by case), limits on total size and number of files.
 
 ### Manifest in `pyproject.toml`
 ```toml
 [project]
-name = "interroga-ordini"
+name = "query-orders"
 version = "1.2.0"
 requires-python = ">=3.11"
 dependencies = ["openpyxl>=3.1"]
 
+[tool.uv]
+package = false                  # the app is not built or installed as a package: no build step
+
 [tool.devstribution]
 schema_version = 1
-id = "autore/interroga-ordini"
-title = "Interroga ordini"
-author = { id = "autore", key = "<fingerprint>" }
-entry = "main:run"              # modulo:funzione
+id = "author/query-orders"       # <namespace>/<app>; the namespace must belong to the signing key
+title = "Query orders"
+entry = "main:run"               # module:function
 platforms = ["windows"]
-requires = []                    # prerequisiti esterni: "sap-gui-scripting", "sap-nwrfc-sdk", "excel"
+requires = []                    # external prerequisites: "sap-gui-scripting", "sap-nwrfc-sdk", "excel"
 
-[[tool.devstribution.inputs]]    # genera il form
-name = "file_excel"
+[[tool.devstribution.inputs]]    # generates the form
+name = "excel_file"
 type = "file"                    # file | folder | text | number | bool | choice | date | secret
-label = "File Excel degli ordini"
+label = "Orders Excel file"
 accept = [".xlsx"]
 
 [[tool.devstribution.outputs]]
 name = "report"
 type = "file"                    # file | table | text
 
-[tool.devstribution.permissions] # dichiarativi e informativi, mostrati all'utente
-network = ["api.azienda.it"]
+[tool.devstribution.permissions] # declarative and informational, shown to the user
+network = ["api.company.com"]
 folders = ["user-selected"]
 sap = false
-secrets = ["sap_user"]           # nomi richiesti, valori nel keyring
+secrets = ["sap_user"]           # names required, values in the keyring
 ```
-Le dipendenze sono dichiarate una sola volta, in `[project]`, come in qualsiasi progetto Python.
+Dependencies are declared only once, in `[project]`, as in any Python project. `[project].version` must match the version in the signature's trusted comment.
 
-### Contratto di esecuzione
+### Execution contract
 ```python
-def run(file_excel: Path, ctx) -> dict:
-    ctx.progress(0.3, "Leggo il file")
+def run(excel_file: Path, ctx) -> dict:
+    ctx.progress(0.3, "Reading the file")
     ...
     return {"report": out_path}
 ```
-- Il manifest è la **fonte unica** degli input; `devstribution dev` e `devstribution pack` verificano che la firma di `run()` corrisponda (stessi nomi e tipi compatibili) e rifiutano il pacchetto altrimenti.
-- `ctx` espone `progress()`, `log()`, `output_dir`, `secrets.get(nome)`.
-- Il ritorno è un dict con le chiavi degli `outputs`; i file vanno scritti in `ctx.output_dir`.
-- Errori: un'eccezione = esito fallito, con traceback nel log locale e proposta del pacchetto diagnostico.
+- The manifest is the **single source** of inputs; `devstribution dev` and `devstribution pack` check that the signature of `run()` matches (same names and compatible types) and refuse the package otherwise.
+- `ctx` exposes `progress()`, `log()`, `output_dir`, `secrets.get(name)`, `cancelled`, `on_cleanup(fn)` and `com(prog_id)` (see "Cancellation and cleanup").
+- The return value is a dict whose keys are the `outputs`; files must be written to `ctx.output_dir`.
+- Errors: an exception = failed run, with the traceback in the local log and an offer to create a diagnostic package.
+- For development, the same `ctx` API is published on PyPI as `devstribution-runner` (type hints, local tests). Apps add it as a **dev dependency** only; it is never installed in production environments (`--no-dev`), because the launcher provides the runner.
 
-### Esecuzione
-1. Il core Rust lancia un **sottoprocesso** `python -m devstribution_runner` nell'ambiente dell'app, dentro un Job Object.
-2. Input e segreti passano come JSON su **stdin** (i segreti mai su file o variabili d'ambiente); i risultati tornano come JSON; stdout/stderr vanno al log. Il runner è una piccola libreria pinnata dal launcher.
-3. Cartella di lavoro temporanea per esecuzione, con timeout e pulsante "Annulla".
-4. Ambiente creato con `uv sync --frozen` dal lockfile (o `uv pip install --target` in modalità per-macchina); Python gestito da `uv`; cache condivisa tra app.
+### Execution
+1. The Rust core starts a **subprocess** inside a Job Object: `python -I <launcher-dir>\runner\bootstrap.py`.
+   - The runner is **pure Python, stdlib only**, versioned together with the launcher and stored in the launcher's install folder. Because it is not in the app's environment, it never conflicts with the app's lockfile, and "anything outside the lockfile = refused" stays true.
+   - `-I` (isolated mode) ignores `PYTHONPATH`, user site-packages and the current folder; `bootstrap.py` builds `sys.path` explicitly: runner, app code (`apps\<id>\<version-hash>\`), app dependencies.
+   - The JSON protocol carries a `protocol` version, so launcher and runner can evolve safely.
+2. Inputs and secrets are passed as JSON on **stdin** (secrets never on files or environment variables); stdin stays open for control messages (e.g. `cancel`); results come back as JSON; stdout/stderr go to the log.
+3. Temporary working folder per run, with a timeout and a "Cancel" button.
+4. Environment created with `uv sync --frozen --no-build --no-dev --no-install-project` from the lockfile (in per-machine mode the service installs the same wheels with `uv pip install --target --no-build`); Python managed by `uv` (per-user) or python.org (per-machine); cache shared across apps.
 
-### Flusso di installazione
-`ricezione → estrazione sicura in area temporanea → verifica hash, firma e policy → controllo prerequisiti (requires) → mostra manifest e permessi → conferma (o approvazione da policy) → spostamento in cartella indirizzata per hash → creazione ambiente → pronta`
+### Cancellation and cleanup
+COM servers (Excel, Word) are started by Windows' DCOM service, not by the app's process, so they are **outside the Job Object** and would survive a kill as orphan processes.
+1. **Cooperative cancellation first**: on Cancel/timeout the launcher sends `cancel` on stdin; the runner sets `ctx.cancelled` and raises a `Cancelled` exception at the next `ctx.progress()`/`ctx.log()` call; the app's `finally` blocks and `ctx.on_cleanup()` functions run.
+2. **COM helper**: `ctx.com("Excel.Application")` creates the COM object, records the PID of the server process it started (via the window handle → `GetWindowThreadProcessId`), and on cleanup calls `Quit()` on it.
+3. **Hard kill** after a grace period (e.g. 10 s): the launcher terminates the Job Object, then terminates **only** the COM server PIDs recorded by the runner. Never Excel instances the user opened themselves.
+4. **SAP GUI**: scripting attaches to the user's existing SAP GUI session, which is never killed; the helper only closes the connections/windows the app opened.
 
-Più versioni della stessa app possono coesistere; la vecchia si rimuove dopo l'aggiornamento riuscito.
+### Install flow
+`receive → safe extraction to a temporary area → verify hashes, signature, namespace binding, policy and anti-downgrade → check prerequisites (requires) → show manifest, permissions and origin → confirmation (or approval by policy) → move into a hash-addressed folder → create environment (wheels only) → ready`
 
-### Canali di ricezione (tutti equivalenti, stesso flusso)
-| Canale | Uso |
+Several versions of the same app can coexist; the old one is removed after a successful update.
+
+### Receiving channels (all equivalent, same flow)
+| Channel | Use |
 |---|---|
-| Doppio clic su `.dsapp` | Associazione file registrata dall'installer Tauri; allegato email, share di rete |
-| `devstribution://install/<autore>/<app>` | Link da catalogo o pagina web (plugin deep-link di Tauri); scarica dalla release GitHub. Sempre con conferma |
-| Da catalogo nel launcher | Elenco da repo GitHub |
-| `devstribution dev <cartella>` | Per lo sviluppatore: esegue una cartella non firmata solo in modalità libera |
+| Double-click on `.dsapp` | File association registered by the Tauri installer; email attachment, network share |
+| `devstribution://install/<author>/<app>` | Link from catalog or web page (Tauri deep-link plugin); downloads from the GitHub release. Always with confirmation |
+| From the catalog in the launcher | List from a GitHub repo |
+| `devstribution dev <folder>` | For developers: runs an unsigned folder, only in free mode |
 
-### Cartelle locali
+**Origin (Mark-of-the-Web)**: when a `.dsapp` is opened, the launcher reads its `Zone.Identifier` stream. If it comes from the internet zone (ZoneId 3) or the restricted zone (4), the confirmation screen shows "Downloaded from `<HostUrl>`" with a stronger warning. The policy can refuse internet-zone files whose author is not approved. For downloads made by the launcher itself (deep link, catalog), the origin shown is the release URL.
+
+### Local folders
 ```
 %LOCALAPPDATA%\devstribution\
-  apps\<id>\<versione-hash>\   # codice estratto
-  envs\<id>\<versione-hash>\   # venv (o cartella dipendenze in modalità per-macchina)
-  runs\<timestamp>\            # output e log per esecuzione
-  logs\                        # log del launcher
+  apps\<id>\<version-hash>\   # extracted code
+  envs\<id>\<version-hash>\   # venv (per-user mode; per-machine mode uses Program Files)
+  runs\<timestamp>\           # output and logs per run
+  logs\                       # launcher logs
+  state\                      # pinned namespace keys (TOFU), highest installed version per app
 ```
 
-### Da decidere ancora per il formato
-- Proposta per la v1: input `file, folder, text, number, bool, choice, secret`; `date` e output `table` nella v1.1; `ctx.progress` già nell'MVP (costa poco ed è molto visibile per l'utente).
+### Still to decide for the format
+- v1 proposal: inputs `file, folder, text, number, bool, choice, secret`; `date` and the `table` output in v1.1; `ctx.progress` already in the MVP (cheap and very visible to the user).
 
-## Setup del progetto
-Disponibilità del nome verificata il 2026-10-21 (tutto libero; per `.io` ricontrollare sul registrar).
+## Project setup
+Name availability checked on 2026-10-21 (all free; re-check `.io` at the registrar).
 
-**Subito**
-- [ ] 2FA attiva sull'account GitHub personale.
-- [ ] Organizzazione GitHub `devstribution` (piano Free): 2FA obbligatoria per i membri; Dependabot alerts, secret scanning, push protection, private vulnerability reporting attivi.
-- [ ] Repo unico `devstribution/devstribution` (monorepo: core Rust, UI, runner Python). Il repo `catalog` arriva più avanti.
-- [ ] Protezione del ramo `main`: no force-push, no cancellazione.
-- [ ] Rinominare la cartella locale da `devstributor` a `devstribution` (a sessione chiusa).
+**Now**
+- [ ] 2FA enabled on the personal GitHub account.
+- [ ] GitHub organization `devstribution` (Free plan): 2FA required for members; Dependabot alerts, secret scanning, push protection, private vulnerability reporting enabled.
+- [ ] Single repo `devstribution/devstribution` (monorepo: Rust core, UI, Python runner). The `catalog` repo comes later.
+- [ ] Protection of the `main` branch: no force-push, no deletion.
+- [ ] Rename the local folder from `devstributor` to `devstribution` (once the session is closed).
 
-**Questa settimana**
-- [ ] Dominio `devstribution.dev` (eventualmente anche `.com`) via Cloudflare Registrar o Porkbun.
-- [ ] Dominio verificato sull'organizzazione GitHub (serve per la pagina dell'organizzazione, per i `.trust` e per GitHub Pages).
+**This week**
+- [ ] Domain `devstribution.dev` (possibly also `.com`) via Cloudflare Registrar or Porkbun.
+- [ ] Domain verified on the GitHub organization (needed for the organization page, for `.trust` files and for GitHub Pages).
 
-**File iniziali del repo**
-| File | Perché |
+**Initial repo files**
+| File | Why |
 |---|---|
-| `LICENSE-MIT`, `LICENSE-APACHE` | Doppia licenza MIT OR Apache-2.0 |
-| `README.md` | Problema in 3 righe, stato "pre-alpha", link a `docs/plan.md` |
-| `SECURITY.md` | Segnalazione privata delle vulnerabilità; richiesto in pratica anche da SignPath |
-| `.github/FUNDING.yml` | Pulsante Sponsor (Ko-fi / Patreon / PayPal); GitHub Sponsors per l'org più avanti (richiede Stripe) |
+| `LICENSE-MIT`, `LICENSE-APACHE` | Dual license MIT OR Apache-2.0 |
+| `README.md` | Problem in 3 lines, "pre-alpha" status, link to `docs/plan.md` |
+| `SECURITY.md` | Private vulnerability reporting; in practice also required by SignPath |
+| `.github/FUNDING.yml` | Sponsor button (Ko-fi / Patreon / PayPal); GitHub Sponsors for the org later (requires Stripe) |
 | `.gitignore` | Rust, Node, Python |
-| `docs/plan.md` | Questo piano |
+| `docs/plan.md` | This plan: move it from the repo root to `docs/` in the same commit that adds `README.md`, so the link works from the start |
 
-**Quando c'è codice vero**
-- [ ] crates.io: login con GitHub, prima pubblicazione con una versione funzionante (niente pacchetti vuoti per occupare il nome).
-- [ ] PyPI: account con 2FA, Trusted Publisher da GitHub Actions per `devstribution-runner`.
+**When there is real code**
+- [ ] crates.io: log in with GitHub, first publication with a working version (no empty packages to squat the name).
+- [ ] PyPI: account with 2FA, Trusted Publisher from GitHub Actions for `devstribution-runner` (development SDK).
 
-**Più avanti**
-- [ ] Domanda a SignPath Foundation dopo la prima release pubblica con documentazione minima.
-- [ ] Pubblicazione su winget con installer firmato.
+**Later**
+- [ ] Apply to SignPath Foundation after the first public release with minimal documentation.
+- [ ] Publish on winget with a signed installer.
 
-## Roadmap MVP
-**Fase 0: fattibilità (prima di tutto il resto)**
-Su un PC aziendale bloccato reale (AppLocker/WDAC attivi), verificare con uno script:
-1. `uv` dal sidecar firmato in `Program Files` parte?
-2. Python di `uv` in `%LOCALAPPDATA%` parte? E il `python.exe` di un venv?
-3. Python in `Program Files` + dipendenze in `%LOCALAPPDATA%` caricate via `sys.path` (inclusi `.pyd`, es. `pandas`)?
-4. Accesso a Excel/SAP GUI Scripting dal processo figlio.
+## MVP roadmap
+**Scope rule**: Phase 1 serves only to put the generated form in front of real users; the trust model stays on paper until Phase 1 feedback arrives. The only exception is format rules that are cheap now and hard to retrofit, which go into package format v1 from day one: `<namespace>/<app>` ids, wheels-only lockfiles, `tool.uv.package = false`, runner outside the environment.
 
-L'esito decide la modalità di installazione di default.
+**Phase 0: feasibility (before everything else)**
+On a real locked-down corporate PC (AppLocker/WDAC active), verify with a script:
+1. Does `uv` from the signed sidecar in `Program Files` start?
+2. Does `uv`'s Python in `%LOCALAPPDATA%` start? And a venv's `python.exe`?
+3. Does the signed python.org Python in `Program Files` start?
+4. Do dependency `.pyd` files load (e.g. `pandas`): (a) from `%LOCALAPPDATA%` via `sys.path`, (b) from `Program Files`? This tests WDAC DLL enforcement.
+5. If IT designates the launcher as a managed installer: are the files it writes allowed to run?
+6. Access to Excel/SAP GUI Scripting from the child process, and cleanup of Excel after a Job Object kill.
 
-**Fase 1: prototipo da mettere in mano a 2-3 colleghi**
-1. Launcher Tauri minimo: UI con form generato dal manifest, IPC verso il core Rust.
-2. Esecuzione in sottoprocesso (Job Object) con ambiente da lockfile, runner Python, `ctx.progress`.
-3. App di esempio: carica un Excel, lo interroga, scarica il risultato.
-4. Installazione da file `.dsapp` (associazione file) con estrazione sicura.
-5. Comando `devstribution dev` / `pack` per lo sviluppatore.
+The outcome decides the default installation mode, and whether the per-machine service is needed in Phase 1 or can wait.
 
-**Fase 2: fiducia**
-6. Firma e verifica Ed25519 (formato minisign) dell'autore, `FILES.sha256`.
-7. Modalità libera/gestita con policy minimale da HKLM.
-8. Installazione da URL GitHub e schema `devstribution://`.
+**Phase 1: prototype to hand to 2-3 colleagues**
+1. Minimal Tauri launcher: UI with a form generated from the manifest, IPC to the Rust core.
+2. Execution in a subprocess (Job Object) with environment from the lockfile (wheels only), runner in the launcher folder, `ctx.progress`, cooperative cancellation.
+3. Example app: loads an Excel file, queries it, downloads the result.
+4. Install from a `.dsapp` file (file association) with safe extraction.
+5. `devstribution dev` / `pack` commands for developers (`pack` checks wheels-only and the `run()` signature).
 
-## Fasi successive
-- Firma del launcher (SignPath o OV), pubblicazione su winget, pacchetto MSI per Intune.
-- `.trust`, revoca, rotazione chiavi, log nell'Event Log.
-- Catalogo pubblico e badge di verifica.
-- Pacchetto diagnostico con redazione.
-- Modalità opzionale nel browser (Pyodide) per app solo-Excel.
-- Link di donazione nel launcher e nel README.
-- Supporto macOS/Linux (Tauri lo rende possibile; app SAP restano solo Windows).
+**Phase 2: trust**
+6. Author Ed25519 signature and verification (minisign format, trusted comment), `FILES.sha256`, namespace binding.
+7. Free/managed mode with a minimal policy from HKLM; anti-downgrade.
+8. Install from GitHub URL and the `devstribution://` scheme; Mark-of-the-Web origin.
 
-## Questioni aperte: raccomandazioni
-| Questione | Raccomandazione |
+## Later phases
+- Launcher signing (SignPath or OV), winget publication, MSI package for Intune.
+- Per-machine service `devstribution-svc` (if Phase 0 did not make it necessary earlier).
+- `.trust`, revocation, key rotation, Event Log logging.
+- Public catalog and verification badge.
+- Diagnostic package with redaction.
+- Optional in-browser mode (Pyodide) for Excel-only apps.
+- Donation links in the launcher and the README.
+- macOS/Linux support (Tauri makes it possible; SAP apps remain Windows-only).
+
+## Open questions: recommendations
+| Question | Recommendation |
 |---|---|
-| Nome | **Deciso: devstribution.** Liberi al 2026-10-21: GitHub, crates.io, PyPI (`devstribution`, `devstribution-runner`), domini `.com/.dev/.org/.io`. Passi di registrazione in "Setup del progetto" |
-| Piattaforme | **Windows prima**, ma non chiudere la porta: campo `platforms` nel manifest e core Rust senza dipendenze Windows fuori da moduli dedicati |
-| Licenza | **MIT OR Apache-2.0** (doppia, come Rust, Tauri e uv): permissiva, gradita alle aziende, Apache porta la clausola sui brevetti. Il runner con la stessa licenza, così le app possono avere qualunque licenza |
-| Segreti | Windows Credential Manager via crate `keyring`, una voce per app e nome segreto. L'app riceve solo i segreti dichiarati nel manifest, via stdin; il launcher li chiede all'utente al primo uso e li redige dai log |
-| Badge "verificata" | Controfirma del catalogo per **singola versione**, dopo una checklist: sorgente pubblico, pacchetto ricostruibile dal tag (build in GitHub Actions), niente codice offuscato o scaricato a runtime, permessi coerenti con il codice. Se manca la revisione, l'app resta installabile ma senza badge |
-| Strumento di firma | Implementazione Ed25519 nel core Rust, **formato compatibile minisign** (interoperabile, verificabile con strumenti esistenti, stesso formato dell'updater di Tauri). Niente Sigstore |
-| Estensione e schema URL | **Decisi**: estensione `.dsapp`, schema `devstribution://`. Verificare che `.dsapp` non sia già associata a software diffuso |
-| Catalogo e revoca | Repo nell'org GitHub del progetto, servito via GitHub Pages. Chiave del catalogo **offline**, non nei segreti di CI; firma della lista di revoca con la stessa chiave. Mirror su share di rete previsto dalla policy |
-| Sandbox | v1: permessi informativi + Job Object (timeout, kill albero, limiti memoria). Più avanti valutare AppContainer o blocco rete via Windows Firewall per app, solo se il costo è ragionevole; dichiararlo nel modello di minaccia |
-| Python per-macchina | Decidere dopo la Fase 0 quale modalità è il default e quali versioni di Python l'installer per-macchina include |
+| Name | **Decided: devstribution.** Free as of 2026-10-21: GitHub, crates.io, PyPI (`devstribution`, `devstribution-runner`), domains `.com/.dev/.org/.io`. Registration steps in "Project setup" |
+| Platforms | **Windows first**, but keep the door open: `platforms` field in the manifest and a Rust core with no Windows dependencies outside dedicated modules |
+| License | **MIT OR Apache-2.0** (dual, like Rust, Tauri and uv): permissive, liked by companies, Apache adds the patent clause. The runner under the same license, so apps can have any license |
+| Secrets | Windows Credential Manager via the `keyring` crate, one entry per app and secret name. The app receives only the secrets declared in the manifest, via stdin; the launcher asks the user for them on first use and redacts them from logs |
+| "Verified" badge | Catalog countersignature for **each single version**, after a checklist: public source, package reproducible from the tag (build in GitHub Actions), no obfuscated code or code downloaded at runtime, permissions consistent with the code. Without review the app stays installable but without the badge |
+| Signing tool | Ed25519 implementation in the Rust core, **minisign-compatible format** (interoperable, verifiable with existing tools, same format as the Tauri updater). No Sigstore |
+| Extension and URL scheme | **Decided**: extension `.dsapp`, scheme `devstribution://`. Check that `.dsapp` isn't already associated with widespread software |
+| Catalog and revocation | Repo in the project's GitHub org, served via GitHub Pages. Catalog key **offline**, not in CI secrets; the revocation list is signed with the same key. Mirror on a network share supported by the policy |
+| Sandbox | v1: informational permissions + Job Object (timeout, tree kill, memory limits). Later, consider AppContainer or per-app network blocking via Windows Firewall, only if the cost is reasonable; state it in the threat model |
+| Per-machine Python | Decide after Phase 0 which mode is the default and which Python versions the per-machine installer includes |
