@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/devstribution-core", "crates/devstribution-cli"]
+members = ["crates/devstribution-core", "crates/devstribution-host", "crates/devstribution-cli"]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,3 +11,4 @@ rust-version = "1.85"
 
 [workspace.dependencies]
 devstribution-core = { path = "crates/devstribution-core" }
+devstribution-host = { path = "crates/devstribution-host" }

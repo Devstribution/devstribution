@@ -5,7 +5,6 @@ mod dev;
 mod env;
 mod init;
 mod keys;
-mod runner_files;
 
 use std::path::PathBuf;
 use std::process::ExitCode;

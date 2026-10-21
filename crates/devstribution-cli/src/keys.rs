@@ -103,9 +103,9 @@ fn load_signer(path: &Path) -> Result<Signer> {
 
 pub fn pack(dir: &Path, key: Option<PathBuf>, out: Option<PathBuf>) -> Result<()> {
     let app_dir = env::absolute(dir)?;
-    let runner_dir = crate::runner_files::install()?;
+    let runner_dir = devstribution_host::runner::install(&env::paths()?)?;
 
-    if let Err(e) = env::run_uv(&["lock", "--check", "--quiet"], &app_dir, &[]) {
+    if let Err(e) = env::run_uv(&["lock", "--check", "--quiet"], &app_dir) {
         bail!("{e}: uv.lock does not match pyproject.toml; run `uv lock` and try again");
     }
     let checked = checks::check_app(&app_dir, &runner_dir)?;
@@ -179,9 +179,12 @@ pub fn verify(file: &Path, key: Option<PathBuf>) -> Result<()> {
         verified.content_hash
     );
     match verified.signature {
-        SignatureStatus::Verified { key_id } => println!("  signature OK: made by key {key_id}"),
-        SignatureStatus::NotChecked { key_id } => println!(
-            "  signature NOT checked: it claims key {key_id}; pass --key <publisher>.pub to verify it"
+        SignatureStatus::Trusted { key_id } => {
+            println!("  signature OK: made by the given key {key_id}")
+        }
+        SignatureStatus::NewKey { key_id } => println!(
+            "  signature valid, made by key {key_id} carried in the package; \
+             pass --key <publisher>.pub to check it is the publisher you expect"
         ),
     }
     Ok(())

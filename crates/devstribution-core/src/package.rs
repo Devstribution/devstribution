@@ -14,8 +14,11 @@ use crate::files::{FilesList, sha256};
 use crate::lock::check_lock;
 use crate::manifest::Manifest;
 use crate::paths::validate_relative_path;
-use crate::signing::{Signature, Signer, TrustedComment, public_key_id};
-use crate::{Error, FILES_LIST, FILES_SIGNATURE, Result};
+use crate::signing::{
+    Signature, Signer, TrustedComment, parse_public_key, public_key_base64, public_key_file,
+    public_key_id,
+};
+use crate::{Error, FILES_LIST, FILES_PUBLIC_KEY, FILES_SIGNATURE, Result};
 
 pub const PYPROJECT: &str = "pyproject.toml";
 pub const UV_LOCK: &str = "uv.lock";
@@ -67,6 +70,7 @@ fn excluded_file(name: &str) -> bool {
         || name == ".env"
         || name == FILES_LIST
         || name == FILES_SIGNATURE
+        || name == FILES_PUBLIC_KEY
 }
 
 /// The files of an app folder that go into its package.
@@ -209,6 +213,11 @@ pub fn pack(app_dir: &Path, signer: &Signer, out: &Path) -> Result<PackResult> {
     };
     add(FILES_LIST, list_text.as_bytes())?;
     add(FILES_SIGNATURE, signature.as_bytes())?;
+    let key_comment = format!("devstribution public key for {}", manifest.id.namespace);
+    add(
+        FILES_PUBLIC_KEY,
+        public_key_file(signer.public_key(), &key_comment).as_bytes(),
+    )?;
     for (rel, data) in &contents {
         add(rel, data)?;
     }
@@ -243,10 +252,12 @@ pub fn content_hash(files_list: &[u8]) -> String {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SignatureStatus {
-    /// Verified against the key the caller trusts for this namespace.
-    Verified { key_id: String },
-    /// Well-formed, but no trusted key was given, so it proves nothing yet.
-    NotChecked { key_id: String },
+    /// Made by the key the caller trusts for this namespace.
+    Trusted { key_id: String },
+    /// Valid signature by the key carried in the package, but no key was trusted for this
+    /// namespace yet: the files are intact, the publisher's identity is not established.
+    /// Installing it pins this key (trust on first use).
+    NewKey { key_id: String },
 }
 
 pub struct VerifyOptions<'a> {
@@ -258,6 +269,8 @@ pub struct VerifiedPackage {
     pub manifest: Manifest,
     pub files: FilesList,
     pub signature: SignatureStatus,
+    /// The publisher's key, as one base64 line (what gets pinned for the namespace).
+    pub publisher_key: String,
     pub content_hash: String,
 }
 
@@ -265,7 +278,8 @@ pub struct VerifiedPackage {
 ///
 /// Checks: path rules, no links or special files, no duplicate names (ignoring case), size
 /// limits, a canonical `FILES.sha256` listing exactly the extracted files with matching hashes,
-/// a signature whose trusted comment matches the manifest (verified when `trusted_key` is set),
+/// a valid signature by the key carried in the package (which must be `trusted_key` when set),
+/// whose trusted comment matches the manifest,
 /// and a valid manifest with a lockfile.
 pub fn extract_and_verify(
     package: &Path,
@@ -286,7 +300,7 @@ fn extract_inner(package: &Path, dest: &Path, opts: &VerifyOptions) -> Result<Ve
     let mut archive =
         ZipArchive::new(file).map_err(|e| refuse(format!("not a valid .dsapp (zip) file: {e}")))?;
     let limits = opts.limits;
-    if archive.len() > limits.max_files + 2 {
+    if archive.len() > limits.max_files + 3 {
         return Err(refuse(format!("more than {} files", limits.max_files)));
     }
 
@@ -294,6 +308,7 @@ fn extract_inner(package: &Path, dest: &Path, opts: &VerifyOptions) -> Result<Ve
     let mut hashes: BTreeMap<String, [u8; 32]> = BTreeMap::new();
     let mut list_data = None;
     let mut sig_data = None;
+    let mut key_data = None;
     let mut total = 0u64;
     for i in 0..archive.len() {
         let mut entry = archive
@@ -327,7 +342,7 @@ fn extract_inner(package: &Path, dest: &Path, opts: &VerifyOptions) -> Result<Ve
 
         let budget = limits.max_file_bytes.min(limits.max_total_bytes - total);
         let mut limited = (&mut entry).take(budget + 1);
-        if path == FILES_LIST || path == FILES_SIGNATURE {
+        if path == FILES_LIST || path == FILES_SIGNATURE || path == FILES_PUBLIC_KEY {
             let mut data = Vec::new();
             limited
                 .read_to_end(&mut data)
@@ -336,10 +351,10 @@ fn extract_inner(package: &Path, dest: &Path, opts: &VerifyOptions) -> Result<Ve
             if data.len() as u64 > budget || data.len() > 16 << 20 {
                 return Err(refuse(format!("`{name}` is too large")));
             }
-            if path == FILES_LIST {
-                list_data = Some(data)
-            } else {
-                sig_data = Some(data)
+            match path {
+                FILES_LIST => list_data = Some(data),
+                FILES_SIGNATURE => sig_data = Some(data),
+                _ => key_data = Some(data),
             }
             continue;
         }
@@ -406,19 +421,24 @@ fn extract_inner(package: &Path, dest: &Path, opts: &VerifyOptions) -> Result<Ve
     let sig_text = String::from_utf8(sig_data)
         .map_err(|_| refuse(format!("{FILES_SIGNATURE} is not UTF-8")))?;
     let signature = Signature::parse(&sig_text)?;
-    let (comment, status) = match opts.trusted_key {
-        Some(pk) => (
-            signature.verify(pk, &list_data)?,
-            SignatureStatus::Verified {
-                key_id: public_key_id(pk),
-            },
-        ),
-        None => (
-            signature.unverified_comment()?,
-            SignatureStatus::NotChecked {
-                key_id: signature.key_id(),
-            },
-        ),
+    let key_data = key_data.ok_or_else(|| refuse(format!("missing {FILES_PUBLIC_KEY}")))?;
+    let key_text = String::from_utf8(key_data)
+        .map_err(|_| refuse(format!("{FILES_PUBLIC_KEY} is not UTF-8")))?;
+    let package_key = parse_public_key(&key_text)?;
+    let comment = signature.verify(&package_key, &list_data)?;
+    let key_id = public_key_id(&package_key);
+    let status = match opts.trusted_key {
+        Some(trusted) if public_key_base64(trusted) == public_key_base64(&package_key) => {
+            SignatureStatus::Trusted { key_id }
+        }
+        Some(trusted) => {
+            return Err(Error::Signature(format!(
+                "signed with key {key_id}, but this publisher's key is {}: \
+                 it was not published by the same publisher",
+                public_key_id(trusted)
+            )));
+        }
+        None => SignatureStatus::NewKey { key_id },
     };
 
     for required in [PYPROJECT, UV_LOCK] {
@@ -455,6 +475,7 @@ fn extract_inner(package: &Path, dest: &Path, opts: &VerifyOptions) -> Result<Ve
         manifest,
         files: list,
         signature: status,
+        publisher_key: public_key_base64(&package_key),
         content_hash: content_hash(&list_data),
     })
 }
@@ -602,11 +623,11 @@ source = { virtual = "." }
             v.files.paths().collect::<Vec<_>>(),
             ["main.py", "pkg/util.py", "pyproject.toml", "uv.lock"]
         );
-        assert!(matches!(v.signature, SignatureStatus::Verified { .. }));
+        assert!(matches!(v.signature, SignatureStatus::Trusted { .. }));
         let unchecked = f.verify(&pkg, None).unwrap();
         assert!(matches!(
             unchecked.signature,
-            SignatureStatus::NotChecked { .. }
+            SignatureStatus::NewKey { .. }
         ));
     }
 
@@ -630,6 +651,23 @@ source = { virtual = "." }
             f.verify(&pkg, Some(&other)),
             Err(Error::Signature(_))
         ));
+    }
+
+    #[test]
+    fn refuses_a_swapped_public_key() {
+        let f = fixture();
+        let pkg = f.pack();
+        let other = generate_keys("x", None).unwrap().public_key;
+        let bad = f.dir.path().join("swapped.dsapp");
+        rewrite(&pkg, &bad, |n, d| {
+            let d = if n == FILES_PUBLIC_KEY {
+                other.clone().into_bytes()
+            } else {
+                d
+            };
+            vec![(n.into(), d)]
+        });
+        assert!(matches!(f.verify(&bad, None), Err(Error::Signature(_))));
     }
 
     #[test]

@@ -106,6 +106,16 @@ pub fn parse_public_key(text: &str) -> Result<PublicKey> {
     Ok(pk)
 }
 
+/// The key as one base64 line, the form stored when a namespace's key is pinned.
+pub fn public_key_base64(pk: &PublicKey) -> String {
+    pk.to_base64()
+}
+
+/// The text of a `.pub` file for a key.
+pub fn public_key_file(pk: &PublicKey, comment: &str) -> String {
+    format!("untrusted comment: {comment}\n{}\n", pk.to_base64())
+}
+
 pub fn public_key_id(pk: &PublicKey) -> String {
     key_id(pk.keynum())
 }

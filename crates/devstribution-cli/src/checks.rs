@@ -3,7 +3,7 @@
 use std::fs;
 use std::io::Write;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use anyhow::{Context, Result, bail};
 use devstribution_core::lock::check_lock;
@@ -74,7 +74,7 @@ fn check_code(
         "inputs": manifest.inputs.iter().map(|i| json!({"name": i.name, "type": i.kind})).collect::<Vec<_>>(),
         "excluded_dirs": [".git", ".venv", "venv", "__pycache__", "node_modules", "dist", ".tox"],
     });
-    let mut child = Command::new(crate::env::uv())
+    let mut child = devstribution_host::uv::command()
         .args(["run", "--no-project", "--quiet", "python", "-I"])
         .arg(&script)
         .arg(app_dir)

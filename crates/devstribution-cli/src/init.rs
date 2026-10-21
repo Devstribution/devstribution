@@ -59,7 +59,7 @@ pub fn init(
     fs::write(dir.join("main.py"), main_py)?;
     fs::write(dir.join("AGENTS.md"), AGENTS_MD)?;
     fs::write(dir.join(".gitignore"), GITIGNORE)?;
-    env::run_uv(&["lock", "--quiet"], &dir, &[]).context("creating uv.lock")?;
+    env::run_uv(&["lock", "--quiet"], &dir).context("creating uv.lock")?;
 
     println!("Created {} in {}", id, dir.display());
     println!("  run it:      devstribution dev {}", dir.display());

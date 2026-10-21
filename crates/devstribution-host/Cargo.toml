@@ -1,0 +1,24 @@
+[package]
+name = "devstribution-host"
+description = "Installs, prepares and runs devstribution apps: shared by the launcher and the CLI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow = "1.0.104"
+base64 = "0.23.1"
+devstribution-core.workspace = true
+dirs = "7.0.0"
+getrandom = "0.4.3"
+hex = "0.4.3"
+keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "linux-native"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.0"
+tempfile = "3.27.0"
+
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_Security"] }

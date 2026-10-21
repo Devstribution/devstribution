@@ -22,3 +22,7 @@ pub const FILES_LIST: &str = "FILES.sha256";
 
 /// Name of the publisher's signature over [`FILES_LIST`].
 pub const FILES_SIGNATURE: &str = "FILES.sha256.minisig";
+
+/// Name of the publisher's public key, carried in the package so that the signature can always
+/// be checked, and so that the first install can pin the key for its namespace (TOFU).
+pub const FILES_PUBLIC_KEY: &str = "FILES.sha256.pub";

@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use sha2::{Digest, Sha256};
 
 use crate::paths::validate_relative_path;
-use crate::{Error, FILES_LIST, FILES_SIGNATURE, Result};
+use crate::{Error, FILES_LIST, FILES_PUBLIC_KEY, FILES_SIGNATURE, Result};
 
 /// File path → SHA-256. `BTreeMap<String, _>` iterates in byte order, as the format requires.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -97,7 +97,7 @@ impl FilesList {
 }
 
 fn is_reserved(path: &str) -> bool {
-    path == FILES_LIST || path == FILES_SIGNATURE
+    path == FILES_LIST || path == FILES_SIGNATURE || path == FILES_PUBLIC_KEY
 }
 
 #[cfg(test)]
