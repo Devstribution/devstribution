@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: astral-sh/setup-uv@v6
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Rust format
+        run: cargo fmt --all --check
+      - name: Rust lint
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Rust tests
+        run: cargo test
+
+      - name: Runner tests (Python 3.11)
+        run: uv run --no-project --python 3.11 python -m unittest discover -s runner/tests -v
+      - name: Runner tests (Python 3.13)
+        run: uv run --no-project --python 3.13 python -m unittest discover -s runner/tests -v

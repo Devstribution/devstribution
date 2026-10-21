@@ -1,0 +1,45 @@
+[project]
+name = "excel-report"
+version = "0.1.0"
+description = "Groups the rows of an Excel sheet by a column and writes a summary workbook"
+requires-python = ">=3.11"
+dependencies = ["openpyxl>=3.1"]
+
+[tool.uv]
+package = false                  # apps are not built or installed as packages
+
+[tool.devstribution]
+schema_version = 1
+id = "devstribution/excel-report"
+title = "Excel report"
+description = "Groups the rows of an Excel sheet by a column and writes a summary workbook"
+kind = "form"
+entry = "main:run"
+platforms = ["windows", "macos", "linux"]
+
+[[tool.devstribution.inputs]]
+name = "excel_file"
+type = "file"
+label = "Excel file"
+accept = [".xlsx"]
+
+[[tool.devstribution.inputs]]
+name = "group_by"
+type = "text"
+label = "Column to group by"
+default = "Customer"
+
+[[tool.devstribution.inputs]]
+name = "sum_column"
+type = "text"
+label = "Column to add up (optional)"
+required = false
+
+[[tool.devstribution.outputs]]
+name = "report"
+type = "file"
+label = "Summary workbook"
+
+[[tool.devstribution.outputs]]
+name = "summary"
+type = "text"
