@@ -1,0 +1,18 @@
+[project]
+name = "devstribution-runner"
+version = "0.1.0"
+description = "Run context for devstribution apps (development SDK: type hints and local tests)"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/Devstribution/devstribution"
+
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["devstribution_runner"]

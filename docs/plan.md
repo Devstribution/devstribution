@@ -197,12 +197,17 @@ my-app.dsapp
   main.py         # code (plus any other modules/assets)
   FILES.sha256    # list of hashes of all files (canonical format, see below)
   FILES.sha256.minisig  # author's Ed25519 signature on FILES.sha256 (trusted comment: id, version, schema)
+  FILES.sha256.pub      # author's public key, so the signature can always be checked
 ```
 Optional: `wheels/` folder for offline use (install without internet).
 
-**Canonical format of `FILES.sha256`**: UTF-8, LF line endings, one line per file `<sha256 hex>  <path>`, paths with `/`, sorted by bytes. Every file in the zip must appear, except `FILES.sha256` and its signatures; extra or missing files = refused.
+**Canonical format of `FILES.sha256`**: UTF-8, LF line endings, one line per file `<sha256 hex>  <path>`, paths with `/`, sorted by bytes. Every file in the zip must appear, except `FILES.sha256`, its signature and the public key; extra or missing files = refused.
 
-**Extraction rules** (package refused if violated): no absolute paths or paths with `..`, no symlinks, no duplicate names (including names differing only by case), limits on total size and number of files.
+**Carried public key**: the signature is always verified against `FILES.sha256.pub`, so a damaged or re-signed package is refused even on first install. The key is not trusted by itself: on the first install from a namespace it is pinned (trust on first use, labelled "unverified name"), and later packages from that namespace must carry the same key. Catalog and download-source bindings (Phase 2) replace the first-use pin with a verified one.
+
+**Extraction rules** (package refused if violated): no absolute paths or paths with `..`, no symlinks or special files, no duplicate names (including names differing only by case), no names Windows cannot represent faithfully (`\`, `:`, reserved device names like `CON`, components ending in a dot or space), no encrypted entries, limits on total size and number of files (counted on the bytes actually extracted, not on the zip headers). A failed extraction leaves nothing behind.
+
+**Packing rules**: `pack` leaves out caches and environments (`.git`, `.venv`, `__pycache__`, top-level `dist/`, ...) and `.env` files, refuses symbolic links and files that look like a secret signing key, and writes entries in a fixed order with fixed timestamps.
 
 ### Manifest in `pyproject.toml`
 ```toml
@@ -247,7 +252,7 @@ folders = ["user-selected"]
 sap = false
 secrets = ["sap_user"]           # names required, values in the keyring
 ```
-Dependencies are declared only once, in `[project]`, as in any Python project. `[project].version` must match the version in the signature's trusted comment.
+Dependencies are declared only once, in `[project]`, as in any Python project. `[project].version` must match the version in the signature's trusted comment. In v1 versions are 1 to 4 dot-separated numbers (`1.2.0`), with no pre-release suffixes, so anti-downgrade has one unambiguous ordering; `[project].dynamic` is refused (it needs a build step).
 
 **Resources** cover what pip packages don't: browser binaries for Playwright, ML models, data files. Instead of a post-install script (e.g. `playwright install`), the manifest lists each file's URL and sha256; the launcher downloads and verifies them itself, and since they are in the signed manifest they are covered by the publisher's signature. Archives are unpacked with the same extraction rules as packages. This keeps "no code runs at install time" true. Anything that needs a real system install (drivers, CUDA, SAP GUI) stays a `requires` prerequisite that the launcher checks and explains.
 
@@ -271,13 +276,14 @@ def run(excel_file: Path, ctx) -> dict:
    - The runner is **pure Python, stdlib only**, versioned together with the launcher and stored in the launcher's install folder. Because it is not in the app's environment, it never conflicts with the app's lockfile, and "anything outside the lockfile = refused" stays true.
    - `-I` (isolated mode) ignores `PYTHONPATH`, user site-packages and the current folder; `bootstrap.py` builds `sys.path` explicitly: runner, app code (`apps\<id>\<version-hash>\`), app dependencies.
    - The JSON protocol carries a `protocol` version, so launcher and runner can evolve safely.
-2. Inputs and secrets are passed as JSON on **stdin** (secrets never on files or environment variables); stdin stays open for control messages (e.g. `cancel`); results come back as JSON; stdout/stderr go to the log.
+2. Inputs and secrets are passed as JSON on **stdin** (secrets never on files or environment variables); stdin stays open for control messages (e.g. `cancel`); results come back as JSON; stdout/stderr go to the log. The runner keeps the original stdout for the protocol and points fd 1 at stderr, so the app's own prints (including from C extensions) can't corrupt it; the app gets an empty stdin. The protocol is documented in `runner/devstribution_runner/_runner.py`.
+   - Bytecode goes to a cache outside the app folder (`sys.pycache_prefix`), so the verified, hash-addressed code folder is never modified by running it.
 3. Temporary working folder per run, with a "Cancel"/"Stop" button. Timeout by kind: default on for `form` and `cli` (overridable in the manifest), off for `gui` and `web` (they run until closed), set per schedule for `background`.
 4. Environment created with `uv sync --frozen --no-build --no-dev --no-install-project` from the lockfile, with `UV_PROJECT_ENVIRONMENT` set to `envs\<id>\<version-hash>\` so `uv` does not create a `.venv` inside the app's code folder (in per-machine mode the service installs the same wheels with `uv pip install --target --no-build`); Python managed by `uv` (per-user) or python.org (per-machine); cache shared across apps.
 
 ### Cancellation and cleanup
 COM servers (Excel, Word) are started by Windows' DCOM service, not by the app's process, so they are **outside the Job Object** and would survive a kill as orphan processes.
-1. **Cooperative cancellation first**: on Cancel/timeout the launcher sends `cancel` on stdin; the runner sets `ctx.cancelled` and raises a `Cancelled` exception at the next `ctx.progress()`/`ctx.log()` call; the app's `finally` blocks and `ctx.on_cleanup()` functions run.
+1. **Cooperative cancellation first**: on Cancel/timeout the launcher sends `cancel` on stdin; the runner sets `ctx.cancelled` and raises a `Cancelled` exception at the next `ctx.progress()`/`ctx.log()` call; the app's `finally` blocks and `ctx.on_cleanup()` functions run. `Cancelled` derives from `BaseException`, so `except Exception:` in the app doesn't swallow it. If the app reaches no `ctx` call within 3 s, the runner interrupts the main thread (`KeyboardInterrupt`, which still runs `finally` blocks). If stdin closes (the launcher is gone), the run is cancelled the same way, so no app outlives its launcher.
 2. **The app creates the COM object, the runner tracks it**. The runner stays stdlib-only, so it does not create COM objects itself (that needs pywin32 or comtypes). The app depends on pywin32 in its own lockfile and registers the object:
    ```python
    excel = win32com.client.DispatchEx("Excel.Application")  # always a NEW instance
@@ -285,7 +291,7 @@ COM servers (Excel, Word) are started by Windows' DCOM service, not by the app's
    ```
    - **`DispatchEx`, never `Dispatch`**: `Dispatch` attaches to an Excel the user already has open, so cleanup would close the user's own workbooks. `devstribution dev`/`pack` warn when the code calls `Dispatch("Excel.Application")` (and the same for Word/Outlook), and the docs and example app use `DispatchEx` only.
    - `track_com(obj)` reads `obj.Hwnd` and gets the server's PID with `GetWindowThreadProcessId` via `ctypes` (stdlib), then sends it to the launcher on stdout. On cleanup it calls `obj.Quit()`.
-   - Safety check: the PID is recorded only if that process was started **after** the run began (process creation time via `ctypes`), so a PID that points at a pre-existing Excel is never recorded.
+   - Safety check: the PID is recorded only if that process was started **after** the run began (process creation time via `ctypes`), so a PID that points at a pre-existing Excel is never recorded. In that case `Quit()` is not registered either: the object belongs to an Excel the user already had open.
 3. **Hard kill** after a grace period (e.g. 10 s): the launcher terminates the Job Object, then terminates **only** the COM server PIDs recorded for this run, after checking that each PID still has the same creation time (PIDs get reused). Never Excel instances the user opened themselves.
 4. **SAP GUI**: scripting attaches to the user's existing SAP GUI session, which is never killed; the helper only closes the connections/windows the app opened.
 
@@ -370,6 +376,8 @@ The outcome decides the default installation mode, and whether the per-machine s
 3. Example apps: a `form` app that loads an Excel file, queries it and returns the result; a small `gui` app (tkinter, stdlib) to prove the second kind.
 4. Install from a `.dsapp` file (file association) with safe extraction.
 5. `devstribution keygen` / `dev` / `pack` commands for developers (`pack` checks wheels-only and the `run()` signature, and signs the package).
+
+Status: all five items are built as a proof of concept (launcher in `launcher/`, install and runs in `devstribution-host`), with key pinning on first use already in place from Phase 2. Tested end to end on Linux; the Windows-specific parts (Job Object, COM cleanup, Mark-of-the-Web, file association) compile but still have to be run on Windows. See `docs/HANDOFF.md`.
 
 **Phase 2: trust**
 6. Enforcement of the author signature (minisign format, trusted comment), namespace binding (catalog, download source, "unverified name" for TOFU).

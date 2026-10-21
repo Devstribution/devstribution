@@ -1,0 +1,17 @@
+# Rust
+/target/
+
+# Node (launcher UI)
+node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# devstribution
+dist/
+*.dsapp
+*.key
+.env

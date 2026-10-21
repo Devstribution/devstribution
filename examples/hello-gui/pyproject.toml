@@ -1,0 +1,18 @@
+[project]
+name = "hello-gui"
+version = "0.1.0"
+description = "A tkinter window: the smallest app that brings its own UI"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.uv]
+package = false                  # apps are not built or installed as packages
+
+[tool.devstribution]
+schema_version = 1
+id = "devstribution/hello-gui"
+title = "Hello GUI"
+description = "A tkinter window: the smallest app that brings its own UI"
+kind = "gui"
+entry = "main"                   # run as `python -m main`
+platforms = ["windows", "macos", "linux"]
