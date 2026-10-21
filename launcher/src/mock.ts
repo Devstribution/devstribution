@@ -1,0 +1,333 @@
+// Demo backend for previewing the UI in a browser. Nothing here runs in the real launcher.
+
+import type { Api, AppView, PendingInstall, RunEvent, RunRecord, Settings, StepEvent, Stats } from "./api";
+
+const now = () => Math.floor(Date.now() / 1000);
+const DAY = 86_400;
+
+const base = { trust: "first_use" as const, requires: [], origin: null, last_inputs: {}, secrets: [] };
+const noPerms = { network: [], folders: [], sap: false, secrets: [] };
+
+const apps: AppView[] = [
+  {
+    ...base,
+    id: "devstribution/excel-report",
+    title: "Excel report",
+    description: "Groups the rows of an Excel sheet by a column and writes a summary workbook.",
+    version: "0.1.0",
+    kind: "form",
+    namespace: "devstribution",
+    key_id: "2972B9E777FFC794",
+    icon: null,
+    inputs: [
+      { name: "excel_file", type: "file", label: "Excel file", accept: [".xlsx"], choices: [], required: true },
+      { name: "group_by", type: "text", label: "Column to group by", accept: [], choices: [], default: "Customer", required: true },
+      { name: "sum_column", type: "text", label: "Column to add up", help: "Optional: leave empty to only count rows.", accept: [], choices: [], required: false },
+    ],
+    outputs: [
+      { name: "report", type: "file", label: "Summary workbook" },
+      { name: "summary", type: "text" },
+    ],
+    permissions: { ...noPerms, folders: ["user-selected"] },
+    installed_at: now() - 9 * DAY,
+    last_inputs: { excel_file: "C:\\Users\\edo\\Documents\\orders-2026.xlsx", group_by: "Customer", sum_column: "Amount" },
+  },
+  {
+    ...base,
+    id: "finance/invoice-extractor",
+    title: "Invoice extractor",
+    description: "Reads PDF invoices from a folder, extracts totals and VAT, and posts them to the accounting API.",
+    version: "1.4.2",
+    kind: "form",
+    namespace: "finance",
+    key_id: "8D41C0A9F2B37E10",
+    icon: null,
+    inputs: [
+      { name: "folder", type: "folder", label: "Invoices folder", accept: [], choices: [], required: true },
+      { name: "since", type: "date", label: "Invoices since", accept: [], choices: [], required: false },
+      { name: "currency", type: "choice", label: "Currency", accept: [], choices: ["EUR", "USD", "GBP"], default: "EUR", required: true },
+      { name: "post", type: "bool", label: "Post to accounting", help: "Off = dry run, only the report is written.", accept: [], choices: [], default: false, required: true },
+    ],
+    outputs: [{ name: "report", type: "file", label: "Extraction report" }],
+    permissions: { network: ["api.accounting.example.com"], folders: ["user-selected"], sap: false, secrets: ["api_token"] },
+    secrets: [{ name: "api_token", set: true }],
+    installed_at: now() - 21 * DAY,
+  },
+  {
+    ...base,
+    id: "ops/sap-stock-check",
+    title: "SAP stock check",
+    description: "Checks stock levels for a list of materials in SAP and flags the ones below their reorder point.",
+    version: "2.0.1",
+    kind: "form",
+    namespace: "ops",
+    key_id: "51E0AB7733C9D2F4",
+    icon: null,
+    inputs: [
+      { name: "materials", type: "file", label: "Materials list", accept: [".xlsx", ".csv"], choices: [], required: true },
+      { name: "plant", type: "number", label: "Plant", accept: [], choices: [], default: 1000, required: true },
+    ],
+    outputs: [{ name: "report", type: "file", label: "Stock report" }],
+    permissions: { ...noPerms, sap: true, folders: ["user-selected"] },
+    requires: ["sap-gui-scripting"],
+    installed_at: now() - 3 * DAY,
+  },
+  {
+    ...base,
+    id: "devstribution/hello-gui",
+    title: "Hello GUI",
+    description: "A tkinter window: the smallest app that brings its own UI.",
+    version: "0.1.0",
+    kind: "gui",
+    namespace: "devstribution",
+    key_id: "2972B9E777FFC794",
+    icon: null,
+    inputs: [],
+    outputs: [],
+    permissions: noPerms,
+    installed_at: now() - 1 * DAY,
+  },
+];
+
+function seeded(seed: number) {
+  return () => {
+    seed = (seed * 16807) % 2147483647;
+    return seed / 2147483647;
+  };
+}
+
+function demoRuns(): RunRecord[] {
+  const rand = seeded(42);
+  const runs: RunRecord[] = [];
+  for (let d = 13; d >= 0; d--) {
+    const n = Math.floor(rand() * 6) + (d % 7 < 5 ? 3 : 0);
+    for (let i = 0; i < n; i++) {
+      const app = apps[Math.floor(rand() * 3)];
+      const started = now() - d * DAY - Math.floor(rand() * 8 * 3600);
+      const r = rand();
+      const status = r > 0.93 ? "error" : r > 0.88 ? "cancelled" : "ok";
+      const dur = Math.floor(2000 + rand() * 90_000);
+      runs.push({
+        id: `${started}-${app.id.split("/")[1]}`,
+        app_id: app.id,
+        app_title: app.title,
+        version: app.version,
+        kind: app.kind,
+        started_at: started,
+        finished_at: started + Math.floor(dur / 1000),
+        status,
+        duration_ms: dur,
+        outputs: status === "ok" ? { report: `C:\\Users\\edo\\AppData\\Local\\devstribution\\runs\\${started}\\output\\report.xlsx` } : {},
+        error: status === "error" ? "ValueError: column 'Amount' not found; the sheet has: Order, Customer, Total" : null,
+        output_dir: `C:\\Users\\edo\\AppData\\Local\\devstribution\\runs\\${started}\\output`,
+      });
+    }
+  }
+  return runs.sort((a, b) => b.started_at - a.started_at);
+}
+
+let runs = demoRuns();
+
+function stats(): Stats {
+  const per_day = [] as Stats["per_day"];
+  for (let d = 13; d >= 0; d--) {
+    const date = new Date((now() - d * DAY) * 1000).toISOString().slice(0, 10);
+    per_day.push({ date, ok: 0, error: 0, cancelled: 0 });
+  }
+  const top = new Map<string, { app_id: string; title: string; runs: number }>();
+  let ok = 0, failed = 0, cancelled = 0, total = 0;
+  for (const r of runs) {
+    const date = new Date(r.started_at * 1000).toISOString().slice(0, 10);
+    const day = per_day.find((p) => p.date === date);
+    if (!day || r.status === "running") continue;
+    if (r.status === "ok") { day.ok++; ok++; }
+    if (r.status === "error") { day.error++; failed++; }
+    if (r.status === "cancelled") { day.cancelled++; cancelled++; }
+    total += r.duration_ms;
+    const t = top.get(r.app_id) ?? { app_id: r.app_id, title: r.app_title, runs: 0 };
+    t.runs++;
+    top.set(r.app_id, t);
+  }
+  return {
+    apps_installed: apps.length,
+    runs: ok + failed + cancelled,
+    ok, failed, cancelled,
+    success_rate: ok + failed ? ok / (ok + failed) : null,
+    total_duration_ms: total,
+    per_day,
+    top_apps: [...top.values()].sort((a, b) => b.runs - a.runs).slice(0, 5),
+  };
+}
+
+const pending: PendingInstall = {
+  token: "demo",
+  id: "acme-ops/weekly-kpi-digest",
+  title: "Weekly KPI digest",
+  description: "Collects the week's KPIs from the shared drive and builds the Monday slide deck.",
+  version: "1.0.0",
+  kind: "form",
+  namespace: "acme-ops",
+  key_id: "C3F19A0B66D2E871",
+  trust: "new_publisher",
+  icon: null,
+  permissions: { network: ["sharepoint.acme.example"], folders: ["user-selected"], sap: false, secrets: ["sharepoint_token"] },
+  requires: ["excel"],
+  platforms: ["windows"],
+  platform_supported: true,
+  input_count: 2,
+  file_count: 7,
+  size_bytes: 48_211,
+  origin: { zone_id: 3, host_url: "https://github.com/acme-ops/weekly-kpi-digest/releases/download/v1.0.0/weekly-kpi-digest-1.0.0.dsapp" },
+  installed_version: null,
+  action: "install",
+  warnings: [
+    "First app from `acme-ops` on this computer. Its name is not verified: install it only if you trust where you got it. Future versions must come from the same key.",
+    "This file was downloaded from the internet.",
+  ],
+};
+
+type Listener<T> = (v: T) => void;
+
+export function mockApi(): Api {
+  const runListeners: Listener<[string, RunEvent]>[] = [];
+  const stepListeners: Listener<StepEvent>[] = [];
+  const changed: Listener<void>[] = [];
+  const timers = new Map<string, number>();
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const emit = (id: string, e: RunEvent) => runListeners.forEach((l) => l([id, e]));
+  const off = <T>(list: T[], item: T) => () => { const i = list.indexOf(item); if (i >= 0) list.splice(i, 1); };
+
+  return {
+    preview: true,
+    async overview() {
+      return { apps: structuredClone(apps), stats: stats(), recent_runs: runs.slice(0, 8) };
+    },
+    async getApp(id) {
+      const a = apps.find((x) => x.id === id);
+      if (!a) throw new Error(`\`${id}\` is not installed`);
+      return structuredClone(a);
+    },
+    async pickPackage() { return "C:\\Users\\edo\\Downloads\\weekly-kpi-digest-1.0.0.dsapp"; },
+    async pickInput(input) {
+      return input.type === "folder" ? "C:\\Users\\edo\\Documents\\Invoices" : "C:\\Users\\edo\\Documents\\orders-2026.xlsx";
+    },
+    async inspectPackage() { await sleep(500); return structuredClone(pending); },
+    async confirmInstall() {
+      const steps: [StepEvent["step"], string][] = [
+        ["files", "Copying the verified files"],
+        ["environment", "Using CPython 3.12.8"],
+        ["environment", "Resolved 9 packages in 12ms"],
+        ["environment", "Prepared 9 packages in 1.21s"],
+        ["environment", "Installed 9 packages in 48ms"],
+        ["ready", "Ready"],
+      ];
+      for (const [step, message] of steps) {
+        await sleep(450);
+        stepListeners.forEach((l) => l({ key: "demo", step, message }));
+      }
+      const app: AppView = {
+        ...base,
+        id: pending.id, title: pending.title, description: pending.description, version: pending.version,
+        kind: pending.kind, namespace: pending.namespace, key_id: pending.key_id, icon: null,
+        inputs: [
+          { name: "week", type: "date", label: "Week starting", accept: [], choices: [], required: true },
+          { name: "team", type: "choice", label: "Team", accept: [], choices: ["Sales", "Ops", "Support"], default: "Ops", required: true },
+        ],
+        outputs: [{ name: "deck", type: "file", label: "Slide deck" }],
+        permissions: pending.permissions, requires: pending.requires,
+        installed_at: now(), secrets: [{ name: "sharepoint_token", set: false }],
+      };
+      apps.push(app);
+      return structuredClone(app);
+    },
+    async discardInstall() {},
+    async uninstall(id) { const i = apps.findIndex((a) => a.id === id); if (i >= 0) apps.splice(i, 1); },
+    async repair() {
+      for (const m of ["Rebuilding the Python environment", "Installed 3 packages in 31ms", "Ready"]) {
+        await sleep(400);
+        stepListeners.forEach((l) => l({ key: "repair", step: m === "Ready" ? "ready" : "environment", message: m }));
+      }
+    },
+    async startRun(id, inputs) {
+      const app = apps.find((a) => a.id === id)!;
+      app.last_inputs = { ...inputs };
+      const record: RunRecord = {
+        id: `${now()}-${id.split("/")[1]}-${Math.random().toString(16).slice(2, 6)}`,
+        app_id: id, app_title: app.title, version: app.version, kind: app.kind,
+        started_at: now(), finished_at: null, status: "running", duration_ms: 0, outputs: {}, error: null,
+        output_dir: "C:\\Users\\edo\\AppData\\Local\\devstribution\\runs\\demo\\output",
+      };
+      runs.unshift(record);
+      const script: RunEvent[] = app.kind === "gui"
+        ? [{ type: "log", level: "info", message: "Window opened" }, { type: "progress", value: null, message: "Running: close the app's window to finish" }]
+        : [
+            { type: "progress", value: 0.05, message: "Opening orders-2026.xlsx" },
+            { type: "output", line: "openpyxl: reading sheet 'Orders' (read-only mode)" },
+            { type: "progress", value: 0.25, message: "Reading row 500" },
+            { type: "progress", value: 0.48, message: "Reading row 1000" },
+            { type: "progress", value: 0.71, message: "Reading row 1500" },
+            { type: "log", level: "info", message: "1,842 rows, 6 groups" },
+            { type: "progress", value: 0.95, message: "Writing the report" },
+          ];
+      let i = 0;
+      const started = Date.now();
+      const timer = window.setInterval(() => {
+        if (i < script.length) { emit(record.id, script[i++]); return; }
+        if (app.kind === "gui" && Date.now() - started < 5000) return;
+        window.clearInterval(timer);
+        timers.delete(record.id);
+        const result = {
+          status: "ok" as const,
+          outputs: app.outputs.length
+            ? { report: `${record.output_dir}\\orders-2026-by-customer.xlsx`, summary: "1842 rows in 6 groups of Customer" }
+            : {},
+          duration_ms: Date.now() - started,
+        };
+        Object.assign(record, { status: "ok", outputs: result.outputs, duration_ms: result.duration_ms, finished_at: now() });
+        emit(record.id, { type: "finished", result });
+        changed.forEach((l) => l());
+      }, 650);
+      timers.set(record.id, timer);
+      return structuredClone(record);
+    },
+    async cancelRun(runId) {
+      const t = timers.get(runId);
+      if (t === undefined) return;
+      emit(runId, { type: "cancelling" });
+      await sleep(600);
+      window.clearInterval(t);
+      timers.delete(runId);
+      const r = runs.find((x) => x.id === runId)!;
+      Object.assign(r, { status: "cancelled", finished_at: now() });
+      emit(runId, { type: "finished", result: { status: "cancelled", outputs: {}, error: "the app was stopped", duration_ms: 1200 } });
+      changed.forEach((l) => l());
+    },
+    async listRuns(appId, limit) { return runs.filter((r) => !appId || r.app_id === appId).slice(0, limit ?? 200); },
+    async runLog() {
+      return "openpyxl: reading sheet 'Orders' (read-only mode)\nTraceback (most recent call last):\n  File \"main.py\", line 17, in run\n    sum_index = _column(header, sum_column)\nValueError: column 'Amount' not found; the sheet has: Order, Customer, Total\n";
+    },
+    async openOutput() {},
+    async setSecret(id, name) { const a = apps.find((x) => x.id === id); const s = a?.secrets.find((x) => x.name === name); if (s) s.set = true; },
+    async clearSecret(id, name) { const a = apps.find((x) => x.id === id); const s = a?.secrets.find((x) => x.name === name); if (s) s.set = false; },
+    async settings(): Promise<Settings> {
+      return {
+        version: "0.1.0",
+        data_dir: "C:\\Users\\edo\\AppData\\Local\\devstribution",
+        platform: "windows",
+        mode: "free",
+        uv_version: "uv 0.11.32",
+        publishers: [
+          { namespace: "devstribution", key_id: "2972B9E777FFC794", pinned_at: now() - 9 * DAY, source: "first-use" },
+          { namespace: "finance", key_id: "8D41C0A9F2B37E10", pinned_at: now() - 21 * DAY, source: "first-use" },
+          { namespace: "ops", key_id: "51E0AB7733C9D2F4", pinned_at: now() - 3 * DAY, source: "first-use" },
+        ],
+      };
+    },
+    async takePendingFiles() { return []; },
+    async onRunEvent(cb) { const l: Listener<[string, RunEvent]> = ([id, e]) => cb(id, e); runListeners.push(l); return off(runListeners, l); },
+    async onInstallStep(cb) { stepListeners.push(cb); return off(stepListeners, cb); },
+    async onRunsChanged(cb) { changed.push(cb); return off(changed, cb); },
+    async onOpenFiles() { return () => {}; },
+    async onDragDrop() { return () => {}; },
+  };
+}

@@ -197,10 +197,13 @@ my-app.dsapp
   main.py         # code (plus any other modules/assets)
   FILES.sha256    # list of hashes of all files (canonical format, see below)
   FILES.sha256.minisig  # author's Ed25519 signature on FILES.sha256 (trusted comment: id, version, schema)
+  FILES.sha256.pub      # author's public key, so the signature can always be checked
 ```
 Optional: `wheels/` folder for offline use (install without internet).
 
-**Canonical format of `FILES.sha256`**: UTF-8, LF line endings, one line per file `<sha256 hex>  <path>`, paths with `/`, sorted by bytes. Every file in the zip must appear, except `FILES.sha256` and its signatures; extra or missing files = refused.
+**Canonical format of `FILES.sha256`**: UTF-8, LF line endings, one line per file `<sha256 hex>  <path>`, paths with `/`, sorted by bytes. Every file in the zip must appear, except `FILES.sha256`, its signature and the public key; extra or missing files = refused.
+
+**Carried public key**: the signature is always verified against `FILES.sha256.pub`, so a damaged or re-signed package is refused even on first install. The key is not trusted by itself: on the first install from a namespace it is pinned (trust on first use, labelled "unverified name"), and later packages from that namespace must carry the same key. Catalog and download-source bindings (Phase 2) replace the first-use pin with a verified one.
 
 **Extraction rules** (package refused if violated): no absolute paths or paths with `..`, no symlinks or special files, no duplicate names (including names differing only by case), no names Windows cannot represent faithfully (`\`, `:`, reserved device names like `CON`, components ending in a dot or space), no encrypted entries, limits on total size and number of files (counted on the bytes actually extracted, not on the zip headers). A failed extraction leaves nothing behind.
 
@@ -374,7 +377,7 @@ The outcome decides the default installation mode, and whether the per-machine s
 4. Install from a `.dsapp` file (file association) with safe extraction.
 5. `devstribution keygen` / `dev` / `pack` commands for developers (`pack` checks wheels-only and the `run()` signature, and signs the package).
 
-Status: items 3 and 5 are done, together with the core of item 4 (safe extraction and verification in `devstribution-core`) and the runner part of item 2 (`runner/`, protocol v1, cooperative cancellation). Next: the Tauri launcher (item 1), Job Objects and file association, which need Windows.
+Status: all five items are built as a proof of concept (launcher in `launcher/`, install and runs in `devstribution-host`), with key pinning on first use already in place from Phase 2. Tested end to end on Linux; the Windows-specific parts (Job Object, COM cleanup, Mark-of-the-Web, file association) compile but still have to be run on Windows. See `docs/HANDOFF.md`.
 
 **Phase 2: trust**
 6. Enforcement of the author signature (minisign format, trusted comment), namespace binding (catalog, download source, "unverified name" for TOFU).

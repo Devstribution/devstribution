@@ -6,18 +6,27 @@ installers, IT tickets and "works on my machine". **devstribution** distributes 
 verifies, installs and runs. What an app may do is decided by trust in its publisher, and the
 platform guarantees that what you run is exactly what that publisher published.
 
-**Status: pre-alpha.** Nothing here is ready for real users yet. The design is in
+**Status: pre-alpha proof of concept.** Not ready for real users yet. The design is in
 [docs/plan.md](docs/plan.md).
+
+![Home dashboard](docs/images/home.png)
 
 ## What exists today
 
-| Part | Where | State |
-|---|---|---|
-| Package format: manifest, `FILES.sha256`, minisign signatures, safe extraction, wheels-only lockfile check | `crates/devstribution-core` | Working, tested |
-| Developer CLI: `init`, `dev`, `pack`, `keygen`, `verify` | `crates/devstribution-cli` | Working for `form`, `gui` and `cli` apps |
-| Python runner (stdlib only) and its JSON protocol | `runner/` | Working, tested |
-| Example apps | `examples/` | `excel-report` (form), `hello-gui` (gui) |
-| Launcher (Tauri) | — | Next |
+A working proof of concept (see [docs/HANDOFF.md](docs/HANDOFF.md) for what is verified):
+
+| Part | Where |
+|---|---|
+| Launcher (Tauri): dashboard, apps, install confirmation, run screen, history, settings | `launcher/` |
+| Install store, uv environments, supervised runs, history, secrets | `crates/devstribution-host` |
+| Package format: manifest, `FILES.sha256`, minisign signatures, safe extraction, wheels-only check | `crates/devstribution-core` |
+| Developer CLI: `init`, `dev`, `pack`, `keygen`, `verify` | `crates/devstribution-cli` |
+| Python runner (stdlib only) and its JSON protocol | `runner/` |
+| Example apps: `excel-report` (form), `hello-gui` (gui) | `examples/` |
+
+| Install confirmation | Running an app |
+|---|---|
+| ![Install](docs/images/install.png) | ![App](docs/images/app.png) |
 
 ## Try it
 
@@ -37,10 +46,21 @@ An app is an ordinary Python folder: `pyproject.toml` with a `[tool.devstributio
 a `uv.lock`, and the code. See `examples/` and the `AGENTS.md` that `init` writes for coding
 agents.
 
+Run the launcher (needs Node 22+; on Linux also the WebKitGTK libraries listed in the CI workflow):
+
+```sh
+cd launcher
+npm ci
+npm run sidecar        # puts your uv next to the launcher
+npx tauri dev
+```
+
+`npm run dev` alone serves the UI in a browser with demo data.
+
 ## Development
 
 ```sh
-cargo test                                            # Rust: core + CLI end-to-end
+cargo test                                            # core, host (install and run with uv), CLI
 python3 -m unittest discover -s runner/tests          # runner protocol and code checks
 ```
 

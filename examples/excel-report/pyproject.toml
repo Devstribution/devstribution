@@ -43,3 +43,6 @@ label = "Summary workbook"
 [[tool.devstribution.outputs]]
 name = "summary"
 type = "text"
+
+[tool.devstribution.permissions]
+folders = ["user-selected"]      # reads the file the user picks, writes to its output folder

@@ -1,0 +1,48 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "devstribution",
+  "version": "0.1.0",
+  "identifier": "dev.devstribution.launcher",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "devstribution",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 980,
+        "minHeight": 640,
+        "center": true,
+        "dragDropEnabled": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "msi", "deb", "appimage", "dmg"],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "externalBin": ["binaries/uv"],
+    "fileAssociations": [
+      {
+        "ext": ["dsapp"],
+        "name": "devstribution app",
+        "description": "devstribution app package",
+        "mimeType": "application/x-devstribution-app",
+        "role": "Viewer"
+      }
+    ],
+    "shortDescription": "Run Python apps from publishers you trust",
+    "longDescription": "devstribution installs, verifies and runs signed Python apps.",
+    "windows": {
+      "nsis": { "installMode": "currentUser" }
+    }
+  }
+}
