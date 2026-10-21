@@ -13,7 +13,7 @@ The proof of concept from [`plan.md`](plan.md) is built and open for review as
 | `runner/` (stdlib-only Python runner, protocol v1) | Done, 15 tests |
 | `launcher/` (Tauri app, Metricool-inspired UI, browser demo mode) | Done, verified by hand on Linux |
 | `examples/` (`excel-report`, `hello-gui`) | Done |
-| CI on Windows, macOS, Linux | Running on PR #3 (see below) |
+| CI on Windows, macOS, Linux | Green on PR #3 (see below) |
 
 Verified end to end in the real launcher on Linux: open a `.dsapp` → confirmation screen with the
 signature result and permissions → install (real uv environment) → run with the native file picker →
