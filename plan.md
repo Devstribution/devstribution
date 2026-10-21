@@ -40,7 +40,12 @@ Existing alternatives to study: Windmill, Streamlit, Gradio, NiceGUI, marimo / s
 - **Per-machine** (for WDAC/AppLocker environments; installer run by an admin / Intune):
   - **Interpreter**: the official **python.org** build (Authenticode-signed by the Python Software Foundation), installed in `Program Files\devstribution\python\<version>\`. Not python-build-standalone, which is unsigned.
   - **Dependencies**: installed into `Program Files\devstribution\envs\<id>\<version-hash>\` (admin-writable only, so WDAC path rules and AppLocker default rules allow the `.pyd` files). No venv: the runner adds the folder to `sys.path`.
-  - **Who writes there**: a small **privileged Windows service** (`devstribution-svc`, part of the Rust core, installed by the per-machine installer). The UI asks it over a local named pipe (ACL: interactive users only) to install an app. The service **re-verifies** the package itself (hashes, signature, policy) and never trusts the UI's verdict. It never runs package code: thanks to the wheels-only rule (see "Dependencies"), installing means only verifying hashes and unzipping wheels, so the elevated part does nothing an attacker can steer into running code.
+  - **Who writes there**: a small **privileged Windows service** (`devstribution-svc`, part of the Rust core, installed by the per-machine installer). The UI asks it over a local named pipe (ACL: interactive users only) to install an app. Rules:
+    - **Managed mode only**. Files in `Program Files` are trusted by WDAC, and in free mode anyone can create a signing key, so a service that installed any validly signed package would let any user or user-level malware place arbitrary `.pyd` files in a trusted folder: a WDAC bypass. The service therefore refuses every request unless an HKLM policy exists, and installs only packages signed by authors that policy approves (plus any countersignatures it requires). Without a policy, the launcher installs in per-user mode instead (where WDAC, if present, still applies normally). The per-machine installer warns IT if it is deployed without a policy.
+    - **Copy first, then verify**. The service never verifies files in a folder the user can write to, where they could be swapped between the check and the install. It copies the `.dsapp` (and any offline `wheels/`) into its own staging folder `%ProgramData%\devstribution\staging\<random>\` (ACL: SYSTEM and Administrators only), opened with exclusive access, and runs extraction, hash, signature, policy and anti-downgrade checks there. Wheels downloaded from the index are written to the same staging folder and checked against the lockfile hashes before being unpacked.
+    - **Never trusts the UI's verdict**: it repeats every check itself.
+    - **Never runs package code**: thanks to the wheels-only rule (see "Dependencies"), installing means only verifying hashes and unzipping wheels, so the elevated part does nothing an attacker can steer into running code.
+    - **Keeps its state in protected folders**: app code goes in `Program Files\devstribution\apps\<id>\<version-hash>\` and the trust state (pinned keys, highest installed version per app) in `%ProgramData%\devstribution\state\` (ACL: SYSTEM and Administrators only), so a standard user cannot reset anti-downgrade or replace app code.
   - **Alternatives if IT prefers them** (documented, not default): (a) designate the launcher as an Intune/AppLocker **managed installer**, which tags the files it writes as trusted; simpler, but every wheel it downloads becomes trusted, so it relies entirely on the trust policy; (b) the IT team signs dependencies with its own code-signing certificate via an internal mirror.
   - Phase 0 decides which mode is the default.
 
@@ -99,7 +104,10 @@ Principle: **robust for IT, frictionless for everyone else**. One launcher; beha
 - The app `id` is `<author>/<app>`. The `<author>` part is the **namespace**, and it is the only author identity: the manifest has no self-declared `author` or `key` field, because anything in the manifest is written by the publisher.
 - On verification, the launcher identifies the signing key from the signature itself (minisign key ID), then looks up which namespace that key owns:
   - **Managed mode**: from the policy / imported `.trust` files (`.trust` = author namespace + public keys).
-  - **Free mode**: from the catalog (the catalog countersigns that namespace X belongs to the GitHub user/org that owns the source repo), or else **trust on first use**: the first key seen for a namespace is pinned locally and the user is shown its fingerprint; a later package for that namespace signed by a different key is refused unless it is a declared rotation.
+  - **Free mode**, in order of strength:
+    1. **Catalog**: the catalog countersigns that namespace X belongs to the GitHub user/org that owns the source repo.
+    2. **Download source**: for `devstribution://install/<github-user>/<app>` links and other launcher downloads from GitHub, the namespace must equal the owner of the GitHub repo the release was downloaded from (`<github-user>`, compared case-insensitively). A mismatch = refused. This uses GitHub's own account ownership as the proof, with no server of ours.
+    3. **Trust on first use**, only for files received outside GitHub (email, network share): the first key seen for a namespace is pinned locally and a later package for that namespace signed by a different key is refused unless it is a declared rotation. Because whoever arrives first could claim any name, the confirmation screen marks such a namespace **"unverified name"** with the key fingerprint, and it never gets the verified style of options 1-2. If the same namespace is later verified by the catalog or a GitHub download with a different key, the launcher stops and explains the conflict instead of choosing silently.
 - **Rule**: the namespace in `id` must be owned by the key that verified the signature, otherwise the package is refused. A trusted author A can therefore never publish or overwrite `B/app`.
 - The signature's **trusted comment** (signed in minisign) contains `id=<id> version=<version> schema=<n>`; the launcher checks that it matches the manifest, so the key facts can be read and checked before extraction.
 
@@ -120,7 +128,7 @@ Principle: **robust for IT, frictionless for everyone else**. One launcher; beha
 | Launcher updates | Tauri updater plugin (signed updates), can be disabled by IT (distribution via Intune/winget) |
 | Dependencies | The signature covers the manifest + lockfile with hashes; anything outside the lockfile = refused. **Wheels only**: every package in `uv.lock` must have a wheel for the target platform; `devstribution pack` refuses the package otherwise, and installation uses `--no-build`, so no `setup.py` or build backend ever runs. Allowed only in `devstribution dev`. Optional internal mirror from policy |
 | Support | IT-oriented docs, policy dry-run mode, no feature that requires a server |
-| Threat model | One page: threat → what blocks it → what it does NOT cover. Covered: malicious or compromised author, author impersonating another namespace, downgrade to an old vulnerable version, code running at install time, `devstribution://` links from malicious sites, tampered packages. Not covered: local admin, pre-existing malware, bugs in the code of signed apps |
+| Threat model | One page: threat → what blocks it → what it does NOT cover. Covered: malicious or compromised author, author impersonating another namespace, downgrade to an old vulnerable version, code running at install time, use of the per-machine service to place untrusted code in a WDAC-trusted folder, files swapped between check and install, `devstribution://` links from malicious sites, tampered packages. Not covered: local admin, pre-existing malware, bugs in the code of signed apps |
 
 **Implementation order**: (1) author signatures + namespace binding + free/managed mode + minimal policy, (2) `.trust` and import, (3) revocation, rotation, anti-downgrade, logs, (4) advanced options (ring, mirror, pin).
 
@@ -188,7 +196,7 @@ def run(excel_file: Path, ctx) -> dict:
     return {"report": out_path}
 ```
 - The manifest is the **single source** of inputs; `devstribution dev` and `devstribution pack` check that the signature of `run()` matches (same names and compatible types) and refuse the package otherwise.
-- `ctx` exposes `progress()`, `log()`, `output_dir`, `secrets.get(name)`, `cancelled`, `on_cleanup(fn)` and `com(prog_id)` (see "Cancellation and cleanup").
+- `ctx` exposes `progress()`, `log()`, `output_dir`, `secrets.get(name)`, `cancelled`, `on_cleanup(fn)` and `track_com(obj)` (see "Cancellation and cleanup").
 - The return value is a dict whose keys are the `outputs`; files must be written to `ctx.output_dir`.
 - Errors: an exception = failed run, with the traceback in the local log and an offer to create a diagnostic package.
 - For development, the same `ctx` API is published on PyPI as `devstribution-runner` (type hints, local tests). Apps add it as a **dev dependency** only; it is never installed in production environments (`--no-dev`), because the launcher provides the runner.
@@ -200,13 +208,20 @@ def run(excel_file: Path, ctx) -> dict:
    - The JSON protocol carries a `protocol` version, so launcher and runner can evolve safely.
 2. Inputs and secrets are passed as JSON on **stdin** (secrets never on files or environment variables); stdin stays open for control messages (e.g. `cancel`); results come back as JSON; stdout/stderr go to the log.
 3. Temporary working folder per run, with a timeout and a "Cancel" button.
-4. Environment created with `uv sync --frozen --no-build --no-dev --no-install-project` from the lockfile (in per-machine mode the service installs the same wheels with `uv pip install --target --no-build`); Python managed by `uv` (per-user) or python.org (per-machine); cache shared across apps.
+4. Environment created with `uv sync --frozen --no-build --no-dev --no-install-project` from the lockfile, with `UV_PROJECT_ENVIRONMENT` set to `envs\<id>\<version-hash>\` so `uv` does not create a `.venv` inside the app's code folder (in per-machine mode the service installs the same wheels with `uv pip install --target --no-build`); Python managed by `uv` (per-user) or python.org (per-machine); cache shared across apps.
 
 ### Cancellation and cleanup
 COM servers (Excel, Word) are started by Windows' DCOM service, not by the app's process, so they are **outside the Job Object** and would survive a kill as orphan processes.
 1. **Cooperative cancellation first**: on Cancel/timeout the launcher sends `cancel` on stdin; the runner sets `ctx.cancelled` and raises a `Cancelled` exception at the next `ctx.progress()`/`ctx.log()` call; the app's `finally` blocks and `ctx.on_cleanup()` functions run.
-2. **COM helper**: `ctx.com("Excel.Application")` creates the COM object, records the PID of the server process it started (via the window handle → `GetWindowThreadProcessId`), and on cleanup calls `Quit()` on it.
-3. **Hard kill** after a grace period (e.g. 10 s): the launcher terminates the Job Object, then terminates **only** the COM server PIDs recorded by the runner. Never Excel instances the user opened themselves.
+2. **The app creates the COM object, the runner tracks it**. The runner stays stdlib-only, so it does not create COM objects itself (that needs pywin32 or comtypes). The app depends on pywin32 in its own lockfile and registers the object:
+   ```python
+   excel = win32com.client.DispatchEx("Excel.Application")  # always a NEW instance
+   ctx.track_com(excel)
+   ```
+   - **`DispatchEx`, never `Dispatch`**: `Dispatch` attaches to an Excel the user already has open, so cleanup would close the user's own workbooks. `devstribution dev`/`pack` warn when the code calls `Dispatch("Excel.Application")` (and the same for Word/Outlook), and the docs and example app use `DispatchEx` only.
+   - `track_com(obj)` reads `obj.Hwnd` and gets the server's PID with `GetWindowThreadProcessId` via `ctypes` (stdlib), then sends it to the launcher on stdout. On cleanup it calls `obj.Quit()`.
+   - Safety check: the PID is recorded only if that process was started **after** the run began (process creation time via `ctypes`), so a PID that points at a pre-existing Excel is never recorded.
+3. **Hard kill** after a grace period (e.g. 10 s): the launcher terminates the Job Object, then terminates **only** the COM server PIDs recorded for this run, after checking that each PID still has the same creation time (PIDs get reused). Never Excel instances the user opened themselves.
 4. **SAP GUI**: scripting attaches to the user's existing SAP GUI session, which is never killed; the helper only closes the connections/windows the app opened.
 
 ### Install flow
@@ -233,6 +248,7 @@ Several versions of the same app can coexist; the old one is removed after a suc
   logs\                       # launcher logs
   state\                      # pinned namespace keys (TOFU), highest installed version per app
 ```
+In **per-machine mode** only `runs\` and `logs\` stay here. App code, dependencies and trust state live in the service's protected folders (`Program Files\devstribution\apps\` and `envs\`, `%ProgramData%\devstribution\state\`), see "Python installation modes".
 
 ### Still to decide for the format
 - v1 proposal: inputs `file, folder, text, number, bool, choice, secret`; `date` and the `table` output in v1.1; `ctx.progress` already in the MVP (cheap and very visible to the user).
@@ -270,7 +286,7 @@ Name availability checked on 2026-10-21 (all free; re-check `.io` at the registr
 - [ ] Publish on winget with a signed installer.
 
 ## MVP roadmap
-**Scope rule**: Phase 1 serves only to put the generated form in front of real users; the trust model stays on paper until Phase 1 feedback arrives. The only exception is format rules that are cheap now and hard to retrofit, which go into package format v1 from day one: `<namespace>/<app>` ids, wheels-only lockfiles, `tool.uv.package = false`, runner outside the environment.
+**Scope rule**: Phase 1 serves only to put the generated form in front of real users; the trust model stays on paper until Phase 1 feedback arrives. The only exception is format rules that are cheap now and hard to retrofit, which go into package format v1 from day one: `<namespace>/<app>` ids, wheels-only lockfiles, `tool.uv.package = false`, runner outside the environment, and **signed packages**: from Phase 1, `devstribution pack` already writes `FILES.sha256` and `FILES.sha256.minisig` (key created with `devstribution keygen`), and the launcher checks hashes but does not enforce the signature yet. Phase 2 then turns enforcement on without breaking any package already distributed.
 
 **Phase 0: feasibility (before everything else)**
 On a real locked-down corporate PC (AppLocker/WDAC active), verify with a script:
@@ -288,10 +304,10 @@ The outcome decides the default installation mode, and whether the per-machine s
 2. Execution in a subprocess (Job Object) with environment from the lockfile (wheels only), runner in the launcher folder, `ctx.progress`, cooperative cancellation.
 3. Example app: loads an Excel file, queries it, downloads the result.
 4. Install from a `.dsapp` file (file association) with safe extraction.
-5. `devstribution dev` / `pack` commands for developers (`pack` checks wheels-only and the `run()` signature).
+5. `devstribution keygen` / `dev` / `pack` commands for developers (`pack` checks wheels-only and the `run()` signature, and signs the package).
 
 **Phase 2: trust**
-6. Author Ed25519 signature and verification (minisign format, trusted comment), `FILES.sha256`, namespace binding.
+6. Enforcement of the author signature (minisign format, trusted comment), namespace binding (catalog, download source, "unverified name" for TOFU).
 7. Free/managed mode with a minimal policy from HKLM; anti-downgrade.
 8. Install from GitHub URL and the `devstribution://` scheme; Mark-of-the-Web origin.
 
