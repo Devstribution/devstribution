@@ -21,11 +21,11 @@ result, history, error messages.
 
 ### CI on PR #3 (first ever Windows/macOS build)
 
-- macOS and Linux: tests and launcher build green.
-- Windows `test`: failed in `init_dev_pack_verify` because the example app writes its output in text
-  mode, which gives `\r\n` on Windows. The test now normalizes line endings (fixed today).
-  Cargo stopped at that test binary, so **the host flow test has not run on Windows yet**.
-- Windows `launcher`: still running when this was written.
+All six jobs are green on Windows, macOS and Linux: tests (including the host install → run →
+update flow test with real uv) and the launcher build plus clippy.
+
+The first Windows run failed in `init_dev_pack_verify`: the example app writes its output in text
+mode, which gives `\r\n` on Windows. Fixed in the test by normalizing line endings.
 
 ### Never run on Windows yet
 
@@ -42,8 +42,7 @@ Compiles and passes clippy for `x86_64-pc-windows-msvc`, nothing more:
 
 Local setup is in [`HANDOFF.md`](HANDOFF.md).
 
-1. **Get PR #3 green.** Check the CI after the CRLF fix. The Windows host flow test runs for the
-   first time, so fix whatever it shows.
+1. ~~Get PR #3 green.~~ Done: CI is green on all three platforms.
 2. **Run it on Windows by hand:** `cargo test`, the runner tests, `npm run sidecar`, `npx tauri dev`,
    then pack `examples/excel-report` and install it in the launcher.
 3. **Check the Windows-only parts** in the list above, one by one. Start with Cancel killing the
