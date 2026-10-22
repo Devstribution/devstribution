@@ -22,6 +22,10 @@ use crate::{Error, FILES_LIST, FILES_PUBLIC_KEY, FILES_SIGNATURE, Result};
 
 pub const PYPROJECT: &str = "pyproject.toml";
 pub const UV_LOCK: &str = "uv.lock";
+/// What `pack` leaves out, in `.gitignore` syntax, next to `pyproject.toml`. Read after the app
+/// folder's own `.gitignore`, so its lines win; `!pattern` also marks a data file as meant to ship.
+pub const IGNORE_FILE: &str = ".dsappignore";
+const GITIGNORE: &str = ".gitignore";
 
 /// Size limits applied when extracting, against zip bombs and runaway packages.
 #[derive(Debug, Clone, Copy)]
@@ -68,22 +72,60 @@ fn excluded_file(name: &str) -> bool {
         || name == ".DS_Store"
         || name == "Thumbs.db"
         || name == ".env"
+        || name == IGNORE_FILE
+        || name == GITIGNORE
         || name == FILES_LIST
         || name == FILES_SIGNATURE
         || name == FILES_PUBLIC_KEY
+}
+
+/// Extensions of files that usually hold data (a client's spreadsheets, a database, exported
+/// archives, logs) rather than app code. `pack` refuses them unless `.dsappignore` names them with
+/// `!pattern`: a package is signed and handed out, so data must never get in by accident.
+const DATA_EXTENSIONS: &[&str] = &[
+    "xlsx", "xlsm", "xlsb", "xls", "ods", "csv", "tsv", "db", "sqlite", "sqlite3", "accdb", "mdb",
+    "parquet", "feather", "pkl", "pickle", "h5", "hdf5", "npy", "npz", "zip", "7z", "rar", "tar",
+    "gz", "tgz", "bz2", "xz", "log", "bak", "pdf", "docx", "doc", "pptx", "msg", "eml",
+];
+
+fn looks_like_data(name: &str) -> bool {
+    name.rsplit_once('.')
+        .is_some_and(|(_, ext)| DATA_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
 }
 
 /// The files of an app folder that go into its package.
 pub struct AppFiles {
     /// Package path (with `/`) → file on disk, sorted.
     pub files: BTreeMap<String, PathBuf>,
-    /// Package paths left out on purpose (caches, virtual environments, `.env`, ...).
+    /// Package paths left out: built-in rules (caches, virtual environments, `.env`, ...) and the
+    /// app's `.gitignore` / `.dsappignore`. Folders end with `/`.
     pub excluded: Vec<String>,
+    /// Data-like files (see `DATA_EXTENSIONS`) that are neither left out nor listed with
+    /// `!pattern`. `pack` refuses to sign while this is not empty.
+    pub unconfirmed_data: Vec<String>,
+}
+
+/// The app's `.gitignore` and `.dsappignore` rules, in that order (later lines win).
+fn ignore_rules(app_dir: &Path) -> Result<ignore::gitignore::Gitignore> {
+    let mut builder = ignore::gitignore::GitignoreBuilder::new(app_dir);
+    for name in [GITIGNORE, IGNORE_FILE] {
+        let path = app_dir.join(name);
+        if path.is_file() {
+            if let Some(e) = builder.add(&path) {
+                return Err(Error::Package(format!("{name}: {e}")));
+            }
+        }
+    }
+    builder
+        .build()
+        .map_err(|e| Error::Package(format!("{IGNORE_FILE}: {e}")))
 }
 
 pub fn collect_app_files(app_dir: &Path) -> Result<AppFiles> {
+    let rules = ignore_rules(app_dir)?;
     let mut files = BTreeMap::new();
     let mut excluded = Vec::new();
+    let mut unconfirmed_data = Vec::new();
     let mut walker = walkdir::WalkDir::new(app_dir)
         .follow_links(false)
         .sort_by_file_name()
@@ -113,17 +155,21 @@ pub fn collect_app_files(app_dir: &Path) -> Result<AppFiles> {
                 "`{rel}` is a symbolic link; packages can only contain regular files"
             )));
         }
+        let rule = rules.matched(Path::new(&rel), file_type.is_dir());
         if file_type.is_dir() {
             let top = entry.depth() == 1 && EXCLUDED_TOP_DIRS.contains(&name.as_ref());
-            if top || EXCLUDED_DIRS.contains(&name.as_ref()) {
+            if top || EXCLUDED_DIRS.contains(&name.as_ref()) || rule.is_ignore() {
                 excluded.push(format!("{rel}/"));
                 walker.skip_current_dir();
             }
             continue;
         }
-        if excluded_file(&name) {
+        if excluded_file(&name) || rule.is_ignore() {
             excluded.push(rel);
             continue;
+        }
+        if looks_like_data(&name) && !rule.is_whitelist() {
+            unconfirmed_data.push(rel.clone());
         }
         if !file_type.is_file() {
             return Err(Error::Package(format!("`{rel}` is not a regular file")));
@@ -139,7 +185,70 @@ pub fn collect_app_files(app_dir: &Path) -> Result<AppFiles> {
             )));
         }
     }
-    Ok(AppFiles { files, excluded })
+    Ok(AppFiles {
+        files,
+        excluded,
+        unconfirmed_data,
+    })
+}
+
+/// Package path of the entry module: `pkg.main` → `pkg/main.py` or `pkg/main/__init__.py`.
+fn entry_files(module: &str) -> [String; 2] {
+    let base = module.replace('.', "/");
+    [format!("{base}.py"), format!("{base}/__init__.py")]
+}
+
+/// The checks on the collected files that `pack` needs before signing anything.
+pub fn check_app_files(app: &AppFiles, manifest: &Manifest) -> Result<()> {
+    if !app.unconfirmed_data.is_empty() {
+        let shown: Vec<&str> = app
+            .unconfirmed_data
+            .iter()
+            .take(8)
+            .map(String::as_str)
+            .collect();
+        let more = app.unconfirmed_data.len() - shown.len();
+        return Err(Error::Package(format!(
+            "{} file(s) look like data, not app code: {}{}. A package is signed and handed out, so \
+             data must not get in by accident. Leave them out with a line in {IGNORE_FILE} (e.g. \
+             `output/`), or, if the app needs them, list them there as `!path` (e.g. \
+             `!templates/report.xlsx`)",
+            app.unconfirmed_data.len(),
+            shown.join(", "),
+            if more > 0 {
+                format!(" and {more} more")
+            } else {
+                String::new()
+            }
+        )));
+    }
+    for required in [PYPROJECT, UV_LOCK] {
+        if !app.files.contains_key(required) {
+            return Err(Error::Package(format!(
+                "`{required}` is left out by .gitignore or {IGNORE_FILE}, but every package needs it"
+            )));
+        }
+    }
+    if !entry_files(&manifest.entry.module)
+        .iter()
+        .any(|f| app.files.contains_key(f))
+    {
+        return Err(Error::Package(format!(
+            "the entry module `{}` is not in the package: no `{}` (missing, or left out by \
+             .gitignore or {IGNORE_FILE})",
+            manifest.entry.module,
+            entry_files(&manifest.entry.module)[0]
+        )));
+    }
+    if let Some(icon) = &manifest.icon {
+        if !app.files.contains_key(icon) {
+            return Err(Error::Manifest(format!(
+                "icon `{icon}` is not in the package (missing, or left out by .gitignore or \
+                 {IGNORE_FILE})"
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub struct PackResult {
@@ -168,13 +277,7 @@ pub fn pack(app_dir: &Path, signer: &Signer, out: &Path) -> Result<PackResult> {
     }
 
     let app = collect_app_files(app_dir)?;
-    if let Some(icon) = &manifest.icon {
-        if !app.files.contains_key(icon) {
-            return Err(Error::Manifest(format!(
-                "icon `{icon}` is not in the app folder"
-            )));
-        }
-    }
+    check_app_files(&app, &manifest)?;
     let mut list = FilesList::new();
     let mut contents = Vec::with_capacity(app.files.len());
     for (rel, path) in &app.files {
@@ -629,6 +732,99 @@ source = { virtual = "." }
             unchecked.signature,
             SignatureStatus::NewKey { .. }
         ));
+    }
+
+    fn packed_paths(f: &Fixture) -> Vec<String> {
+        let v = f.verify(&f.pack(), Some(&f.public_key)).unwrap();
+        v.files.paths().map(String::from).collect()
+    }
+
+    fn pack_error(f: &Fixture) -> String {
+        let out = f.dir.path().join("refused.dsapp");
+        let err = pack(&f.app(), &f.signer, &out)
+            .err()
+            .expect("pack should refuse");
+        assert!(!out.exists(), "nothing is written when pack refuses");
+        err.to_string()
+    }
+
+    #[test]
+    fn dsappignore_and_gitignore_leave_files_out() {
+        let f = fixture();
+        let app = f.app();
+        fs::create_dir_all(app.join("output/2026")).unwrap();
+        fs::write(app.join("output/2026/notes.txt"), "client notes").unwrap();
+        fs::write(app.join("scratch.py"), "").unwrap();
+        fs::write(app.join("debug.txt"), "").unwrap();
+        fs::write(app.join(".gitignore"), "scratch.py\n").unwrap();
+        fs::write(app.join(IGNORE_FILE), "# client data\noutput/\n*.txt\n").unwrap();
+
+        assert_eq!(
+            packed_paths(&f),
+            ["main.py", "pkg/util.py", "pyproject.toml", "uv.lock"]
+        );
+        let collected = collect_app_files(&app).unwrap();
+        for left_out in [
+            "output/",
+            "scratch.py",
+            "debug.txt",
+            ".gitignore",
+            IGNORE_FILE,
+        ] {
+            assert!(
+                collected.excluded.iter().any(|e| e == left_out),
+                "{left_out} in {:?}",
+                collected.excluded
+            );
+        }
+    }
+
+    #[test]
+    fn data_files_are_refused_unless_confirmed() {
+        let f = fixture();
+        let app = f.app();
+        fs::create_dir_all(app.join("output")).unwrap();
+        fs::create_dir_all(app.join("templates")).unwrap();
+        fs::write(app.join("output/Clienti.XLSX"), "client data").unwrap();
+        fs::write(app.join("output/archive.db"), "client data").unwrap();
+        fs::write(app.join("templates/report.xlsx"), "template").unwrap();
+
+        let err = pack_error(&f);
+        assert!(err.contains("output/Clienti.XLSX"), "{err}");
+        assert!(err.contains("output/archive.db"), "{err}");
+        assert!(err.contains(IGNORE_FILE), "{err}");
+
+        // Leaving the folder out and confirming the template is enough.
+        fs::write(app.join(IGNORE_FILE), "output/\n!templates/report.xlsx\n").unwrap();
+        assert!(packed_paths(&f).contains(&"templates/report.xlsx".to_string()));
+
+        // A `!` line in .dsappignore wins over the app's .gitignore.
+        fs::write(app.join(".gitignore"), "*.xlsx\n").unwrap();
+        assert!(packed_paths(&f).contains(&"templates/report.xlsx".to_string()));
+    }
+
+    #[test]
+    fn required_files_cannot_be_left_out() {
+        let f = fixture();
+        fs::write(f.app().join(IGNORE_FILE), "uv.lock\n").unwrap();
+        assert!(pack_error(&f).contains("`uv.lock` is left out"));
+
+        fs::write(f.app().join(IGNORE_FILE), "main.py\n").unwrap();
+        assert!(pack_error(&f).contains("entry module `main`"));
+    }
+
+    #[test]
+    fn entry_module_can_be_a_package() {
+        let f = fixture();
+        let app = f.app();
+        let text = fs::read_to_string(app.join(PYPROJECT)).unwrap();
+        fs::write(app.join(PYPROJECT), text.replace("main:run", "pkg:run")).unwrap();
+        fs::write(
+            app.join("pkg/__init__.py"),
+            "def run(ctx):\n    return {}\n",
+        )
+        .unwrap();
+        assert!(packed_paths(&f).contains(&"pkg/__init__.py".to_string()));
     }
 
     #[test]

@@ -19,9 +19,14 @@ and started by the devstribution launcher. Keep it that way.
 - Office automation: `win32com.client.DispatchEx(...)`, never `Dispatch(...)`, then
   `ctx.track_com(obj)` so the instance is closed even if the run is stopped.
 - Do not put `.key` files, `.env` files or other secrets in this folder.
+- Files the app writes at run time (results, databases, logs) never belong in the package: list
+  their folder in `.dsappignore`. `pack` refuses data-like files (spreadsheets, databases,
+  archives, logs) unless `.dsappignore` leaves them out, or names them with `!path` when the app
+  really ships them (e.g. a template).
 
 ## Loop
 1. `devstribution dev . -i name=value` runs the app like the launcher does. Its error messages
    say what to change; fix and re-run until it passes.
 2. `devstribution pack .` checks everything again, signs and writes `dist/<app>-<version>.dsapp`.
+   `devstribution pack . --list` shows what would go in, without signing.
    Bump `[project].version` for every release.

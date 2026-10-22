@@ -64,6 +64,9 @@ enum Command {
         /// Output file (default: `<dir>/dist/<app>-<version>.dsapp`)
         #[arg(long, short)]
         out: Option<PathBuf>,
+        /// Only show which files would go into the package and which are left out; sign nothing
+        #[arg(long)]
+        list: bool,
     },
     /// Create the signing key pair for a namespace
     Keygen {
@@ -101,7 +104,13 @@ fn main() -> ExitCode {
             json,
             args,
         } => dev::dev(&dir, &inputs, &args, json),
-        Command::Pack { dir, key, out } => keys::pack(&dir, key, out).map(|_| 0),
+        Command::Pack {
+            dir,
+            key: _,
+            out: _,
+            list: true,
+        } => keys::list(&dir).map(|_| 0),
+        Command::Pack { dir, key, out, .. } => keys::pack(&dir, key, out).map(|_| 0),
         Command::Keygen {
             namespace,
             dir,
