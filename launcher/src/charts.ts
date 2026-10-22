@@ -1,4 +1,4 @@
-// Hand-drawn SVG charts (no chart library): stacked daily bars and a progress ring.
+// Hand-drawn SVG chart (no chart library): stacked daily bars.
 
 import type { Stats } from "./api";
 
@@ -19,19 +19,14 @@ function niceMax(v: number): number {
   return step * 4;
 }
 
-/** Runs per day, stacked: succeeded (gradient), failed (red), cancelled (amber). */
+/** Runs per day, stacked: done, didn't work, cancelled (colours from the theme). */
 export function runsChart(days: Stats["per_day"]): SVGSVGElement {
-  const W = 720, H = 240, L = 34, R = 8, T = 12, B = 30;
-  const svg = s("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart", preserveAspectRatio: "none" });
-  const defs = s("defs");
-  const grad = s("linearGradient", { id: "barGradient", x1: 0, y1: 0, x2: 0, y2: 1 });
-  grad.append(s("stop", { offset: 0, "stop-color": "#7a4dff" }), s("stop", { offset: 1, "stop-color": "#3f6bff" }));
-  defs.append(grad);
-  svg.append(defs);
+  const W = 620, H = 150, L = 26, R = 4, T = 8, B = 22;
+  const svg = s("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart", preserveAspectRatio: "none", role: "img", "aria-label": "Runs per day" });
 
   const max = niceMax(Math.max(1, ...days.map((d) => d.ok + d.error + d.cancelled)));
   const plotH = H - T - B;
-  for (let i = 0; i <= 4; i++) {
+  for (let i = 0; i <= 4; i += 2) {
     const y = T + plotH - (plotH * i) / 4;
     svg.append(s("line", { x1: L, x2: W - R, y1: y, y2: y, class: "grid-line" }));
     svg.append(s("text", { x: L - 8, y: y + 4, "text-anchor": "end", class: "axis" }, String(Math.round((max * i) / 4))));
@@ -48,7 +43,7 @@ export function runsChart(days: Stats["per_day"]): SVGSVGElement {
       const bh = (plotH * n) / max;
       y -= bh;
       const isTop = parts.slice(idx + 1).every(([m]) => !m);
-      const r = isTop ? Math.min(6, bw / 2) : 0;
+      const r = isTop ? Math.min(4, bw / 2) : 0;
       // Rounded top only on the topmost segment.
       const path = r
         ? `M${x},${y + bh} V${y + r} Q${x},${y} ${x + r},${y} H${x + bw - r} Q${x + bw},${y} ${x + bw},${y + r} V${y + bh} Z`
@@ -57,7 +52,7 @@ export function runsChart(days: Stats["per_day"]): SVGSVGElement {
     });
     const date = new Date(d.date + "T12:00:00");
     const hit = s("rect", { x: L + slot * i, y: T, width: slot, height: plotH, class: "bar-hit" });
-    hit.append(s("title", {}, `${date.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}: ${total} runs (${d.ok} succeeded, ${d.error} failed, ${d.cancelled} cancelled)`));
+    hit.append(s("title", {}, `${date.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}: ${total} runs (${d.ok} done, ${d.error} didn’t work, ${d.cancelled} cancelled)`));
     svg.append(hit);
     if (i % 2 === days.length % 2 || days.length <= 7) {
       const label = date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
@@ -65,23 +60,4 @@ export function runsChart(days: Stats["per_day"]): SVGSVGElement {
     }
   });
   return svg;
-}
-
-/** A ring filled to `value` (0..1). */
-export function ring(value: number, size = 56): HTMLElement {
-  const r = size / 2 - 5;
-  const c = 2 * Math.PI * r;
-  const wrap = document.createElement("div");
-  wrap.className = "ring";
-  wrap.style.width = wrap.style.height = `${size}px`;
-  const svg = s("svg", { width: size, height: size, viewBox: `0 0 ${size} ${size}` });
-  svg.append(
-    s("circle", { cx: size / 2, cy: size / 2, r, fill: "none", "stroke-width": 7, class: "track" }),
-    s("circle", {
-      cx: size / 2, cy: size / 2, r, fill: "none", "stroke-width": 7, class: "value",
-      "stroke-dasharray": c, "stroke-dashoffset": c * (1 - Math.max(0, Math.min(1, value))),
-    }),
-  );
-  wrap.append(svg);
-  return wrap;
 }

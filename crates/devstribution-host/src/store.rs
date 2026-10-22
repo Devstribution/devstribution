@@ -153,6 +153,16 @@ pub struct AppCount {
     pub runs: u32,
 }
 
+/// How an app has been used: what the launcher's home ("recent", "often") and sorting read.
+#[derive(Debug, Clone, Serialize)]
+pub struct AppUsage {
+    pub app_id: String,
+    /// Finished runs within the stats window.
+    pub runs: u32,
+    /// Start of the latest run, whenever it was.
+    pub last_run_at: u64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Stats {
     pub apps_installed: usize,
@@ -164,6 +174,8 @@ pub struct Stats {
     pub total_duration_ms: u64,
     pub per_day: Vec<DayCount>,
     pub top_apps: Vec<AppCount>,
+    /// Every app that ever ran, latest first.
+    pub usage: Vec<AppUsage>,
 }
 
 pub fn current_platform() -> &'static str {
@@ -719,6 +731,18 @@ impl Store {
             })
             .collect();
         let mut by_app: BTreeMap<String, AppCount> = BTreeMap::new();
+        let mut usage: BTreeMap<String, AppUsage> = BTreeMap::new();
+        for r in &runs {
+            let u = usage.entry(r.app_id.clone()).or_insert_with(|| AppUsage {
+                app_id: r.app_id.clone(),
+                runs: 0,
+                last_run_at: 0,
+            });
+            u.last_run_at = u.last_run_at.max(r.started_at);
+            if r.started_at >= since && r.status != RunStatus::Running {
+                u.runs += 1;
+            }
+        }
         let (mut ok, mut failed, mut cancelled, mut total_ms) = (0, 0, 0, 0);
         for r in runs.iter().filter(|r| r.started_at >= since) {
             let Some(day) = per_day.get_mut(&date(r.started_at)) else {
@@ -744,6 +768,8 @@ impl Store {
         let mut top_apps: Vec<AppCount> = by_app.into_values().collect();
         top_apps.sort_by_key(|a| std::cmp::Reverse(a.runs));
         top_apps.truncate(5);
+        let mut usage: Vec<AppUsage> = usage.into_values().collect();
+        usage.sort_by_key(|u| std::cmp::Reverse(u.last_run_at));
         Ok(Stats {
             apps_installed: self.load()?.apps.len(),
             runs: ok + failed + cancelled,
@@ -754,6 +780,7 @@ impl Store {
             total_duration_ms: total_ms,
             per_day: per_day.into_values().collect(),
             top_apps,
+            usage,
         })
     }
 }

@@ -1,101 +1,118 @@
-import { Activity, CircleCheck, LayoutGrid, Play, Plus, Timer, Sparkles, FileSpreadsheet, Bot, Workflow, ArrowRight } from "lucide";
+import { Search, Clock, TrendingUp, FileSpreadsheet, Bot, Workflow } from "lucide";
+import type { AppView, RunRecord } from "../api";
 import type { Ctx, Rendered } from "../main";
-import { h, icon, appIcon, duration, relTime, statusPill, greeting, KIND_LABEL } from "../ui";
-import { runsChart, ring } from "../charts";
-import { quickRun } from "./app";
+import { h, icon, appIcon, clear, relTime, statusText, fileName, plural } from "../ui";
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+let query = "";
+
+function greeting(): string {
+  const hr = new Date().getHours();
+  return hr < 12 ? "Good morning" : hr < 18 ? "Good afternoon" : "Good evening";
+}
+
+function tile(ctx: Ctx, app: AppView, sub: string): HTMLElement {
+  return h("button", { class: "tile", onclick: () => ctx.openApp(app.id) },
+    appIcon(app, "xl"), h("div", { class: "t", title: app.title }, app.title), h("div", { class: "s" }, sub));
+}
+
+/** One line on what a run left behind, and the button that goes with it. */
+export function runOutcome(r: RunRecord): { what: string; action: string } {
+  if (r.status === "error") return { what: r.error ?? "The app stopped with an error", action: "See what happened" };
+  if (r.status === "cancelled") return { what: "Stopped before the end", action: "Run again" };
+  if (r.status === "running") return { what: "Running now", action: "Open" };
+  const first = Object.values(r.outputs)[0];
+  const what = typeof first === "string" ? (/[\\/]/.test(first) ? fileName(first) : first) : "Finished";
+  return { what, action: Object.keys(r.outputs).length ? "Open result" : "Open" };
+}
 
 export async function homeView(ctx: Ctx): Promise<Rendered> {
   const { apps, stats, recent_runs } = await ctx.api.overview();
 
   if (apps.length === 0) {
     return {
-      title: greeting(),
-      subtitle: "Welcome to devstribution.",
-      node: h("div", { class: "grid" },
-        h("section", { class: "card welcome" },
-          h("div", null,
-            h("h2", null, "Run Python apps in one click"),
-            h("p", null, "Tools, automations and proofs of concept from publishers you trust: verified, set up and started for you. No installers, no terminal."),
-            h("button", { class: "btn big", onclick: () => ctx.install() }, icon(Plus, 20), "Install your first app")),
-          h("div", { class: "art" }, [FileSpreadsheet, Bot, Workflow, Sparkles, Play, Activity].map((i) => h("div", null, icon(i, 28))))),
-      ),
+      node: h("div", { class: "page welcome" },
+        h("div", { class: "art" }, [FileSpreadsheet, Bot, Workflow].map((ic) => h("div", null, icon(ic, 28)))),
+        h("h1", null, "Run Python apps in one click"),
+        h("p", null, "Tools and automations from publishers you trust: checked, set up and started for you. No installers, no terminal."),
+        h("button", { class: "btn primary big", onclick: () => ctx.install() }, "Install your first app"),
+        h("p", { class: "small" }, "Or drop a .dsapp file anywhere on this window.")),
     };
   }
 
-  const today = stats.per_day[stats.per_day.length - 1];
-  const todayRuns = today ? today.ok + today.error + today.cancelled : 0;
-  const half = Math.floor(stats.per_day.length / 2);
-  const sum = (d: typeof stats.per_day) => d.reduce((a, x) => a + x.ok + x.error + x.cancelled, 0);
-  const prev = sum(stats.per_day.slice(0, half));
-  const last = sum(stats.per_day.slice(half));
-  const trend = prev ? Math.round(((last - prev) / prev) * 100) : null;
+  const byId = new Map(apps.map((a) => [a.id, a]));
+  const usage = stats.usage.filter((u) => byId.has(u.app_id));
+  // Recent: the two apps run last, topped up with apps installed but not run yet (a new user's
+  // first app must be one click away). Often: the two run most this month, not already in Recent.
+  const recent = usage.slice(0, 2).map((u) => byId.get(u.app_id)!);
+  const fresh = apps.filter((a) => !usage.some((u) => u.app_id === a.id)).sort((a, b) => b.installed_at - a.installed_at);
+  recent.push(...fresh.slice(0, 2 - recent.length));
+  const often = [...usage]
+    .filter((u) => u.runs > 0 && !recent.some((a) => a.id === u.app_id))
+    .sort((a, b) => b.runs - a.runs)
+    .slice(0, 2);
+  const lastRun = new Map(usage.map((u) => [u.app_id, u.last_run_at]));
 
-  const kpi = (cls: string, ic: typeof Activity, label: string, value: string, foot: (Node | string)[], extra?: Node) =>
-    h("div", { class: "card kpi" },
-      h("div", { class: "kpi-top" }, h("div", { class: `kpi-icon ${cls}` }, icon(ic, 21)), h("div", { class: "kpi-label" }, label),
-        extra ? h("div", { style: "margin-left:auto" }, extra) : null),
-      h("div", { class: "kpi-value" }, value),
-      h("div", { class: "kpi-foot" }, ...foot));
+  const shelf = (title: string, ic: typeof Clock, tiles: HTMLElement[], empty: string) =>
+    h("section", { class: "shelf", "aria-label": title },
+      h("div", { class: "shelf-title" }, icon(ic, 14), title),
+      tiles.length ? h("div", { class: "shelf-tiles" }, tiles) : h("div", { class: "shelf-empty" }, empty));
 
-  const rate = stats.success_rate;
-  const kpis = h("div", { class: "grid kpis" },
-    kpi("blue", LayoutGrid, "Installed apps", String(stats.apps_installed), [`${plural(apps.filter((a) => a.kind === "form").length, "form")} · ${apps.filter((a) => a.kind !== "form").length} other`]),
-    kpi("violet", Activity, "Runs", String(stats.runs), [
-      trend === null ? h("span", { class: "trend flat" }, "new") : h("span", { class: `trend ${trend >= 0 ? "up" : "flat"}` }, `${trend >= 0 ? "+" : ""}${trend}%`),
-      `vs previous week · ${todayRuns} today`,
-    ]),
-    kpi("green", CircleCheck, "Success rate", rate === null ? "–" : `${Math.round(rate * 100)}%`,
-      [`${stats.ok} succeeded · ${stats.failed} failed`], rate === null ? undefined : ring(rate, 46)),
-    kpi("orange", Timer, "Time running apps", duration(stats.total_duration_ms), ["work done for you, last 14 days"]),
-  );
+  const shelves = h("div", { class: "shelves" },
+    shelf("Recent", Clock, recent.map((a) => tile(ctx, a, lastRun.has(a.id) ? `Used ${relTime(lastRun.get(a.id)!)}` : `New · installed ${relTime(a.installed_at)}`)), "Apps you run show up here."),
+    shelf("You use these often", TrendingUp, often.map((u) => tile(ctx, byId.get(u.app_id)!, `${plural(u.runs, "run")} this month`)),
+      "Your most used apps show up here."));
 
-  const chartCard = h("section", { class: "card" },
-    h("div", { class: "card-head" }, h("h3", null, "Runs per day"), h("span", { class: "hint" }, "last 14 days"),
-      h("div", { class: "right legend" },
-        h("span", null, h("i", { style: "background:linear-gradient(#7a4dff,#3f6bff)" }), "Succeeded"),
-        h("span", null, h("i", { style: "background:var(--danger)" }), "Failed"),
-        h("span", null, h("i", { style: "background:var(--warning)" }), "Cancelled"))),
-    runsChart(stats.per_day));
+  const results = recent_runs.filter((r) => r.status !== "running").slice(0, 3);
+  const latest = results.length
+    ? h("section", { class: "stack" },
+        h("div", { class: "card-head flush" }, h("h2", { class: "section-title" }, "Latest results"),
+          h("button", { class: "link", onclick: () => ctx.navigate("#/activity") }, "All activity")),
+        h("div", { class: "results" }, results.map((r) => {
+          const { what, action } = runOutcome(r);
+          const app = byId.get(r.app_id);
+          const act = () => {
+            if (action !== "Open result") return ctx.openApp(r.app_id);
+            const file = Object.values(r.outputs).find((v): v is string => typeof v === "string" && /[\\/]/.test(v));
+            ctx.api.openOutput(r.id, file ?? null, false).catch(() => ctx.openApp(r.app_id));
+          };
+          return h("div", { class: "result" },
+            h("div", { class: "result-head" }, appIcon({ id: r.app_id, icon: app?.icon }, "sm"),
+              h("div", { class: "who" }, h("div", { class: "t" }, r.app_title), h("div", { class: "s" }, relTime(r.started_at))),
+              statusText(r.status)),
+            h("div", { class: "what", title: what }, what),
+            app ? h("button", { class: "btn small", onclick: act }, action) : h("span", { class: "muted tiny" }, "Uninstalled"));
+        })))
+    : null;
 
-  const maxRuns = Math.max(1, ...stats.top_apps.map((a) => a.runs));
-  const topCard = h("section", { class: "card" },
-    h("div", { class: "card-head" }, h("h3", null, "Most used"), h("span", { class: "hint" }, "runs, 14 days")),
-    stats.top_apps.length
-      ? h("div", { class: "bar-list" }, stats.top_apps.map((t) =>
-          h("div", { class: "bar-row", style: "cursor:pointer", onclick: () => ctx.navigate(`#/app/${encodeURIComponent(t.app_id)}`) },
-            appIcon({ id: t.app_id, icon: apps.find((a) => a.id === t.app_id)?.icon }, "sm"),
-            h("div", null, h("div", { class: "title" }, t.title),
-              h("div", { class: "bar-track" }, h("div", { class: "bar-fill", style: `width:${(t.runs / maxRuns) * 100}%` }))),
-            h("strong", null, String(t.runs)))))
-      : h("div", { class: "empty" }, h("p", null, "Run an app to see it here.")));
+  // Typing in the search shows matching apps in place of the shelves.
+  const matches = h("div", { class: "search-results" });
+  const input = h("input", { type: "search", placeholder: "Search your apps", "aria-label": "Search your apps", value: query });
+  const draw = () => {
+    const q = query.trim().toLowerCase();
+    const found = apps.filter((a) => `${a.title} ${a.description ?? ""} ${a.namespace}`.toLowerCase().includes(q));
+    shelves.hidden = !!q;
+    if (latest) latest.hidden = !!q;
+    matches.hidden = !q;
+    clear(matches, found.length
+      ? found.map((a) => tile(ctx, a, a.namespace))
+      : h("div", { class: "empty-box" }, `No app matches “${query.trim()}”.`));
+  };
+  input.addEventListener("input", () => { query = input.value; draw(); });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      const first = matches.querySelector("button.tile") as HTMLButtonElement | null;
+      first?.click();
+    }
+    if (e.key === "Escape") { query = ""; input.value = ""; draw(); }
+  });
+  draw();
 
-  const quick = h("section", { class: "card" },
-    h("div", { class: "card-head" }, h("h3", null, "Your apps"),
-      h("div", { class: "right" }, h("button", { class: "btn ghost small", onclick: () => ctx.navigate("#/apps") }, "All apps", icon(ArrowRight, 15)))),
-    h("div", { class: "quick-apps" }, apps.slice(0, 6).map((a) =>
-      h("div", { class: "quick-app", onclick: () => ctx.navigate(`#/app/${encodeURIComponent(a.id)}`) },
-        appIcon(a, "sm"),
-        h("div", { style: "min-width:0" }, h("div", { class: "t" }, a.title), h("div", { class: "s" }, KIND_LABEL[a.kind] ?? a.kind)),
-        h("button", { class: "play", title: `Run ${a.title}`, onclick: (e: Event) => { e.stopPropagation(); quickRun(ctx, a); } }, icon(Play, 15))))));
-
-  const recent = h("section", { class: "card" },
-    h("div", { class: "card-head" }, h("h3", null, "Recent runs"),
-      h("div", { class: "right" }, h("button", { class: "btn ghost small", onclick: () => ctx.navigate("#/runs") }, "History", icon(ArrowRight, 15)))),
-    recent_runs.length
-      ? h("div", { class: "list" }, recent_runs.slice(0, 6).map((r) =>
-          h("div", { class: "list-item", style: "cursor:pointer", onclick: () => ctx.navigate(`#/app/${encodeURIComponent(r.app_id)}`) },
-            appIcon({ id: r.app_id, icon: apps.find((a) => a.id === r.app_id)?.icon }, "sm"),
-            h("div", { style: "min-width:0;flex:1" }, h("div", { class: "t" }, r.app_title), h("div", { class: "s" }, `${relTime(r.started_at)} · ${duration(r.duration_ms)}`)),
-            statusPill(r.status))))
-      : h("div", { class: "empty" }, h("p", null, "No runs yet.")));
-
+  const sub = apps.length > 4 ? `Pick up where you left off, or search all ${apps.length} apps.` : `${plural(apps.length, "app")}, ready to run.`;
   return {
-    title: greeting(),
-    subtitle: "Here is what your apps did in the last 14 days.",
-    node: h("div", { class: "grid" }, kpis,
-      h("div", { class: "grid two-one" }, chartCard, topCard),
-      h("div", { class: "grid one-one" }, quick, recent)),
+    node: h("div", { class: "page home" },
+      h("div", { class: "hello" }, h("h1", null, greeting()), h("p", null, sub)),
+      h("label", { class: "search-pill" }, icon(Search, 18), input, h("kbd", null, "Ctrl K")),
+      matches, shelves, latest),
   };
 }
+
