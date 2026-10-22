@@ -79,3 +79,13 @@ The parts that compile on Windows but have never run there. Each gets a result i
 Phase 2 of the plan: managed mode (company policy in HKLM), catalog with GitHub namespace
 verification, `devstribution://` links, revocation; the `web` and `background` app kinds; `resources`
 downloads (refused at install today).
+
+Part of managed mode, and what IT will ask for first: the **IT review kit** ([plan](plan.md),
+"IT review before approval").
+- A review report for each package, nothing executed: signature, permissions, files, dependencies,
+  flagged code. For updates, a diff against the approved version.
+- A one-click trial in Windows Sandbox (a throwaway virtual machine) that records what the app
+  actually did.
+- Approval by IT countersignature.
+
+The report needs nothing from managed mode, so it can come earlier if a company asks for it.

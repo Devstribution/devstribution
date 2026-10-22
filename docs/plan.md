@@ -185,6 +185,35 @@ Principle: **robust for IT, frictionless for everyone else**. One launcher; beha
 
 **Implementation order**: (1) author signatures + namespace binding + free/managed mode + minimal policy, (2) `.trust` and import, (3) revocation, rotation, anti-downgrade, logs, (4) advanced options (ring, mirror, pin).
 
+**IT review before approval ("review kit")**
+
+In managed mode IT approves authors and apps. To do that with confidence, IT needs to see what an app *is* and what it *does* in a safe place before allowing it for everyone. The launcher provides the tools; IT keeps the decision. Three parts, in this order:
+
+1. **Review report** (`devstribution review app.dsapp`, also a button in the launcher in managed mode). Nothing is executed. A self-contained HTML report covering:
+   - Signature, key ID, namespace and how it was verified.
+   - Declared permissions and kind.
+   - Every file with its hash.
+   - Every dependency from `uv.lock`, with version, hash and licence.
+   - A scan of the code for calls that should match a declared permission: network (`socket`, `requests`, `urllib`), processes (`subprocess`, `os.system`), native code (`ctypes`, `.pyd`), dynamic code (`exec`, `eval`, `importlib` of computed names). An undeclared match is flagged.
+   - **For updates, a diff against the version already approved**: changed files, added or upgraded dependencies, changed permissions. IT then reviews only what changed.
+2. **Try it in a disposable machine.** "Open in Windows Sandbox" writes a `.wsb` configuration with:
+   - the launcher (portable) and the package mapped in read-only;
+   - networking switched off unless the app declares network access;
+   - a folder for the results mapped back out.
+
+   Then it starts the sandbox: Windows' built-in throwaway virtual machine, discarded when closed, nothing to install. A **review mode** of the launcher inside it records what the app actually did:
+   - the files it read and wrote;
+   - the network connections it made;
+   - the processes it started.
+
+   It compares that with the declared permissions and adds it to the report.
+3. **Approve.** Approving produces either an IT countersignature (the "IT countersignature" layer above) or a policy entry that pins that exact version hash. Policy rings can roll it out to a pilot group first.
+
+Limits, stated in the threat model:
+- A run in a sandbox shows what the app did in that run, not everything it could do. Code can behave differently on a date, on a machine name or when it detects a VM. That's why the report reads the code and the diff as well.
+- Windows Sandbox needs Windows 10/11 Pro or Enterprise with virtualisation on.
+- Apps that need Excel or SAP can only be partly tried there, because those aren't installed in the sandbox.
+
 ## App package standard (v1)
 
 > Format 1 is now frozen and specified in [`format.md`](format.md), which takes precedence over
@@ -392,6 +421,7 @@ Status: all five items are built as a proof of concept (launcher in `launcher/`,
 - Per-machine service `devstribution-svc` (if Phase 0 did not make it necessary earlier).
 - Remaining app kinds: `web`, `cli`, `background`; `resources` downloads; `pack --test`; `AGENTS.md` / skill for coding agents.
 - `.trust`, revocation, key rotation, Event Log logging.
+- IT review kit: review report with diff between versions, "Open in Windows Sandbox" with a recorded run, approve by countersignature (see "IT review before approval").
 - Public catalog and verification badge.
 - Diagnostic package with redaction.
 - Optional in-browser mode (Pyodide) for Excel-only apps.
