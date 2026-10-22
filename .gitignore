@@ -15,3 +15,6 @@ dist/
 *.dsapp
 *.key
 .env
+
+# Client data written by app_1 (Excel, database, logs, diagnostics)
+app_1/output/

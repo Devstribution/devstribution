@@ -211,6 +211,7 @@ export function mockApi(): Api {
     async pickInput(input) {
       return input.type === "folder" ? "C:\\Users\\edo\\Documents\\Invoices" : "C:\\Users\\edo\\Documents\\orders-2026.xlsx";
     },
+    async ask(message) { return window.confirm(message); },
     async inspectPackage() { await sleep(500); return structuredClone(pending); },
     async confirmInstall() {
       const steps: [StepEvent["step"], string][] = [

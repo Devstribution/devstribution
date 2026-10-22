@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The launcher window: core events plus the file picker. Files are opened by the backend, which only opens run results.",
+  "description": "The launcher window: core events, the file picker and yes/no confirmations. Files are opened by the backend, which only opens run results.",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:allow-open"]
+  "permissions": ["core:default", "dialog:allow-open", "dialog:allow-ask"]
 }

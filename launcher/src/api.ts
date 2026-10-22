@@ -150,6 +150,8 @@ export interface Api {
   getApp(id: string): Promise<AppView>;
   pickPackage(): Promise<string | null>;
   pickInput(input: Input): Promise<string | null>;
+  /** Native yes/no dialog; `window.confirm` is not available in the launcher's webview. */
+  ask(message: string, title: string, okLabel: string): Promise<boolean>;
   inspectPackage(path: string): Promise<PendingInstall>;
   confirmInstall(token: string): Promise<AppView>;
   discardInstall(token: string): Promise<void>;
@@ -201,6 +203,7 @@ async function tauriApi(): Promise<Api> {
       });
       return typeof path === "string" ? path : null;
     },
+    ask: (message, title, okLabel) => dialog.ask(message, { title, kind: "warning", okLabel, cancelLabel: "Cancel" }),
     inspectPackage: (path) => invoke("inspect_package", { path }),
     confirmInstall: (token) => invoke("confirm_install", { token }),
     discardInstall: (token) => invoke("discard_install", { token }),

@@ -73,10 +73,18 @@ class ControlReader:
 
     def __init__(self) -> None:
         self._buffer = b""
+        # On Windows a read pending on a synchronous pipe blocks every other call on that pipe.
+        # Loading a DLL whose C runtime looks at the standard input (numpy's OpenBLAS does) then
+        # waits under the loader lock and the whole process hangs until the launcher writes a
+        # line. So the pipe moves to a private fd and the standard input becomes NUL.
+        self._fd = os.dup(0)
+        null = os.open(os.devnull, os.O_RDONLY)
+        os.dup2(null, 0)
+        os.close(null)
 
     def readline(self) -> bytes:
         while b"\n" not in self._buffer:
-            chunk = os.read(0, 65536)
+            chunk = os.read(self._fd, 65536)
             if not chunk:
                 line, self._buffer = self._buffer, b""
                 return line
