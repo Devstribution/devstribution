@@ -96,8 +96,10 @@ impl FilesList {
     }
 }
 
+/// The signature files' names are reserved in every folder, not only at the root.
 fn is_reserved(path: &str) -> bool {
-    path == FILES_LIST || path == FILES_SIGNATURE || path == FILES_PUBLIC_KEY
+    let name = path.rsplit('/').next().unwrap_or(path);
+    name == FILES_LIST || name == FILES_SIGNATURE || name == FILES_PUBLIC_KEY
 }
 
 #[cfg(test)]

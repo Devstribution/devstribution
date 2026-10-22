@@ -28,7 +28,7 @@ fn the_frozen_format_1_package_still_verifies() {
     assert_eq!(
         verified.signature,
         SignatureStatus::Trusted {
-            key_id: "953FA77D699AFE8C".into()
+            key_id: "8C23-BB86-2527-2AAF-D681-E3D6-ED5B-1CFE".into()
         }
     );
     // Names the install folder: it must not change for an unchanged package.

@@ -19,14 +19,46 @@ impl Origin {
 }
 
 /// Reads the mark of a file. Always `None` outside Windows (other systems have no such stream).
+///
+/// A mark that is there but cannot be understood counts as "from the internet": a warning too
+/// many is better than a missing one.
 pub fn origin_of(path: &Path) -> Option<Origin> {
     if !cfg!(windows) {
         return None;
     }
     let mut stream = path.as_os_str().to_owned();
     stream.push(":Zone.Identifier");
-    let text = std::fs::read_to_string(stream).ok()?;
-    parse(&text)
+    let data = std::fs::read(stream).ok()?;
+    Some(parse(&decode(&data)).unwrap_or(Origin {
+        zone_id: 3,
+        host_url: None,
+        referrer_url: None,
+    }))
+}
+
+/// The stream is normally ANSI/UTF-8 text, but some tools write it in UTF-16.
+fn decode(data: &[u8]) -> String {
+    let utf16 = |bytes: &[u8], le: bool| {
+        let units: Vec<u16> = bytes
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&c| {
+                if le {
+                    u16::from_le_bytes(c)
+                } else {
+                    u16::from_be_bytes(c)
+                }
+            })
+            .collect();
+        String::from_utf16_lossy(&units)
+    };
+    match data {
+        [0xFF, 0xFE, rest @ ..] => utf16(rest, true),
+        [0xFE, 0xFF, rest @ ..] => utf16(rest, false),
+        [0xEF, 0xBB, 0xBF, rest @ ..] => String::from_utf8_lossy(rest).into_owned(),
+        _ => String::from_utf8_lossy(data).into_owned(),
+    }
 }
 
 pub fn parse(text: &str) -> Option<Origin> {
@@ -68,5 +100,14 @@ mod tests {
             Some("https://objects.githubusercontent.com/x.dsapp")
         );
         assert!(super::parse("[ZoneTransfer]\n").is_none());
+        assert!(super::parse("[ZoneTransfer]\nZoneId=x\n").is_none());
+    }
+
+    #[test]
+    fn reads_utf16_marks() {
+        let text = "[ZoneTransfer]\r\nZoneId=3\r\n";
+        let mut data = vec![0xFF, 0xFE];
+        data.extend(text.encode_utf16().flat_map(u16::to_le_bytes));
+        assert_eq!(super::parse(&super::decode(&data)).unwrap().zone_id, 3);
     }
 }

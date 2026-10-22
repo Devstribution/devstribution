@@ -2,8 +2,11 @@
 //! processes itself; it asks for actions, and every decision about trust happens here.
 
 use std::collections::HashMap;
+use std::ffi::OsString;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
 use devstribution_core::manifest::{Input, Output, Permissions};
 use devstribution_host::run::{self, RunEvent};
@@ -28,6 +31,49 @@ struct AppState {
 }
 
 type CmdResult<T> = Result<T, String>;
+
+/// Locks a mutex even if a thread panicked while holding it: the data it guards is only a
+/// marker or a table of handles, and refusing every later install until a restart would be
+/// worse.
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// File types Windows runs, or that point somewhere else, when "opened": a result of one of
+/// these types is shown in its folder instead.
+const RUNNABLE: &[&str] = &[
+    "exe",
+    "com",
+    "bat",
+    "cmd",
+    "ps1",
+    "psm1",
+    "vbs",
+    "vbe",
+    "js",
+    "jse",
+    "wsf",
+    "wsh",
+    "hta",
+    "msi",
+    "msp",
+    "msc",
+    "scr",
+    "cpl",
+    "lnk",
+    "url",
+    "pif",
+    "reg",
+    "jar",
+    "appref-ms",
+    "application",
+    "settingcontent-ms",
+    "library-ms",
+    "website",
+    "py",
+    "pyw",
+    "pyz",
+];
 
 fn err(e: impl std::fmt::Display) -> String {
     // `{:#}` keeps anyhow's context chain: "what we were doing: why it failed".
@@ -168,7 +214,7 @@ fn step_sink(app: &AppHandle, key: &str) -> impl FnMut(InstallStep) + use<> {
 async fn confirm_install(app: AppHandle, token: String) -> CmdResult<AppView> {
     blocking(move || {
         let s = state(&app);
-        let _guard = s.write_lock.lock().unwrap();
+        let _guard = lock(&s.write_lock);
         let mut sink = step_sink(&app, &token);
         Ok(s.store.install(&token, &mut sink)?.into())
     })
@@ -184,7 +230,7 @@ fn discard_install(app: AppHandle, token: String) {
 async fn uninstall_app(app: AppHandle, id: String) -> CmdResult<()> {
     blocking(move || {
         let s = state(&app);
-        let _guard = s.write_lock.lock().unwrap();
+        let _guard = lock(&s.write_lock);
         s.store.uninstall(&id)
     })
     .await
@@ -194,7 +240,7 @@ async fn uninstall_app(app: AppHandle, id: String) -> CmdResult<()> {
 async fn repair_app(app: AppHandle, id: String) -> CmdResult<()> {
     blocking(move || {
         let s = state(&app);
-        let _guard = s.write_lock.lock().unwrap();
+        let _guard = lock(&s.write_lock);
         let mut sink = step_sink(&app, &id);
         s.store.repair(&id, &mut sink)
     })
@@ -202,9 +248,50 @@ async fn repair_app(app: AppHandle, id: String) -> CmdResult<()> {
 }
 
 #[derive(Clone, Serialize)]
-struct RunEventPayload {
+struct RunEventsPayload {
     run_id: String,
-    event: RunEvent,
+    events: Vec<RunEvent>,
+}
+
+/// Sends a run's events to the window in batches, at most every 100 ms, so an app printing
+/// thousands of lines a second cannot flood the window with messages.
+fn batched_sink(app: &AppHandle, run_id: &str) -> run::EventSink {
+    let (tx, rx) = std::sync::mpsc::channel::<RunEvent>();
+    let (app, run_id) = (app.clone(), run_id.to_string());
+    std::thread::spawn(move || {
+        let mut done = false;
+        while !done {
+            let Ok(first) = rx.recv() else { break };
+            let mut events = vec![first];
+            let until = std::time::Instant::now() + Duration::from_millis(100);
+            loop {
+                done = matches!(events.last(), Some(RunEvent::Finished { .. }));
+                let left = until.saturating_duration_since(std::time::Instant::now());
+                if done || left.is_zero() {
+                    break;
+                }
+                match rx.recv_timeout(left) {
+                    Ok(e) => events.push(e),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                        done = true;
+                        break;
+                    }
+                }
+            }
+            let _ = app.emit(
+                "run-events",
+                RunEventsPayload {
+                    run_id: run_id.clone(),
+                    events,
+                },
+            );
+        }
+    });
+    let tx = Mutex::new(tx);
+    Arc::new(move |event: RunEvent| {
+        let _ = lock(&tx).send(event);
+    })
 }
 
 #[tauri::command]
@@ -213,23 +300,25 @@ async fn start_run(app: AppHandle, id: String, inputs: Map<String, Value>) -> Cm
         let s = state(&app);
         let (spec, record) = s.store.prepare_run(&id, &inputs, &s.runner_dir)?;
         let run_id = record.id.clone();
-        let sink = {
-            let (app, run_id) = (app.clone(), run_id.clone());
-            Arc::new(move |event: RunEvent| {
-                let _ = app.emit(
-                    "run-event",
-                    RunEventPayload {
-                        run_id: run_id.clone(),
-                        event,
+        let sink = batched_sink(&app, &run_id);
+        let handle = match run::start(spec, sink) {
+            Ok(h) => Arc::new(h),
+            Err(e) => {
+                let mut failed = record.clone();
+                let _ = s.store.finish_run(
+                    &mut failed,
+                    &run::RunResult {
+                        status: run::RunStatus::Error,
+                        outputs: Map::new(),
+                        error: Some(format!("{e:#}")),
+                        traceback: None,
+                        duration_ms: 0,
                     },
                 );
-            })
+                return Err(e);
+            }
         };
-        let handle = Arc::new(run::start(spec, sink)?);
-        s.runs
-            .lock()
-            .unwrap()
-            .insert(run_id.clone(), handle.clone());
+        lock(&s.runs).insert(run_id.clone(), handle.clone());
 
         // Record the result when the run ends, then tell the UI to refresh its lists.
         let app2 = app.clone();
@@ -240,7 +329,7 @@ async fn start_run(app: AppHandle, id: String, inputs: Map<String, Value>) -> Cm
             }
             let s = state(&app2);
             // Drop the table's reference so this thread holds the only one, then collect.
-            s.runs.lock().unwrap().remove(&finished.id);
+            lock(&s.runs).remove(&finished.id);
             if let Ok(handle) = Arc::try_unwrap(handle) {
                 let result = handle.wait();
                 let _ = s.store.finish_run(&mut finished, &result);
@@ -254,7 +343,7 @@ async fn start_run(app: AppHandle, id: String, inputs: Map<String, Value>) -> Cm
 
 #[tauri::command]
 fn cancel_run(app: AppHandle, run_id: String) {
-    if let Some(h) = state(&app).runs.lock().unwrap().get(&run_id) {
+    if let Some(h) = lock(&state(&app).runs).get(&run_id) {
         h.cancel();
     }
 }
@@ -282,18 +371,23 @@ async fn run_log(app: AppHandle, run_id: String) -> CmdResult<String> {
             .parent()
             .unwrap_or(&record.output_dir)
             .join("app.log");
-        let text = std::fs::read_to_string(log).unwrap_or_default();
-        let start = text.len().saturating_sub(200_000);
-        let start = (start..text.len())
-            .find(|i| text.is_char_boundary(*i))
-            .unwrap_or(0);
-        Ok(text[start..].to_string())
+        // The end of the log only, decoded leniently: it can be large, and not all UTF-8.
+        let Ok(mut file) = std::fs::File::open(log) else {
+            return Ok(String::new());
+        };
+        let len = file.metadata()?.len();
+        file.seek(SeekFrom::Start(len.saturating_sub(200_000)))?;
+        let mut bytes = Vec::new();
+        file.take(200_000).read_to_end(&mut bytes)?;
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
     })
     .await
 }
 
-/// Opens a run's result (a file it produced, or its output folder). Only paths inside that
-/// run's output folder can be opened: a compromised page cannot launch arbitrary files.
+/// Opens a run's result: its output folder, or a file the run returned as a result. Nothing
+/// else can be opened, whatever the page asks: the path must be one of the run's recorded
+/// results and resolve inside its output folder. Files Windows would run (programs, scripts,
+/// shortcuts) are only shown in their folder.
 #[tauri::command]
 async fn open_output(
     app: AppHandle,
@@ -303,14 +397,31 @@ async fn open_output(
 ) -> CmdResult<()> {
     blocking(move || {
         let record = state(&app).store.run(&run_id)?;
-        let target = path
-            .map(PathBuf::from)
-            .unwrap_or_else(|| record.output_dir.clone());
-        if !run::is_inside(&target, &record.output_dir) {
-            anyhow::bail!("this file is not a result of the run");
-        }
+        let output_dir = record.output_dir.canonicalize()?;
+        let target = match path {
+            None => output_dir.clone(),
+            Some(p) => {
+                if !record
+                    .outputs
+                    .values()
+                    .any(|v| v.as_str() == Some(p.as_str()))
+                {
+                    anyhow::bail!("this file is not a result of the run");
+                }
+                // The resolved path is the one opened, so it cannot change after the check.
+                let resolved = Path::new(&p).canonicalize()?;
+                if !resolved.starts_with(&output_dir) || !resolved.is_file() {
+                    anyhow::bail!("this file is not a result of the run");
+                }
+                resolved
+            }
+        };
+        let runnable = target
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| RUNNABLE.iter().any(|r| r.eq_ignore_ascii_case(e)));
         let opener = app.opener();
-        if reveal {
+        if reveal || (runnable && target != output_dir) {
             opener.reveal_item_in_dir(&target)?;
         } else {
             opener.open_path(target.to_string_lossy(), None::<&str>)?;
@@ -390,25 +501,90 @@ async fn settings(app: AppHandle) -> CmdResult<SettingsView> {
 
 #[tauri::command]
 fn take_pending_files(app: AppHandle) -> Vec<String> {
-    std::mem::take(&mut *state(&app).pending_files.lock().unwrap())
+    std::mem::take(&mut *lock(&state(&app).pending_files))
 }
 
-fn dsapp_args(args: impl IntoIterator<Item = String>) -> Vec<String> {
+/// The `.dsapp` files among the arguments, made absolute against `cwd` (a second launch from a
+/// terminal has its own working folder). Arguments that are not valid Unicode are skipped.
+fn dsapp_args(args: impl IntoIterator<Item = OsString>, cwd: &Path) -> Vec<String> {
     args.into_iter()
+        .filter_map(|a| a.into_string().ok())
         .filter(|a| a.to_ascii_lowercase().ends_with(".dsapp"))
+        .map(|a| cwd.join(a).to_string_lossy().into_owned())
         .collect()
+}
+
+/// Removes the secrets of every installed app from the credential store. The uninstaller runs
+/// this (`devstribution.exe --forget-secrets`) when the user asks to delete app data, because
+/// the credential store is outside the folders the uninstaller removes.
+fn forget_secrets() {
+    let Ok(paths) = Paths::from_env() else { return };
+    let Ok(store) = Store::open(paths) else {
+        return;
+    };
+    for app in store.installed().unwrap_or_default() {
+        let id = app.manifest.id.to_string();
+        for name in run::secret_names(&app.manifest) {
+            let _ = secrets::delete(&id, &name);
+        }
+    }
+}
+
+/// Makes Windows load DLLs only from System32 and the launcher's own folder, never from the
+/// current folder or PATH, where anyone could place a DLL for the signed launcher to load.
+#[cfg(windows)]
+fn restrict_dll_search() {
+    use windows_sys::Win32::System::LibraryLoader::{
+        LOAD_LIBRARY_SEARCH_DEFAULT_DIRS, SetDefaultDllDirectories,
+    };
+    unsafe { SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS) };
+}
+
+#[cfg(not(windows))]
+fn restrict_dll_search() {}
+
+/// The data folder, the runner, and the uv to use: set up once the launcher knows it is the
+/// only one running (a second launch must not touch the first one's data).
+fn open_store() -> anyhow::Result<(Store, PathBuf)> {
+    let paths = Paths::from_env()?;
+    paths.migrate_old_location()?;
+    if !cfg!(debug_assertions) {
+        // A release launcher uses only the uv it ships, which was pinned and hash-checked when
+        // it was built; neither DEVSTRIBUTION_UV nor PATH can replace it.
+        let exe = std::env::current_exe()?;
+        let uv = exe
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join(if cfg!(windows) { "uv.exe" } else { "uv" });
+        anyhow::ensure!(
+            uv.is_file(),
+            "the launcher's uv is missing: reinstall devstribution"
+        );
+        uv::use_only(uv);
+    }
+    let store = Store::open(paths)?;
+    let runner_dir = runner::install(&store.paths)?;
+    Ok((store, runner_dir))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let paths = Paths::from_env().expect("local data folder");
-    let store = Store::open(paths).expect("opening the devstribution data folder");
-    let runner_dir = runner::install(&store.paths).expect("installing the runner");
+    restrict_dll_search();
+    if std::env::args_os().any(|a| a == "--forget-secrets") {
+        forget_secrets();
+        return;
+    }
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let initial_files = dsapp_args(std::env::args_os().skip(1), &cwd);
 
-    tauri::Builder::default()
-        // A second launch (double-click on another .dsapp) hands its files to this window.
-        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            let files = dsapp_args(args.into_iter().skip(1));
+    let result = tauri::Builder::default()
+        // First: a second launch (double-click on another .dsapp) hands its files to this
+        // window and exits before anything else happens.
+        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+            let files = dsapp_args(
+                args.into_iter().skip(1).map(OsString::from),
+                Path::new(&cwd),
+            );
             if !files.is_empty() {
                 let _ = app.emit("open-files", files);
             }
@@ -419,12 +595,26 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .manage(AppState {
-            store,
-            runner_dir,
-            write_lock: Mutex::new(()),
-            runs: Mutex::new(HashMap::new()),
-            pending_files: Mutex::new(dsapp_args(std::env::args().skip(1))),
+        .setup(move |app| match open_store() {
+            Ok((store, runner_dir)) => {
+                app.manage(AppState {
+                    store,
+                    runner_dir,
+                    write_lock: Mutex::new(()),
+                    runs: Mutex::new(HashMap::new()),
+                    pending_files: Mutex::new(initial_files),
+                });
+                Ok(())
+            }
+            Err(e) => {
+                use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+                app.dialog()
+                    .message(format!("devstribution cannot start.\n\n{e:#}"))
+                    .kind(MessageDialogKind::Error)
+                    .title("devstribution")
+                    .blocking_show();
+                Err(e.into())
+            }
         })
         .invoke_handler(tauri::generate_handler![
             overview,
@@ -444,6 +634,9 @@ pub fn run() {
             settings,
             take_pending_files,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running the launcher");
+        .run(tauri::generate_context!());
+    if let Err(e) = result {
+        eprintln!("devstribution: {e}");
+        std::process::exit(1);
+    }
 }

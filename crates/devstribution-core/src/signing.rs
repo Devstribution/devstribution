@@ -26,7 +26,7 @@ pub fn generate_keys(namespace: &str, password: Option<String>) -> Result<Genera
         None => KeyPair::generate_unencrypted_keypair(),
     }
     .map_err(sig_err)?;
-    let key_id = key_id(pk.keynum());
+    let key_id = fingerprint(&pk);
     let public_key = pk.to_box().map_err(sig_err)?.into_string().replacen(
         "untrusted comment: minisign public key",
         &format!("untrusted comment: devstribution public key for {namespace}:"),
@@ -72,7 +72,7 @@ impl Signer {
     }
 
     pub fn key_id(&self) -> String {
-        key_id(self.pk.keynum())
+        fingerprint(&self.pk)
     }
 
     pub fn public_key(&self) -> &PublicKey {
@@ -116,8 +116,22 @@ pub fn public_key_file(pk: &PublicKey, comment: &str) -> String {
     format!("untrusted comment: {comment}\n{}\n", pk.to_base64())
 }
 
+/// The key's fingerprint, the identity shown to people: the first 128 bits of the SHA-256 of
+/// the whole public key, in groups of four hex digits.
+///
+/// Not minisign's 8-byte key number: whoever makes a key chooses that number freely, so two
+/// different keys can show the same one. Trust decisions compare the full key, never this.
 pub fn public_key_id(pk: &PublicKey) -> String {
-    key_id(pk.keynum())
+    fingerprint(pk)
+}
+
+fn fingerprint(pk: &PublicKey) -> String {
+    let digest = crate::files::sha256(&pk.to_bytes());
+    digest[..16]
+        .chunks(2)
+        .map(|c| format!("{:02X}{:02X}", c[0], c[1]))
+        .collect::<Vec<_>>()
+        .join("-")
 }
 
 /// A signature file parsed but not yet verified.
@@ -134,11 +148,6 @@ impl Signature {
             ));
         }
         Ok(Signature { sig })
-    }
-
-    /// The id of the key that claims to have made this signature (not verified).
-    pub fn key_id(&self) -> String {
-        key_id(self.sig.keynum())
     }
 
     /// The trusted comment, which is only trustworthy after [`Signature::verify`].
@@ -206,13 +215,6 @@ impl std::fmt::Display for TrustedComment {
     }
 }
 
-fn key_id(keynum: &[u8]) -> String {
-    // Same as minisign: the 8-byte key number, little-endian, printed as hex.
-    let mut bytes = [0u8; 8];
-    bytes.copy_from_slice(&keynum[..8]);
-    format!("{:016X}", u64::from_le_bytes(bytes))
-}
-
 fn sig_err(e: minisign::PError) -> Error {
     Error::Signature(e.to_string())
 }
@@ -234,7 +236,6 @@ mod tests {
 
         let pk = parse_public_key(&keys.public_key).unwrap();
         let sig = Signature::parse(&sig_text).unwrap();
-        assert_eq!(sig.key_id(), keys.key_id);
         assert_eq!(sig.verify(&pk, b"data").unwrap(), comment());
         assert!(sig.verify(&pk, b"tampered").is_err());
 

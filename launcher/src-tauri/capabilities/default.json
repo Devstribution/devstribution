@@ -1,7 +1,28 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The launcher window: core events, the file picker and yes/no confirmations. Files are opened by the backend, which only opens run results.",
+  "description": "The launcher window: its own commands, events (run progress, drag and drop), the file picker and yes/no confirmations. Nothing else: files are opened by the backend, which only opens run results.",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:allow-open", "dialog:allow-ask"]
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "dialog:allow-open",
+    "dialog:allow-ask",
+    "allow-overview",
+    "allow-get-app",
+    "allow-inspect-package",
+    "allow-confirm-install",
+    "allow-discard-install",
+    "allow-uninstall-app",
+    "allow-repair-app",
+    "allow-start-run",
+    "allow-cancel-run",
+    "allow-list-runs",
+    "allow-run-log",
+    "allow-open-output",
+    "allow-set-secret",
+    "allow-clear-secret",
+    "allow-settings",
+    "allow-take-pending-files"
+  ]
 }

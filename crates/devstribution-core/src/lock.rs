@@ -53,6 +53,70 @@ struct RawWheel {
     url: Option<String>,
     path: Option<String>,
     filename: Option<String>,
+    hash: Option<String>,
+}
+
+/// The only package index installed apps may use for now. A company policy will be able to
+/// name its own mirror (see docs/plan.md, "Policy").
+pub const ALLOWED_INDEX: &str = "https://pypi.org/simple";
+/// Where that index serves its files.
+const ALLOWED_FILES: &str = "https://files.pythonhosted.org/packages/";
+
+/// The install-time gate on `uv.lock`, run on every package before anything is installed:
+/// besides the app itself (`source = { virtual = "." }`), every package must come from the
+/// allowed index, and every wheel from that index's file host, over HTTPS, with a SHA-256
+/// hash. So a package cannot make uv download from anywhere its publisher likes, or install
+/// from a path, a URL, git, or a folder.
+pub fn check_sources(lock: &str) -> Result<()> {
+    let raw: RawLock = toml::from_str(lock).map_err(|e| Error::Lock(e.to_string()))?;
+    if raw.version != Some(1) {
+        return Err(Error::Lock(format!(
+            "lockfile version {:?} is not supported",
+            raw.version
+        )));
+    }
+    let mut roots = 0;
+    for p in &raw.package {
+        let label = format!("{} {}", p.name, p.version.as_deref().unwrap_or(""));
+        let label = label.trim_end();
+        let source = |key: &str| p.source.get(key).and_then(toml::Value::as_str);
+        if p.source.len() == 1 && source("virtual") == Some(".") {
+            roots += 1;
+            if !p.wheels.is_empty() {
+                return Err(Error::Lock(format!(
+                    "`{label}` is the app itself but lists wheels"
+                )));
+            }
+            continue;
+        }
+        let index = source("registry").map(|r| r.trim_end_matches('/'));
+        if p.source.len() != 1 || index != Some(ALLOWED_INDEX) {
+            return Err(Error::Lock(format!(
+                "`{label}` does not come from {ALLOWED_INDEX}; installed apps may only use \
+                 packages from that index (lock the app again with `uv lock` against PyPI)"
+            )));
+        }
+        for w in &p.wheels {
+            let url_ok = w.url.as_deref().is_some_and(|u| {
+                u.starts_with(ALLOWED_FILES) && !u.contains(['?', '#', '\\']) && !u.contains("/../")
+            });
+            let hash_ok = w.hash.as_deref().is_some_and(|h| {
+                h.strip_prefix("sha256:")
+                    .is_some_and(|x| x.len() == 64 && x.bytes().all(|b| b.is_ascii_hexdigit()))
+            });
+            if w.path.is_some() || !url_ok || !hash_ok {
+                return Err(Error::Lock(format!(
+                    "a wheel of `{label}` is not a file from {ALLOWED_FILES} with a SHA-256 hash"
+                )));
+            }
+        }
+    }
+    if roots != 1 {
+        return Err(Error::Lock(
+            "the lockfile must contain exactly one entry for the app itself".into(),
+        ));
+    }
+    Ok(())
 }
 
 impl RawWheel {
@@ -240,7 +304,14 @@ fn applies(marker: &str, platform: &str) -> Applies {
         "linux" => &["linux", "posix"],
         _ => &[],
     };
-    let m = marker.to_ascii_lowercase().replace('"', "'");
+    // One space between words, whatever the lockfile used (tabs, several spaces), so that
+    // `or`/`and` are always seen.
+    let m = marker
+        .to_ascii_lowercase()
+        .replace('"', "'")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     let os_keys = ["sys_platform", "platform_system", "os_name"];
     if !os_keys.iter().any(|k| m.contains(k)) {
         return Applies::Maybe;
@@ -402,5 +473,75 @@ sdist = {{ url = "https://files.example/devonly-1.0.tar.gz" }}
                 "linux"
             ) == Applies::Maybe
         );
+    }
+
+    fn sourced(source: &str, wheel: &str) -> String {
+        format!(
+            r#"version = 1
+[[package]]
+name = "my-app"
+version = "0.1.0"
+source = {{ virtual = "." }}
+
+[[package]]
+name = "dep"
+version = "1.0"
+source = {source}
+wheels = [{wheel}]
+"#
+        )
+    }
+
+    const PYPI_WHEEL: &str = "{ url = \"https://files.pythonhosted.org/packages/aa/dep-1.0-py3-none-any.whl\", hash = \"sha256:0000000000000000000000000000000000000000000000000000000000000000\" }";
+
+    #[test]
+    fn install_gate_accepts_pypi_wheels_only() {
+        check_sources(&sourced(
+            "{ registry = \"https://pypi.org/simple\" }",
+            PYPI_WHEEL,
+        ))
+        .unwrap();
+        for (source, wheel) in [
+            ("{ registry = \"http://evil.example/simple\" }", PYPI_WHEEL),
+            (
+                "{ registry = \"https://pypi.org/simple\", url = \"x\" }",
+                PYPI_WHEEL,
+            ),
+            (
+                "{ url = \"https://evil.example/dep-1.0-py3-none-any.whl\" }",
+                PYPI_WHEEL,
+            ),
+            ("{ path = \"dep-1.0-py3-none-any.whl\" }", PYPI_WHEEL),
+            ("{ git = \"https://github.com/x/y\" }", PYPI_WHEEL),
+            ("{ virtual = \"../other\" }", PYPI_WHEEL),
+            (
+                "{ registry = \"https://pypi.org/simple\" }",
+                "{ url = \"https://evil.example/packages/dep-1.0-py3-none-any.whl\", hash = \"sha256:0000000000000000000000000000000000000000000000000000000000000000\" }",
+            ),
+            (
+                "{ registry = \"https://pypi.org/simple\" }",
+                "{ url = \"https://files.pythonhosted.org/packages/aa/dep-1.0-py3-none-any.whl\" }",
+            ),
+            (
+                "{ registry = \"https://pypi.org/simple\" }",
+                "{ path = \"dep-1.0-py3-none-any.whl\", hash = \"sha256:0000000000000000000000000000000000000000000000000000000000000000\" }",
+            ),
+        ] {
+            assert!(
+                check_sources(&sourced(source, wheel)).is_err(),
+                "accepted {source} {wheel}"
+            );
+        }
+    }
+
+    #[test]
+    fn markers_with_tabs_are_still_understood() {
+        assert!(
+            applies(
+                "sys_platform == 'win32'\tor\tsys_platform == 'linux'",
+                "windows"
+            ) == Applies::Maybe
+        );
+        assert!(applies("sys_platform  ==  'darwin'", "windows") == Applies::No);
     }
 }

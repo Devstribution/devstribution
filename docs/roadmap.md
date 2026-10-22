@@ -33,6 +33,10 @@ The parts that compile on Windows but have never run there. Each gets a result i
 - ☐ Secrets are saved to and read from Credential Manager.
 - ☐ `gui` apps start with `pythonw.exe`, without a console window.
 - ☐ The new UI fixes (menu, uninstall dialog, no sideways scrolling) in the real launcher.
+- ☐ The pre-signing security fixes that only Windows can run (list in
+  [`security.md`](security.md), "Still to verify on a real Windows PC"): suspended start in the
+  Job Object, restricted DLL loading, the data folder move, the uninstaller removing secrets,
+  uv behind a company proxy.
 
 ## 3. Installer and signing
 
@@ -67,8 +71,9 @@ The parts that compile on Windows but have never run there. Each gets a result i
 
 ## 6. Release engineering
 
-- ☐ Security review of install and run (extraction, signature checks, process supervision, the
-  launcher's IPC surface and CSP).
+- ☑ Security review of install and run (extraction, signature checks, process supervision, the
+  launcher's IPC surface and CSP, dependencies, CI): done before signing, findings and fixes in
+  [`security.md`](security.md). Repeat before each release that changes these parts.
 - ☐ Logs a user can find and send (a "Copy diagnostics" button), without secrets in them.
 - ☐ Versioning, changelog, release notes; `docs/HANDOFF.md` and `status_quo.md` folded into a
   contributor guide.

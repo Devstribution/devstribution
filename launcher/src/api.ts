@@ -168,7 +168,8 @@ export interface Api {
   clearSecret(id: string, name: string): Promise<void>;
   settings(): Promise<Settings>;
   takePendingFiles(): Promise<string[]>;
-  onRunEvent(cb: (runId: string, e: RunEvent) => void): Promise<Unlisten>;
+  /** Run events arrive in batches (at most about ten a second), so a chatty app cannot flood the window. */
+  onRunEvents(cb: (runId: string, events: RunEvent[]) => void): Promise<Unlisten>;
   onInstallStep(cb: (e: StepEvent) => void): Promise<Unlisten>;
   onRunsChanged(cb: () => void): Promise<Unlisten>;
   onOpenFiles(cb: (paths: string[]) => void): Promise<Unlisten>;
@@ -220,8 +221,8 @@ async function tauriApi(): Promise<Api> {
     clearSecret: (id, name) => invoke("clear_secret", { id, name }),
     settings: () => invoke("settings"),
     takePendingFiles: () => invoke("take_pending_files"),
-    onRunEvent: (cb) =>
-      listen<{ run_id: string; event: RunEvent }>("run-event", (e) => cb(e.payload.run_id, e.payload.event)),
+    onRunEvents: (cb) =>
+      listen<{ run_id: string; events: RunEvent[] }>("run-events", (e) => cb(e.payload.run_id, e.payload.events)),
     onInstallStep: (cb) => listen<StepEvent>("install-step", (e) => cb(e.payload)),
     onRunsChanged: (cb) => listen("runs-changed", () => cb()),
     onOpenFiles: (cb) => listen<string[]>("open-files", (e) => cb(e.payload)),

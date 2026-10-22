@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
@@ -11,7 +12,7 @@ use devstribution_core::manifest::{AppId, Kind, Manifest, Version};
 use devstribution_core::package::{
     self, Limits, PYPROJECT, SignatureStatus, VerifiedPackage, VerifyOptions,
 };
-use devstribution_core::signing::parse_public_key;
+use devstribution_core::signing::{parse_public_key, public_key_base64, public_key_id};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -36,6 +37,9 @@ pub struct AppRecord {
     pub id: String,
     pub version: String,
     pub content_hash: String,
+    /// Full SHA-256 of the content (records from before it existed have it empty).
+    #[serde(default)]
+    pub content_sha256: String,
     pub key_id: String,
     pub installed_at: u64,
     pub origin: Option<Origin>,
@@ -113,6 +117,7 @@ pub struct PendingInstall {
     // Kept for the install step, not shown.
     pub publisher_key: String,
     pub content_hash: String,
+    pub content_sha256: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -190,6 +195,9 @@ pub fn current_platform() -> &'static str {
 
 pub struct Store {
     pub paths: Paths,
+    /// Held for every read-modify-write of `state.json`, so that an install confirmed while
+    /// a run starts (or two installs) cannot overwrite each other's changes.
+    state_lock: Mutex<()>,
 }
 
 impl Store {
@@ -209,7 +217,10 @@ impl Store {
                 let _ = fs::remove_dir_all(e.path());
             }
         }
-        let store = Store { paths };
+        let store = Store {
+            paths,
+            state_lock: Mutex::new(()),
+        };
         store.close_interrupted_runs();
         Ok(store)
     }
@@ -247,6 +258,32 @@ impl Store {
         fs::rename(&tmp, &path).context("saving state.json")
     }
 
+    /// Loads the state, lets `f` change it and saves it, all under the state lock. Nothing is
+    /// saved if `f` fails.
+    fn update_state<T>(&self, f: impl FnOnce(&mut State) -> Result<T>) -> Result<T> {
+        let _guard = self
+            .state_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut state = self.load()?;
+        let out = f(&mut state)?;
+        self.save(&state)?;
+        Ok(out)
+    }
+
+    /// Whether a run of the app is in progress (its record says so).
+    pub fn is_running(&self, id: &str) -> bool {
+        self.runs(Some(id), 20)
+            .is_ok_and(|runs| runs.iter().any(|r| r.status == RunStatus::Running))
+    }
+
+    fn refuse_if_running(&self, id: &str, what: &str) -> Result<()> {
+        if self.is_running(id) {
+            bail!("`{id}` is running: stop it before you {what} it");
+        }
+        Ok(())
+    }
+
     // -- installed apps ----------------------------------------------------------------------
 
     pub fn installed(&self) -> Result<Vec<InstalledApp>> {
@@ -278,15 +315,21 @@ impl Store {
         let id: AppId = record.id.parse().map_err(|e: String| anyhow!(e))?;
         let app_dir = self.paths.app_dir(&id, &record.content_hash);
         let manifest = Manifest::parse(&fs::read_to_string(app_dir.join(PYPROJECT))?)?;
-        let trust = if state.pins.contains_key(&id.namespace) {
+        let pin = state.pins.get(&id.namespace);
+        let trust = if pin.is_some() {
             Trust::FirstUse
         } else {
             Trust::NewPublisher
         };
+        let mut record = record.clone();
+        // Records and pins from older versions hold minisign's key number; show the fingerprint.
+        if let Some(fp) = pin.and_then(|p| fingerprint_of(&p.key)) {
+            record.key_id = fp;
+        }
         Ok(InstalledApp {
             icon: icon_data_url(&app_dir, &manifest),
             env_dir: self.paths.env_dir(&id, &record.content_hash),
-            record: record.clone(),
+            record,
             manifest,
             trust,
             app_dir,
@@ -320,38 +363,15 @@ impl Store {
         let size_bytes = fs::metadata(package_path)
             .with_context(|| format!("cannot open {}", package_path.display()))?
             .len();
-        // The namespace is only known after reading the package: peek at it with no trusted
-        // key, then verify for real against the pinned key, if any.
-        let peek_dir = stage.join("peek");
+        // The package is read exactly once: the publisher's key and the app id checked below
+        // are those of the very files that get installed. (Reading it a second time to check
+        // against the pinned key would let a file swapped in between pass as another app.)
         let opts = VerifyOptions {
             trusted_key: None,
             limits: Limits::default(),
         };
-        let peek = package::extract_and_verify(package_path, &peek_dir, &opts)?;
-        let namespace = peek.manifest.id.namespace.clone();
-        let verified: VerifiedPackage = match state.pins.get(&namespace) {
-            Some(pin) => {
-                let _ = fs::remove_dir_all(&peek_dir);
-                let key = parse_public_key(&pin.key)?;
-                let opts = VerifyOptions {
-                    trusted_key: Some(&key),
-                    limits: Limits::default(),
-                };
-                package::extract_and_verify(package_path, &stage.join("app"), &opts).map_err(
-                    |e| {
-                        anyhow!(
-                            "{e}. Apps from `{namespace}` you installed before were signed with \
-                             key {}; this package was not, so it may not come from the same publisher.",
-                            pin.key_id
-                        )
-                    },
-                )?
-            }
-            None => {
-                fs::rename(&peek_dir, stage.join("app"))?;
-                peek
-            }
-        };
+        let verified: VerifiedPackage =
+            package::extract_and_verify(package_path, &stage.join("app"), &opts)?;
         let m = &verified.manifest;
         let id = m.id.to_string();
         if !m.resources.is_empty() {
@@ -359,34 +379,23 @@ impl Store {
                 "this app needs downloadable resources, which this version of the launcher does not support yet"
             );
         }
-
+        let (action, trust) = admit(
+            state,
+            &m.id,
+            &m.version,
+            &verified.publisher_key,
+            &verified.content_sha256,
+            &verified.content_hash,
+        )?;
         let installed = state.apps.get(&id);
-        let action = match installed {
-            None => InstallAction::Install,
-            Some(r) if r.content_hash == verified.content_hash => InstallAction::Reinstall,
-            Some(_) => InstallAction::Update,
+        let key_id = match &verified.signature {
+            SignatureStatus::Trusted { key_id } | SignatureStatus::NewKey { key_id } => {
+                key_id.clone()
+            }
         };
-        if let Some(highest) = state.highest.get(&id) {
-            let highest: Version = highest.parse().map_err(|e: String| anyhow!(e))?;
-            if m.version < highest {
-                bail!(
-                    "version {} is older than version {highest}, which was already installed; \
-                     older versions are refused (they may have known problems)",
-                    m.version
-                );
-            }
-            if m.version == highest && action == InstallAction::Update {
-                bail!(
-                    "this package says version {} but its content differs from the installed \
-                     {highest}: the publisher must give every release a new version number",
-                    m.version
-                );
-            }
-        }
-
-        let (key_id, trust) = match &verified.signature {
-            SignatureStatus::Trusted { key_id } => (key_id.clone(), "first_use"),
-            SignatureStatus::NewKey { key_id } => (key_id.clone(), "new_publisher"),
+        let trust = match trust {
+            Trust::FirstUse => "first_use",
+            Trust::NewPublisher => "new_publisher",
         };
         let mut warnings = Vec::new();
         if trust == "new_publisher" {
@@ -435,6 +444,7 @@ impl Store {
             warnings,
             publisher_key: verified.publisher_key.clone(),
             content_hash: verified.content_hash.clone(),
+            content_sha256: verified.content_sha256.clone(),
         };
         fs::write(stage.join("pending.json"), serde_json::to_vec(&pending)?)?;
         Ok(pending)
@@ -460,8 +470,25 @@ impl Store {
             &fs::read(stage.join("pending.json")).context("this install is no longer pending")?,
         )?;
         let id: AppId = pending.id.parse().map_err(|e: String| anyhow!(e))?;
+        let version: Version = pending.version.parse().map_err(|e: String| anyhow!(e))?;
+        // The checks of the confirmation screen again, against the state as it is now: another
+        // install confirmed in the meantime may have pinned a different key for this publisher
+        // or installed a newer version.
+        admit(
+            &self.load()?,
+            &id,
+            &version,
+            &pending.publisher_key,
+            &pending.content_sha256,
+            &pending.content_hash,
+        )
+        .context("this install is no longer valid")?;
+        self.refuse_if_running(&pending.id, "update")?;
         let app_dir = self.paths.app_dir(&id, &pending.content_hash);
         let env_dir = self.paths.env_dir(&id, &pending.content_hash);
+        // Installed before with the same content (a reinstall): its files are already there.
+        let same_content_installed = self.load()?.apps.get(&pending.id).map(|r| &r.content_hash)
+            == Some(&pending.content_hash);
 
         on_step(InstallStep {
             step: "files",
@@ -478,65 +505,76 @@ impl Store {
             step: "environment",
             message: "Preparing the Python environment".into(),
         });
-        if env_dir.exists() {
-            fs::remove_dir_all(&env_dir)?;
-        }
         let mut forward = |line: &str| {
             on_step(InstallStep {
                 step: "environment",
                 message: line.to_string(),
             })
         };
-        if let Err(e) = uv::sync(&app_dir, &env_dir, LockMode::Frozen, &mut forward) {
-            let _ = fs::remove_dir_all(&env_dir);
-            let mut state = self.load()?;
-            if state.apps.get(&pending.id).map(|r| &r.content_hash) != Some(&pending.content_hash) {
+        if let Err(e) = build_env(&app_dir, &env_dir, &mut forward) {
+            // The installed version, if any, is untouched: only new files go.
+            if !same_content_installed {
                 let _ = fs::remove_dir_all(&app_dir);
-            } else {
-                state.apps.remove(&pending.id);
-                self.save(&state)?;
             }
             return Err(e);
         }
 
-        let mut state = self.load()?;
-        let last_inputs = state
-            .apps
-            .get(&pending.id)
-            .map(|r| r.last_inputs.clone())
-            .unwrap_or_default();
-        state
-            .pins
-            .entry(id.namespace.clone())
-            .or_insert_with(|| Pin {
-                key: pending.publisher_key.clone(),
-                key_id: pending.key_id.clone(),
-                pinned_at: now_secs(),
-                source: "first-use".into(),
-            });
-        let replaced = state.apps.insert(
-            pending.id.clone(),
-            AppRecord {
-                id: pending.id.clone(),
-                version: pending.version.clone(),
-                content_hash: pending.content_hash.clone(),
-                key_id: pending.key_id.clone(),
-                installed_at: now_secs(),
-                origin: pending.origin.clone(),
-                last_inputs,
-            },
-        );
-        let newer = state
-            .highest
-            .get(&pending.id)
-            .and_then(|h| h.parse::<Version>().ok())
-            .is_none_or(|h| pending.version.parse::<Version>().is_ok_and(|v| v > h));
-        if newer {
-            state
-                .highest
-                .insert(pending.id.clone(), pending.version.clone());
-        }
-        self.save(&state)?;
+        let replaced = self
+            .update_state(|state| {
+                admit(
+                    state,
+                    &id,
+                    &version,
+                    &pending.publisher_key,
+                    &pending.content_sha256,
+                    &pending.content_hash,
+                )
+                .context("this install is no longer valid")?;
+                let last_inputs = state
+                    .apps
+                    .get(&pending.id)
+                    .map(|r| r.last_inputs.clone())
+                    .unwrap_or_default();
+                state
+                    .pins
+                    .entry(id.namespace.clone())
+                    .or_insert_with(|| Pin {
+                        key: pending.publisher_key.clone(),
+                        key_id: pending.key_id.clone(),
+                        pinned_at: now_secs(),
+                        source: "first-use".into(),
+                    });
+                let replaced = state.apps.insert(
+                    pending.id.clone(),
+                    AppRecord {
+                        id: pending.id.clone(),
+                        version: pending.version.clone(),
+                        content_hash: pending.content_hash.clone(),
+                        content_sha256: pending.content_sha256.clone(),
+                        key_id: pending.key_id.clone(),
+                        installed_at: now_secs(),
+                        origin: pending.origin.clone(),
+                        last_inputs,
+                    },
+                );
+                let newer = state
+                    .highest
+                    .get(&pending.id)
+                    .and_then(|h| h.parse::<Version>().ok())
+                    .is_none_or(|h| version > h);
+                if newer {
+                    state
+                        .highest
+                        .insert(pending.id.clone(), pending.version.clone());
+                }
+                Ok(replaced)
+            })
+            .inspect_err(|_| {
+                if !same_content_installed {
+                    let _ = fs::remove_dir_all(&app_dir);
+                    let _ = fs::remove_dir_all(&env_dir);
+                }
+            })?;
 
         if let Some(old) = replaced.filter(|r| r.content_hash != pending.content_hash) {
             let _ = fs::remove_dir_all(self.paths.app_dir(&id, &old.content_hash));
@@ -552,40 +590,47 @@ impl Store {
     /// Removes an app, its environment and its secrets. Its publisher stays pinned, so a later
     /// reinstall must still come from the same key; run history is kept.
     pub fn uninstall(&self, id: &str) -> Result<()> {
-        let mut state = self.load()?;
-        let record = state
-            .apps
-            .remove(id)
-            .ok_or_else(|| anyhow!("`{id}` is not installed"))?;
+        self.refuse_if_running(id, "uninstall")?;
         let app_id: AppId = id.parse().map_err(|e: String| anyhow!(e))?;
-        if let Ok(app) = self.describe(&record, &state) {
+        // Secrets first, while the app's manifest (which names them) is still there.
+        if let Ok(app) = self.app(id) {
             for name in crate::run::secret_names(&app.manifest) {
                 let _ = crate::secrets::delete(id, &name);
             }
         }
-        self.save(&state)?;
+        self.update_state(|state| {
+            state
+                .apps
+                .remove(id)
+                .ok_or_else(|| anyhow!("`{id}` is not installed"))
+        })?;
         let _ = fs::remove_dir_all(self.paths.apps().join(&app_id.namespace).join(&app_id.app));
         let _ = fs::remove_dir_all(self.paths.envs().join(&app_id.namespace).join(&app_id.app));
+        let _ = fs::remove_dir_all(
+            self.paths
+                .pycache()
+                .join(&app_id.namespace)
+                .join(&app_id.app),
+        );
         Ok(())
     }
 
     /// Rebuilds an app's environment from its lockfile.
     pub fn repair(&self, id: &str, on_step: &mut dyn FnMut(InstallStep)) -> Result<()> {
+        self.refuse_if_running(id, "repair")?;
         let app = self.app(id)?;
         on_step(InstallStep {
             step: "environment",
             message: "Rebuilding the Python environment".into(),
         });
-        if app.env_dir.exists() {
-            fs::remove_dir_all(&app.env_dir)?;
-        }
         let mut forward = |line: &str| {
             on_step(InstallStep {
                 step: "environment",
                 message: line.to_string(),
             })
         };
-        uv::sync(&app.app_dir, &app.env_dir, LockMode::Frozen, &mut forward)?;
+        // The old environment stays until the new one is complete.
+        build_env(&app.app_dir, &app.env_dir, &mut forward)?;
         on_step(InstallStep {
             step: "ready",
             message: "Ready".into(),
@@ -619,11 +664,12 @@ impl Store {
             bail!("the app's environment is missing; use Repair");
         }
 
-        let mut state = self.load()?;
-        if let Some(r) = state.apps.get_mut(id) {
-            r.last_inputs = resolved.clone();
-        }
-        self.save(&state)?;
+        self.update_state(|state| {
+            if let Some(r) = state.apps.get_mut(id) {
+                r.last_inputs = resolved.clone();
+            }
+            Ok(())
+        })?;
 
         let started_at = now_secs();
         let run_id = format!(
@@ -650,6 +696,14 @@ impl Store {
             output_dir: output_dir.clone(),
         };
         self.save_run(&record)?;
+        // One bytecode cache per installed version: an app cannot leave compiled code that
+        // another app would load.
+        let pycache_dir = self
+            .paths
+            .pycache()
+            .join(&app.manifest.id.namespace)
+            .join(&app.manifest.id.app)
+            .join(&app.record.content_hash);
         let spec = RunSpec {
             manifest: app.manifest,
             app_dir: app.app_dir,
@@ -657,7 +711,7 @@ impl Store {
             runner_dir: runner_dir.to_path_buf(),
             run_dir,
             output_dir,
-            pycache_dir: self.paths.pycache(),
+            pycache_dir,
             inputs: resolved,
             secrets,
             args: Vec::new(),
@@ -783,6 +837,89 @@ impl Store {
             usage,
         })
     }
+}
+
+/// Builds an app's environment next to `env_dir` and moves it into place only when uv has
+/// finished: a failed or interrupted build never leaves a half-made environment that looks
+/// ready, and the environment it replaces keeps working until then.
+fn build_env(app_dir: &Path, env_dir: &Path, on_line: &mut dyn FnMut(&str)) -> Result<()> {
+    let parent = env_dir.parent().expect("has a parent");
+    fs::create_dir_all(parent)?;
+    let name = env_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("env");
+    let building = parent.join(format!("{name}.building-{}", random_hex(4)));
+    if let Err(e) = uv::sync(app_dir, &building, LockMode::Frozen, on_line) {
+        let _ = fs::remove_dir_all(&building);
+        return Err(e);
+    }
+    if env_dir.exists() {
+        fs::remove_dir_all(env_dir).context("replacing the old environment")?;
+    }
+    fs::rename(&building, env_dir).context("moving the environment into place")
+}
+
+/// Whether a verified package may be installed given what is installed and pinned: the
+/// publisher's key must be the pinned one, and the version must not go back (nor stay the same
+/// with different content). Run when the package is inspected and again when it is installed.
+fn admit(
+    state: &State,
+    id: &AppId,
+    version: &Version,
+    publisher_key: &str,
+    content_sha256: &str,
+    content_hash: &str,
+) -> Result<(InstallAction, Trust)> {
+    let trust = match state.pins.get(&id.namespace) {
+        Some(pin) if same_key(&pin.key, publisher_key) => Trust::FirstUse,
+        Some(pin) => bail!(
+            "this package is signed with key {}, but the apps from `{}` you installed before were \
+             signed with key {}: it may not come from the same publisher, so it was refused",
+            fingerprint_of(publisher_key).unwrap_or_default(),
+            id.namespace,
+            fingerprint_of(&pin.key).unwrap_or_else(|| pin.key_id.clone()),
+        ),
+        None => Trust::NewPublisher,
+    };
+    let key = id.to_string();
+    let action = match state.apps.get(&key) {
+        None => InstallAction::Install,
+        Some(r) if r.content_sha256.is_empty() && r.content_hash == content_hash => {
+            InstallAction::Reinstall
+        }
+        Some(r) if !r.content_sha256.is_empty() && r.content_sha256 == content_sha256 => {
+            InstallAction::Reinstall
+        }
+        Some(_) => InstallAction::Update,
+    };
+    if let Some(highest) = state.highest.get(&key) {
+        let highest: Version = highest.parse().map_err(|e: String| anyhow!(e))?;
+        if *version < highest {
+            bail!(
+                "version {version} is older than version {highest}, which was already installed; \
+                 older versions are refused (they may have known problems)"
+            );
+        }
+        if *version == highest && action == InstallAction::Update {
+            bail!(
+                "this package says version {version} but its content differs from the installed \
+                 {highest}: the publisher must give every release a new version number"
+            );
+        }
+    }
+    Ok((action, trust))
+}
+
+fn same_key(a: &str, b: &str) -> bool {
+    match (parse_public_key(a), parse_public_key(b)) {
+        (Ok(a), Ok(b)) => public_key_base64(&a) == public_key_base64(&b),
+        _ => false,
+    }
+}
+
+fn fingerprint_of(key: &str) -> Option<String> {
+    parse_public_key(key).ok().map(|k| public_key_id(&k))
 }
 
 fn is_token(token: &str) -> bool {

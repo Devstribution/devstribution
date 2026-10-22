@@ -72,7 +72,9 @@ export async function homeView(ctx: Ctx): Promise<Rendered> {
           const app = byId.get(r.app_id);
           const act = () => {
             if (action !== "Open result") return ctx.openApp(r.app_id);
-            const file = Object.values(r.outputs).find((v): v is string => typeof v === "string" && /[\\/]/.test(v));
+            // Only outputs the app declares as files; a text output that happens to contain a slash is not one.
+            const fileNames = new Set(app?.outputs.filter((o) => o.type === "file").map((o) => o.name) ?? []);
+            const file = Object.entries(r.outputs).find(([k, v]) => fileNames.has(k) && typeof v === "string")?.[1] as string | undefined;
             ctx.api.openOutput(r.id, file ?? null, false).catch(() => ctx.openApp(r.app_id));
           };
           return h("div", { class: "result" },

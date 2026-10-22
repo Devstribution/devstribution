@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-confirm-install"
+description = "Enables the confirm_install command without any pre-configured scope."
+commands.allow = ["confirm_install"]
+
+[[permission]]
+identifier = "deny-confirm-install"
+description = "Denies the confirm_install command without any pre-configured scope."
+commands.deny = ["confirm_install"]

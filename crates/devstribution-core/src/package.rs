@@ -1,6 +1,6 @@
 //! Building `.dsapp` packages and extracting them safely.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -110,10 +110,10 @@ fn ignore_rules(app_dir: &Path) -> Result<ignore::gitignore::Gitignore> {
     let mut builder = ignore::gitignore::GitignoreBuilder::new(app_dir);
     for name in [GITIGNORE, IGNORE_FILE] {
         let path = app_dir.join(name);
-        if path.is_file() {
-            if let Some(e) = builder.add(&path) {
-                return Err(Error::Package(format!("{name}: {e}")));
-            }
+        if path.is_file()
+            && let Some(e) = builder.add(&path)
+        {
+            return Err(Error::Package(format!("{name}: {e}")));
         }
     }
     builder
@@ -240,13 +240,13 @@ pub fn check_app_files(app: &AppFiles, manifest: &Manifest) -> Result<()> {
             entry_files(&manifest.entry.module)[0]
         )));
     }
-    if let Some(icon) = &manifest.icon {
-        if !app.files.contains_key(icon) {
-            return Err(Error::Manifest(format!(
-                "icon `{icon}` is not in the package (missing, or left out by .gitignore or \
+    if let Some(icon) = &manifest.icon
+        && !app.files.contains_key(icon)
+    {
+        return Err(Error::Manifest(format!(
+            "icon `{icon}` is not in the package (missing, or left out by .gitignore or \
                  {IGNORE_FILE})"
-            )));
-        }
+        )));
     }
     Ok(())
 }
@@ -271,6 +271,9 @@ pub fn pack(app_dir: &Path, signer: &Signer, out: &Path) -> Result<PackResult> {
     let lock = read(UV_LOCK).map_err(|_| {
         Error::Lock("missing; run `uv lock` in the app folder (the lockfile is required)".into())
     })?;
+    // The same gate the launcher applies at install, so a package that would be refused is
+    // never signed.
+    crate::lock::check_sources(&lock)?;
     let report = check_lock(&lock, &manifest.name, &manifest.platforms)?;
     if !report.errors.is_empty() {
         return Err(Error::Lock(report.errors.join("; ")));
@@ -374,7 +377,10 @@ pub struct VerifiedPackage {
     pub signature: SignatureStatus,
     /// The publisher's key, as one base64 line (what gets pinned for the namespace).
     pub publisher_key: String,
+    /// Short form of the content hash, for folder names only.
     pub content_hash: String,
+    /// SHA-256 of `FILES.sha256`, in full: what identifies the content when comparing versions.
+    pub content_sha256: String,
 }
 
 /// Extracts `package` into the new folder `dest` and verifies it. On any error `dest` is removed.
@@ -400,14 +406,23 @@ pub fn extract_and_verify(
 fn extract_inner(package: &Path, dest: &Path, opts: &VerifyOptions) -> Result<VerifiedPackage> {
     let refuse = |msg: String| Error::Package(msg);
     let file = fs::File::open(package).map_err(|e| Error::io(package, e))?;
+    let limits = opts.limits;
+    // Before reading the zip's index: a file this large cannot be a package within the
+    // limits, and its index alone could take a lot of memory.
+    let file_len = file.metadata().map_err(|e| Error::io(package, e))?.len();
+    if file_len > limits.max_total_bytes.saturating_add(64 << 20) {
+        return Err(refuse("the file is larger than any package can be".into()));
+    }
     let mut archive =
         ZipArchive::new(file).map_err(|e| refuse(format!("not a valid .dsapp (zip) file: {e}")))?;
-    let limits = opts.limits;
     if archive.len() > limits.max_files + 3 {
         return Err(refuse(format!("more than {} files", limits.max_files)));
     }
 
     let mut seen = HashSet::new();
+    // Every folder prefix as first spelled: `A/x.py` next to `a/y.py` would end up in one
+    // folder on Windows but two on Linux.
+    let mut folders: HashMap<String, String> = HashMap::new();
     let mut hashes: BTreeMap<String, [u8; 32]> = BTreeMap::new();
     let mut list_data = None;
     let mut sig_data = None;
@@ -417,7 +432,10 @@ fn extract_inner(package: &Path, dest: &Path, opts: &VerifyOptions) -> Result<Ve
         let mut entry = archive
             .by_index(i)
             .map_err(|e| refuse(format!("corrupt entry: {e}")))?;
-        let name = entry.name().to_owned();
+        let name = entry
+            .name()
+            .map_err(|e| refuse(format!("an entry name cannot be read: {e}")))?
+            .into_owned();
         let is_dir = name.ends_with('/');
         let path = name.strip_suffix('/').unwrap_or(&name);
         validate_relative_path(path).map_err(refuse)?;
@@ -438,6 +456,19 @@ fn extract_inner(package: &Path, dest: &Path, opts: &VerifyOptions) -> Result<Ve
             return Err(refuse(format!(
                 "`{path}` appears twice (names are compared ignoring case)"
             )));
+        }
+        let parts: Vec<&str> = path.split('/').collect();
+        let folder_count = if is_dir { parts.len() } else { parts.len() - 1 };
+        for n in 1..=folder_count {
+            let prefix = parts[..n].join("/");
+            let first = folders
+                .entry(prefix.to_lowercase())
+                .or_insert_with(|| prefix.clone());
+            if *first != prefix {
+                return Err(refuse(format!(
+                    "the folders `{first}` and `{prefix}` differ only in case"
+                )));
+            }
         }
         if is_dir {
             continue;
@@ -552,8 +583,12 @@ fn extract_inner(package: &Path, dest: &Path, opts: &VerifyOptions) -> Result<Ve
     let pyproject =
         fs::read_to_string(dest.join(PYPROJECT)).map_err(|e| Error::io(dest.join(PYPROJECT), e))?;
     let manifest = Manifest::parse(&pyproject)?;
+    let lock =
+        fs::read_to_string(dest.join(UV_LOCK)).map_err(|e| Error::io(dest.join(UV_LOCK), e))?;
+    crate::lock::check_sources(&lock)?;
+    // The version as written, not only its value: `1.2` and `1.2.0` are not the same text.
     if comment.id != manifest.id
-        || comment.version != manifest.version
+        || comment.version.to_string() != manifest.version.to_string()
         || comment.schema != manifest.schema_version
     {
         return Err(Error::Signature(format!(
@@ -566,12 +601,21 @@ fn extract_inner(package: &Path, dest: &Path, opts: &VerifyOptions) -> Result<Ve
             manifest.schema_version
         )));
     }
-    if let Some(icon) = &manifest.icon {
-        if list.get(icon).is_none() {
-            return Err(Error::Manifest(format!(
-                "icon `{icon}` is not in the package"
-            )));
-        }
+    if !entry_files(&manifest.entry.module)
+        .iter()
+        .any(|f| list.get(f).is_some())
+    {
+        return Err(Error::Manifest(format!(
+            "the entry module `{}` is not in the package",
+            manifest.entry.module
+        )));
+    }
+    if let Some(icon) = &manifest.icon
+        && list.get(icon).is_none()
+    {
+        return Err(Error::Manifest(format!(
+            "icon `{icon}` is not in the package"
+        )));
     }
 
     Ok(VerifiedPackage {
@@ -580,6 +624,7 @@ fn extract_inner(package: &Path, dest: &Path, opts: &VerifyOptions) -> Result<Ve
         signature: status,
         publisher_key: public_key_base64(&package_key),
         content_hash: content_hash(&list_data),
+        content_sha256: hex::encode(sha256(&list_data)),
     })
 }
 
@@ -705,7 +750,7 @@ source = { virtual = "." }
         let mut zip = ZipWriter::new(fs::File::create(dst).unwrap());
         for i in 0..archive.len() {
             let mut entry = archive.by_index(i).unwrap();
-            let name = entry.name().to_owned();
+            let name = entry.name().unwrap().into_owned();
             let mut data = Vec::new();
             entry.read_to_end(&mut data).unwrap();
             for (n, d) in edit(&name, data) {
@@ -915,6 +960,14 @@ source = { virtual = "." }
                 let mut v = vec![(n.to_string(), d.clone())];
                 if n == "main.py" {
                     v.push(("MAIN.py".into(), d))
+                }
+                v
+            }),
+            // folders differing only in case
+            Box::new(|n, d| {
+                let mut v = vec![(n.to_string(), d.clone())];
+                if n == "pkg/util.py" {
+                    v.push(("PKG/other.py".into(), d))
                 }
                 v
             }),

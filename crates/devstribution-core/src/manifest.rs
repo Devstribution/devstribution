@@ -228,13 +228,13 @@ impl Manifest {
         let project = raw
             .project
             .ok_or_else(|| bad("missing the [project] table".into()))?;
-        if let Some(dynamic) = &project.dynamic {
-            if !dynamic.is_empty() {
-                return Err(bad(format!(
-                    "[project].dynamic = {dynamic:?}: dynamic metadata needs a build step; \
+        if let Some(dynamic) = &project.dynamic
+            && !dynamic.is_empty()
+        {
+            return Err(bad(format!(
+                "[project].dynamic = {dynamic:?}: dynamic metadata needs a build step; \
                      write the values directly"
-                )));
-            }
+            )));
         }
         let name = project
             .name
@@ -314,6 +314,17 @@ impl Manifest {
         }
         validate_inputs(&ds.inputs).map_err(bad)?;
         validate_outputs(&ds.outputs).map_err(bad)?;
+        // Secret names become credential-store entry names: keep them plain.
+        if let Some(name) = ds
+            .permissions
+            .secrets
+            .iter()
+            .find(|n| !is_identifier(n) || n.len() > 64)
+        {
+            return Err(bad(format!(
+                "permissions.secrets: `{name}` must be a name of letters, digits and `_`"
+            )));
+        }
 
         Ok(Manifest {
             name,
@@ -507,10 +518,10 @@ impl FromStr for Entry {
         if module.is_empty() || !module.split('.').all(is_identifier) {
             return Err(format!("`{s}`: `{module}` is not a module name"));
         }
-        if let Some(f) = function {
-            if !is_identifier(f) {
-                return Err(format!("`{s}`: `{f}` is not a function name"));
-            }
+        if let Some(f) = function
+            && !is_identifier(f)
+        {
+            return Err(format!("`{s}`: `{f}` is not a function name"));
         }
         Ok(Entry {
             module: module.into(),
@@ -550,7 +561,9 @@ impl FromStr for Version {
         let parts: Option<Vec<u64>> = s
             .split('.')
             .map(|p| {
-                let canonical = !p.is_empty() && (p == "0" || !p.starts_with('0'));
+                let canonical = !p.is_empty()
+                    && p.bytes().all(|b| b.is_ascii_digit())
+                    && (p == "0" || !p.starts_with('0'));
                 canonical.then(|| p.parse().ok()).flatten()
             })
             .collect();
@@ -710,7 +723,17 @@ type = "file"
         assert!(v("1.10.0") > v("1.9.3"));
         assert_eq!(v("1.2"), v("1.2.0"));
         assert!(v("2") > v("1.99.99.99"));
-        for bad in ["", "1.", "01.2", "1.2.3.4.5", "1.2-beta", "v1"] {
+        for bad in [
+            "",
+            "1.",
+            "01.2",
+            "1.2.3.4.5",
+            "1.2-beta",
+            "v1",
+            "+1.0.0",
+            "1.+2",
+            " 1",
+        ] {
             assert!(bad.parse::<Version>().is_err(), "{bad}");
         }
     }

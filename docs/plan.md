@@ -1,20 +1,20 @@
 # Project plan: devstribution
 
 ## Problem
-Writing code has become fast: with automated and agentic coding, a working Python POC, automation or small app takes hours, not weeks. Distribution has not kept up. Getting "it works on my PC" into the hands of a colleague or client still hits the traditional bottlenecks:
-- Unsigned `.exe` / `.bat` files are blocked by Microsoft (SmartScreen, antivirus).
-- End users cannot install Python, dependencies, etc.
-- Packaging each app as its own signed installer is slow, expensive and treated by IT as one more thing to approve.
+Writing code has become fast: with automated and agentic coding, a working Python POC, automation or small app can take hours rather than weeks. Distribution hasn't kept pace. Getting something that "works on my PC" to a colleague or client still runs into familiar obstacles, most of which exist for good reasons:
+- Unsigned `.exe` / `.bat` files are often blocked or flagged by SmartScreen and antivirus software, which protects people from unknown programs.
+- Many end users can't, or aren't allowed to, install Python and its dependencies.
+- Building and signing a separate installer for each app is slow and costly, and each one is another program IT has to review and approve.
 
-**Goal:** a platform to distribute almost anything Python can do (POCs, near-DIY apps, automations, tools with or without a GUI), as easily as sharing a file. What an app may do is decided by **trust in its publisher**, not by a fixed list of allowed use cases. The aim is to remove the bottlenecks between writing code and using it, and so make code more democratic.
+**Goal:** make sharing almost anything Python can do (POCs, small home-made apps, automations, tools with or without a GUI) as easy as sharing a file, while giving users and IT a clear basis for deciding what to trust. What an app may do follows from **trust in its publisher**, rather than from a fixed list of allowed use cases. The hope is to shorten the path between writing useful code and using it, and so open it up to more people.
 
 ## Principles
 These decide everything else in this plan; when a choice is unclear, they are the rule.
 
-**The promise.** Nothing is bulletproof, and like with a bank or a password manager, using it means trusting someone. devstribution guarantees that **what you run is exactly what that publisher published, by a publisher whose identity is verified, and that it cannot damage the platform or other apps**. Whether the publisher deserves trust is the user's (or IT's) choice. So a breach can only come from misplaced trust, never from the platform itself. Like a bank, trust comes with remedies: revocation, audit log, publisher reputation in the catalog.
+**The promise.** No software is bulletproof, and, as with a bank or a password manager, using devstribution means trusting someone. What devstribution sets out to ensure is that **what you run is exactly what its publisher published, that the publisher's identity is checked, and that an app cannot tamper with the platform or other apps**. Whether a publisher deserves trust remains the user's (or IT's) decision. The aim is that problems can come only from trust placed in the wrong publisher, not from the platform. The platform can still have bugs and has known limits (for example, in per-user mode it cannot protect against other programs running as the same user), so it is reviewed before each release and its limits are written down in [`security.md`](security.md). As with a bank, trust comes with remedies: revocation, an audit log, publisher reputation in the catalog.
 
 1. **Built to be used.** Easy to set up, easy to use, no technical knowledge needed (see "User experience").
-2. **Safe itself.** The platform never becomes the weak point: no local server, minimal privileges, signatures checked before anything is extracted, an app can never touch the launcher, other apps, the trust settings or the policy.
+2. **Safe itself.** The platform should never be the weak point: no local server, minimal privileges, nothing from a package used before its signature and every file's hash are checked (extraction goes to a private staging folder first), and, within the limits stated in [`security.md`](security.md), an app cannot touch the launcher, other apps, the trust settings or the policy.
 3. **Contains badly made apps.** Most failures are bugs, not malice; a broken app must fail cleanly and alone (see "Robustness").
 4. **Light.** Small to download, small on disk, nothing running when no app is in use (see "Lightness").
 5. **Local and serverless.** Data stays on the user's PC and the project runs no server; GitHub is the only outside service, and apps received as files keep working without it.
@@ -33,19 +33,19 @@ These decide everything else in this plan; when a choice is unclear, they are th
 ## Options evaluated
 | Approach | Outcome |
 |---|---|
-| A. Server-side with generated UI | Rejected: data would leave the user's PC, infrastructure costs |
+| A. Server-side with generated UI | Not chosen: data would leave the user's PC, infrastructure costs |
 | B. In the browser (Pyodide/WASM) | Not enough on its own: SAP (COM/RFC) and many APIs (CORS) are unreachable. Useful only for Excel-based tools, possible extra mode |
 | C. Signed local launcher | **Chosen**: everything Python can do locally (filesystem, SAP, internal network, GUIs, hardware); data stays local |
 
 Existing alternatives to study: Windmill, Streamlit, Gradio, NiceGUI, marimo / stlite / PyScript, Retool, Appsmith, **PyApp** (exe that downloads Python with `uv` on first run), **Briefcase**.
 
-**Differentiation**: PyApp and Briefcase package **one** app at a time; Streamlit-style tools need a server or a Python install. None of these combines (1) a single signed launcher for any number of apps of any kind, (2) zero-UI apps that get a generated UI from the manifest, (3) a publisher trust model that IT can manage without a server, (4) publishing fast enough for code written by AI agents.
+**Differentiation**: these are mature tools that do their own jobs well, and devstribution builds on ideas from several of them. PyApp and Briefcase package **one** app at a time; Streamlit-style tools need a server or a Python install. As far as we know, none of them combines (1) a single signed launcher for any number of apps of any kind, (2) zero-UI apps that get a generated UI from the manifest, (3) a publisher trust model that IT can manage without a server, (4) publishing fast enough for code written by AI agents.
 
 ## Main risks (to verify first)
 | Risk | Impact | Mitigation |
 |---|---|---|
 | **AppLocker / WDAC** block executables in user-writable folders (`%LOCALAPPDATA%`). `uv`'s Pythons (python-build-standalone) have no Authenticode signature; a venv's `python.exe` is also a copy inside the venv folder. **WDAC also enforces on DLLs**, so the `.pyd` files of dependencies (e.g. `pandas`) are blocked too, not just `python.exe` | Apps don't start at all on corporate PCs, the main target | **Phase 0**: test on a real locked-down corporate PC. Plan B: per-machine mode with a signed interpreter and dependencies in an admin-only folder (see below) |
-| **SignPath Foundation** requires open source projects that are already established | Unsigned launcher for the first months → SmartScreen | Plan B: paid OV certificate, or distribution via winget/Intune accepting the warning for early users |
+| **SignPath Foundation** may expect an open source project to be already established | Possibly an unsigned launcher for the first months, with SmartScreen warnings | Plan B: Certum's open-source certificate or a paid OV certificate, or distribution via winget/Intune for early users who accept the warning |
 | **SAP**: `pyrfc` archived by SAP, NW RFC SDK proprietary and not redistributable; SAP GUI Scripting often disabled by SAP admins | One of the key use cases may not work | Declare prerequisites in the manifest (`requires`); the launcher checks them and explains what's missing. Document what is actually supported |
 
 ### Python installation modes
@@ -66,8 +66,8 @@ Existing alternatives to study: Windmill, Streamlit, Gradio, NiceGUI, marimo / s
 ### 1. A single signed program: Tauri launcher
 - Installed once (MSI/NSIS installer generated by Tauri, winget, Intune), no `.bat`.
 - Signing: SignPath Foundation (free for open source) or an OV certificate as plan B.
-- No PyInstaller (antivirus false positives): the launcher is a native executable.
-- UI in WebView2, communicating with the backend over **Tauri IPC**: no local HTTP server, so no CSRF / DNS rebinding attack surface.
+- No PyInstaller, whose executables antivirus software often flags by mistake: the launcher is a native executable.
+- UI in WebView2, communicating with the backend over **Tauri IPC**: no local HTTP server, which avoids the CSRF and DNS-rebinding risks that come with one.
 - `uv` bundled as a **sidecar**, signed and installed together with the launcher.
 - The **Python runner** is shipped inside the launcher's install folder (see "Execution"), not installed into app environments.
 
@@ -105,7 +105,7 @@ For `web` apps the local server belongs to the app, not to the launcher, so the 
 - **Diagnostics**: on error the launcher creates a zip (logs, versions), applies **automatic redaction** (user paths, user name, environment variables, secret values), **shows the user the contents**, and the user decides whether to send it (pre-filled GitHub issue or file). Never sent automatically.
 
 ### 5. Security (critical point)
-Apps can do anything Python can, so **trust in the publisher is the safety model** (see "The promise"). The platform's job is to make that trust well-founded and to make sure nothing else can be attacked:
+Apps can do anything Python can, so **trust in the publisher is the safety model** (see "The promise"). The platform's job is to make that trust well-founded and to leave as little else as possible open to attack:
 - Permissions declared in the manifest (network, folders, SAP). **They are informational**: the UI says so explicitly ("the author declares that..."), to avoid a false sense of security.
 - User confirmation on the first run of each app.
 - "Verified" badge for apps reviewed in the catalog.
@@ -122,15 +122,15 @@ Apps can do anything Python can, so **trust in the publisher is the safety model
 - Plain-language messages everywhere: no stack traces in the UI (they are in the log and the diagnostic package).
 
 ### 7. Robustness (badly made apps fail cleanly and alone)
-- **One environment per app**: a broken or conflicting dependency in app A can never break app B or the launcher.
+- **One environment per app**: a broken or conflicting dependency in app A doesn't affect app B or the launcher.
 - **One output folder per run**, so a run never overwrites the previous one's results.
 - **Kill cleanly**: hung or crashed apps are terminated with their whole process tree (Job Object) and reported in plain language.
 - **Repair**: one button rebuilds the app's environment from the lockfile.
 - **Clean uninstall**: removes the app's code, environment, schedules and secrets; uninstalling the launcher removes everything it created.
-- **Caught at publish time**: `devstribution pack --test` installs the app in a clean environment and runs it once (with sample inputs for `form` apps), so many bugs never reach users.
+- **Caught at publish time**: `devstribution pack --test` installs the app in a clean environment and runs it once (with sample inputs for `form` apps), so many bugs are caught before they reach users.
 
 ### 8. Lightness
-- Tauri launcher: installer of about 10 MB (Electron-based tools are around 100 MB).
+- Tauri launcher: installer of about 10 MB (Electron-based tools are often around 100 MB).
 - Python is downloaded **once** per version and shared by all apps.
 - `uv`'s shared cache keeps one copy of each package and links it into each environment: ten apps using pandas take the disk space of one pandas.
 - **Nothing runs in the background** when no app is in use: no tray process, no resident updater. The per-machine service is demand-started by the launcher and stops when idle. `background` apps run only via Task Scheduler.
@@ -146,7 +146,7 @@ Apps can do anything Python can, so **trust in the publisher is the safety model
 Principle: **robust for IT, frictionless for everyone else**. One launcher; behaviour depends on the policy.
 
 **Modes**
-- **Free** (no policy): strong warnings and confirmation on the first run of each app, at the user's own risk.
+- **Free** (no policy): clear warnings and a confirmation on the first run of each app; the decision is the user's.
 - **Managed** (policy in HKLM / GPO / Intune): runs only apps signed by authors approved by IT.
 
 **Roles** (only two, no server to administer)
@@ -155,13 +155,13 @@ Principle: **robust for IT, frictionless for everyone else**. One launcher; beha
 
 **Binding author, namespace and key**
 - The app `id` is `<author>/<app>`. The `<author>` part is the **namespace**, and it is the only author identity: the manifest has no self-declared `author` or `key` field, because anything in the manifest is written by the publisher.
-- On verification, the launcher identifies the signing key from the signature itself (minisign key ID), then looks up which namespace that key owns:
+- On verification, the launcher takes the signing key carried in the package (shown to people as a SHA-256 fingerprint; minisign's 8-byte key ID can be chosen by whoever makes a key, so it is never used for trust), then checks which namespace that key owns:
   - **Managed mode**: from the policy / imported `.trust` files (`.trust` = author namespace + public keys).
   - **Free mode**, in order of strength:
     1. **Catalog**: the catalog countersigns that namespace X belongs to the GitHub user/org that owns the source repo.
     2. **Download source**: for `devstribution://install/<github-user>/<app>` links and other launcher downloads from GitHub, the namespace must equal the owner of the GitHub repo the release was downloaded from (`<github-user>`, compared case-insensitively). A mismatch = refused. This uses GitHub's own account ownership as the proof, with no server of ours.
     3. **Trust on first use**, only for files received outside GitHub (email, network share): the first key seen for a namespace is pinned locally and a later package for that namespace signed by a different key is refused unless it is a declared rotation. Because whoever arrives first could claim any name, the confirmation screen marks such a namespace **"unverified name"** with the key fingerprint, and it never gets the verified style of options 1-2. If the same namespace is later verified by the catalog or a GitHub download with a different key, the launcher stops and explains the conflict instead of choosing silently.
-- **Rule**: the namespace in `id` must be owned by the key that verified the signature, otherwise the package is refused. A trusted author A can therefore never publish or overwrite `B/app`.
+- **Rule**: the namespace in `id` must be owned by the key that verified the signature, otherwise the package is refused. A trusted author A therefore cannot publish or overwrite `B/app`.
 - The signature's **trusted comment** (signed in minisign) contains `id=<id> version=<version> schema=<n>`; the launcher checks that it matches the manifest, so the key facts can be read and checked before extraction.
 
 **Decisions**
@@ -181,7 +181,7 @@ Principle: **robust for IT, frictionless for everyone else**. One launcher; beha
 | Launcher updates | Tauri updater plugin (signed updates), can be disabled by IT (distribution via Intune/winget) |
 | Dependencies | The signature covers the manifest + lockfile with hashes; anything outside the lockfile = refused. **Wheels only**: every package in `uv.lock` must have a wheel for the target platform; `devstribution pack` refuses the package otherwise, and installation uses `--no-build`, so no `setup.py` or build backend ever runs. Allowed only in `devstribution dev`. Optional internal mirror from policy |
 | Support | IT-oriented docs, policy dry-run mode, no feature that requires a server |
-| Threat model | One page: threat → what blocks it → what it does NOT cover. Covered: malicious or compromised author, author impersonating another namespace, downgrade to an old vulnerable version, code running at install time, use of the per-machine service to place untrusted code in a WDAC-trusted folder, files swapped between check and install, `devstribution://` links from malicious sites, tampered packages. Not covered: local admin, pre-existing malware, bugs in the code of signed apps |
+| Threat model | One page ([`security.md`](security.md)): threat → what blocks it → what it does NOT cover. Covered: malicious or compromised author, author impersonating another namespace, downgrade to an old vulnerable version, code running at install time, use of the per-machine service to place untrusted code in a WDAC-trusted folder, files swapped between check and install, `devstribution://` links from malicious sites, tampered packages. Not covered: local admin, pre-existing malware, bugs in the code of signed apps |
 
 **Implementation order**: (1) author signatures + namespace binding + free/managed mode + minimal policy, (2) `.trust` and import, (3) revocation, rotation, anti-downgrade, logs, (4) advanced options (ring, mirror, pin).
 
@@ -344,7 +344,7 @@ Several versions of the same app can coexist; the old one is removed after a suc
 
 ### Local folders
 ```
-%LOCALAPPDATA%\devstribution\
+%LOCALAPPDATA%\dev.devstribution.launcher\data\
   apps\<id>\<version-hash>\   # extracted code
   envs\<id>\<version-hash>\   # venv (per-user mode; per-machine mode uses Program Files)
   runs\<timestamp>\           # output and logs per run
@@ -381,7 +381,7 @@ Name availability checked on 2026-10-21 (all free; re-check `.io` at the registr
 | `docs/plan.md` | This plan: move it from the repo root to `docs/` in the same commit that adds `README.md`, so the link works from the start |
 
 **When there is real code**
-- [ ] crates.io: log in with GitHub, first publication with a working version (no empty packages to squat the name).
+- [ ] crates.io: log in with GitHub, first publication with a working version (rather than an empty package just to reserve the name).
 - [ ] PyPI: account with 2FA, Trusted Publisher from GitHub Actions for `devstribution-runner` (development SDK).
 
 **Later**
