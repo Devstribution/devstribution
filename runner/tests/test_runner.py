@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -172,6 +173,33 @@ class RunnerTest(unittest.TestCase):
         proc.stdout.readline()
         proc.stdin.close()
         self.assertEqual(proc.wait(timeout=30), 2)
+
+    def test_app_standard_input_is_not_the_protocol_pipe(self):
+        # Regression: on Windows a read pending on the stdin pipe blocks every other call on it,
+        # so loading numpy (whose OpenBLAS looks at the standard input) hung the run at start.
+        # Only the runner's private copy of the pipe may be read; fd 0 must be NUL.
+        self.write_app(
+            """
+            import os, stat
+
+            def run(ctx):
+                ctx.log("pipe" if stat.S_ISFIFO(os.fstat(0).st_mode) else "not a pipe")
+                return {}
+            """
+        )
+        proc = self.start()
+        watchdog = threading.Timer(15, proc.kill)
+        watchdog.start()
+        try:
+            messages = [json.loads(line) for line in iter(proc.stdout.readline, b"")
+                        if json.loads(line)["type"] in ("log", "result")]
+        finally:
+            watchdog.cancel()
+            proc.stdin.close()
+            proc.wait(timeout=30)
+        self.assertTrue(messages, "the run hung")
+        self.assertEqual(messages[0]["message"], "not a pipe")
+        self.assertEqual(messages[-1]["status"], "ok")
 
     def test_gui_kind_runs_module_as_main(self):
         self.write_app(

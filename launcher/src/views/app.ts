@@ -274,7 +274,8 @@ export async function appView(ctx: Ctx, id: string): Promise<Rendered> {
     } }, icon(Wrench, 16), "Repair"),
     h("button", { class: "danger", onclick: async () => {
       menu.hidden = true;
-      if (!confirm(`Uninstall ${app.title}? Its environment and saved secrets are removed; past results stay in the Runs history.`)) return;
+      const ok = await ctx.api.ask(`Uninstall ${app.title}? Its environment and saved secrets are removed; past results stay in the Runs history.`, "Uninstall", "Uninstall");
+      if (!ok) return;
       try { await ctx.api.uninstall(app.id); toast(`${app.title} uninstalled`, "ok"); await ctx.refreshNav(); ctx.navigate("#/apps"); } catch (e) { toast(errorText(e), "error"); }
     } }, icon(Trash2, 16), "Uninstall"));
   const closeMenu = (e: Event) => { if (!menuWrap.contains(e.target as Node)) menu.hidden = true; };

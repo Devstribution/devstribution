@@ -317,10 +317,11 @@ table.table { width: 100%; border-collapse: collapse; }
 
 /* ---------- app page ---------- */
 
-.hero { display: flex; align-items: center; gap: 20px; padding: 24px; position: relative; overflow: hidden; }
-.hero::after {
-  content: ""; position: absolute; right: -80px; top: -120px; width: 360px; height: 360px; border-radius: 50%;
-  background: radial-gradient(circle, rgba(122, 77, 255, 0.12), transparent 65%); pointer-events: none;
+/* The glow is a background layer, not a clipped pseudo-element: `overflow: hidden` here would also
+   clip the "⋯" menu that opens below the card. */
+.hero {
+  display: flex; align-items: center; gap: 20px; padding: 24px; position: relative;
+  background: radial-gradient(circle 255px at right 100px top 60px, rgba(122, 77, 255, 0.12), transparent 65%), var(--surface);
 }
 .hero h2 { font-size: 24px; font-weight: 750; }
 .hero .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; color: var(--muted); font-size: 13px; }
