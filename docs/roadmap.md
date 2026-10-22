@@ -13,14 +13,14 @@ Status: ☐ to do · ◐ in progress · ☑ done
 
 What goes into a `.dsapp`, and what the launcher runs it with, must be exactly what we intend.
 
-- ◐ **`pack` leaves out what it should.** A `.dsappignore` file (`.gitignore` syntax) next to
+- ☑ **`pack` leaves out what it should.** A `.dsappignore` file (`.gitignore` syntax) next to
   `pyproject.toml`, plus the app folder's own `.gitignore`. Files that look like data
   (spreadsheets, databases, archives, logs) are refused unless a `!pattern` lists them on purpose,
   so client data cannot end up signed by accident. `pack --list` shows what would be packed.
   (From the first real packaging: `app_1/output/` nearly went into `ricon.dsapp`.)
-- ◐ **Pinned uv.** The launcher ships a fixed uv release, downloaded and checked against its sha256,
+- ☑ **Pinned uv.** The launcher ships a fixed uv release, downloaded and checked against its sha256,
   instead of whatever uv is on the build machine's PATH.
-- ◐ **Package format 1 is frozen.** A written specification ([`format.md`](format.md)) and a promise:
+- ☑ **Package format 1 is frozen.** A written specification ([`format.md`](format.md)) and a promise:
   every later launcher installs schema 1 packages; a package needing a newer launcher says so
   plainly instead of failing with a parse error.
 

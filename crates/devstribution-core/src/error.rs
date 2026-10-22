@@ -18,6 +18,14 @@ pub enum Error {
     #[error("signature: {0}")]
     Signature(String),
 
+    /// The package uses a later format than this version reads. Every launcher keeps reading
+    /// every earlier format (docs/format.md), so updating devstribution is always the fix.
+    #[error(
+        "this app needs a newer version of devstribution (package format {found}; this version \
+         reads formats up to {supported}). Update devstribution, then open the app again"
+    )]
+    NewerFormat { found: u32, supported: u32 },
+
     #[error("{path}: {source}")]
     Io {
         path: PathBuf,
