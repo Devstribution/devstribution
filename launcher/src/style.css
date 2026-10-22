@@ -262,6 +262,7 @@ svg.lucide { flex: none; }
 }
 .brand { display: flex; align-items: center; gap: 10px; padding: 0 10px var(--sp-6); font-weight: var(--fw-heavy); font-size: var(--fs-md); }
 .brand-mark { flex: none; width: 28px; height: 28px; border-radius: 8px; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; }
+.brand-mark svg { fill: currentColor; }
 .nav-item {
   display: flex; align-items: center; gap: var(--sp-3); height: 42px; padding: 0 var(--sp-3); width: 100%;
   border: 0; border-radius: var(--r-md); background: none; color: var(--text-2); font-weight: var(--fw-bold); text-align: left;

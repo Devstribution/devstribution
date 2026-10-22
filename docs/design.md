@@ -20,6 +20,13 @@ tokens describe the same thing, so change them together.
 6. **No inline visual styles in the views.** Views pick classes from `style.css`. Only computed
    values (a bar's width, a user-picked colour) go into `style=`.
 
+## Logo
+
+An ink square with rounded corners and a white play triangle: the same mark as the sidebar's
+brand square, with no gradient. The source is `launcher/src/logo.svg`. After changing it,
+regenerate the app icons with `npx tauri icon src/logo.svg` (from `launcher/`), then delete the
+`android/` and `ios/` folders it also writes.
+
 ## Palette
 
 Light and dark themes share the same semantic token names; only their values change. The raw

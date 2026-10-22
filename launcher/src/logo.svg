@@ -1,12 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#4F7BFF"/>
-      <stop offset="1" stop-color="#7B4DFF"/>
-    </linearGradient>
-  </defs>
-  <rect x="64" y="64" width="896" height="896" rx="220" fill="url(#g)"/>
-  <path d="M400 330 L700 512 L400 694 Z" fill="#fff" stroke="#fff" stroke-width="60" stroke-linejoin="round"/>
-  <circle cx="300" cy="330" r="46" fill="#fff" opacity=".55"/>
-  <circle cx="300" cy="694" r="46" fill="#fff" opacity=".55"/>
+  <!-- The devstribution mark: the brand square from the sidebar (ink, flat, no gradient) with a play triangle. -->
+  <rect x="64" y="64" width="896" height="896" rx="220" fill="#18181b"/>
+  <path d="M410 316 Q362 288 362 344 V680 Q362 736 410 708 L690 540 Q738 512 690 484 Z" fill="#ffffff"/>
 </svg>
