@@ -115,6 +115,12 @@ fn install_run_update_and_refusals() {
     assert_eq!(store.runs(None, 10).unwrap()[0].status, RunStatus::Ok);
     let stats = store.stats(14).unwrap();
     assert_eq!((stats.runs, stats.ok, stats.per_day.len()), (1, 1, 14));
+    assert_eq!(stats.usage.len(), 1);
+    assert_eq!(
+        (stats.usage[0].app_id.as_str(), stats.usage[0].runs),
+        ("alice/hello", 1)
+    );
+    assert_eq!(stats.usage[0].last_run_at, record.started_at);
     assert_eq!(
         store.app("alice/hello").unwrap().record.last_inputs["name"],
         json!("Ada")

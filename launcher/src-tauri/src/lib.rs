@@ -125,7 +125,8 @@ async fn overview(app: AppHandle) -> CmdResult<Overview> {
                 .into_iter()
                 .map(AppView::from)
                 .collect(),
-            stats: s.store.stats(14)?,
+            // A month: the dashboard shows its last 14 days, "often" uses all of it.
+            stats: s.store.stats(30)?,
             recent_runs: s.store.runs(None, 8)?,
         })
     })
