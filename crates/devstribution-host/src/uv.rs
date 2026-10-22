@@ -4,12 +4,25 @@ use std::ffi::OsString;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 
 use anyhow::{Context, Result, bail};
+use devstribution_core::manifest::Manifest;
 
-/// `DEVSTRIBUTION_UV`, else `uv` next to the running executable (the launcher's sidecar), else
-/// `uv` from PATH.
+static FIXED_UV: OnceLock<PathBuf> = OnceLock::new();
+
+/// Makes every later call use exactly this uv. The released launcher calls it with the uv it
+/// ships (pinned and hash-checked), so neither `DEVSTRIBUTION_UV` nor PATH can swap it.
+pub fn use_only(uv: PathBuf) {
+    let _ = FIXED_UV.set(uv);
+}
+
+/// The uv fixed by [`use_only`]; otherwise `DEVSTRIBUTION_UV`, else `uv` next to the running
+/// executable (the launcher's sidecar), else `uv` from PATH (the developer CLI).
 pub fn uv_path() -> OsString {
+    if let Some(p) = FIXED_UV.get() {
+        return p.clone().into_os_string();
+    }
     if let Some(p) = std::env::var_os("DEVSTRIBUTION_UV") {
         return p;
     }
@@ -62,24 +75,21 @@ pub fn sync(
     mode: LockMode,
     on_line: &mut dyn FnMut(&str),
 ) -> Result<()> {
-    let lock_flag = match mode {
-        LockMode::Frozen => "--frozen",
-        LockMode::Locked => "--locked",
-    };
-    let mut child = command()
-        .args([
-            "sync",
-            lock_flag,
-            "--no-build",
-            "--no-dev",
-            "--no-install-project",
-        ])
+    let mut cmd = command();
+    cmd.args(["sync", "--no-build", "--no-dev", "--no-install-project"])
         .args(["--color", "never", "--no-progress"])
-        .current_dir(app_dir)
-        .env("UV_PROJECT_ENVIRONMENT", env_dir)
-        // Always uv's own Python builds, never whatever Python (conda, system) is on PATH:
-        // the same app then gets the same interpreter on every machine.
-        .env("UV_PYTHON_PREFERENCE", "only-managed")
+        .current_dir(app_dir);
+    match mode {
+        LockMode::Frozen => installed_app_settings(&mut cmd, app_dir)?,
+        // `devstribution dev` on the developer's own machine keeps their uv settings.
+        LockMode::Locked => {
+            cmd.arg("--locked")
+                .env("UV_PYTHON_PREFERENCE", "only-managed");
+        }
+    }
+    // After the settings above, which clear the environment.
+    cmd.env("UV_PROJECT_ENVIRONMENT", env_dir);
+    let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -106,6 +116,72 @@ pub fn sync(
             "preparing the Python environment failed:\n{}",
             tail.join("\n")
         );
+    }
+    Ok(())
+}
+
+/// Environment variables uv may still see when it prepares an installed app: what Windows and
+/// the network need (proxies, certificates), nothing that configures uv or Python.
+const KEPT_ENV: &[&str] = &[
+    "SYSTEMROOT",
+    "SYSTEMDRIVE",
+    "WINDIR",
+    "COMSPEC",
+    "PATH",
+    "PATHEXT",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "USERNAME",
+    "USERDOMAIN",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "PROGRAMDATA",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "HOME",
+    "XDG_CACHE_HOME",
+    "XDG_DATA_HOME",
+    "LANG",
+    "LC_ALL",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+];
+
+/// What makes preparing an installed app depend only on its signed lockfile:
+/// - `--frozen`: the lockfile as signed, never re-resolved;
+/// - `--no-config`: no `uv.toml` and no `[tool.uv]` settings from the package (they could move
+///   uv's cache, point it at other Python downloads or indexes) nor from the user's folders;
+/// - a clean environment: no `UV_*`, `PIP_*` or `PYTHON*` variable from the user's session;
+/// - `--managed-python` with an explicit version request: always uv's own Python builds, never
+///   a `.python-version` from the package or whatever Python is on PATH (conda, system);
+/// - `--system-certs`: the system's certificate store, so company proxies that inspect HTTPS
+///   keep working.
+///
+/// The lockfile's sources were checked before (`lock::check_sources`): only wheels from PyPI.
+fn installed_app_settings(cmd: &mut Command, app_dir: &Path) -> Result<()> {
+    let pyproject = std::fs::read_to_string(app_dir.join("pyproject.toml"))
+        .context("reading the app's pyproject.toml")?;
+    let manifest = Manifest::parse(&pyproject)?;
+    let python = manifest.requires_python.as_deref().unwrap_or(">=3.11");
+    cmd.args([
+        "--frozen",
+        "--no-config",
+        "--managed-python",
+        "--system-certs",
+    ])
+    .args(["--python", python])
+    .env_clear();
+    for (k, v) in std::env::vars_os() {
+        if k.to_str()
+            .is_some_and(|k| KEPT_ENV.iter().any(|kept| kept.eq_ignore_ascii_case(k)))
+        {
+            cmd.env(k, v);
+        }
     }
     Ok(())
 }

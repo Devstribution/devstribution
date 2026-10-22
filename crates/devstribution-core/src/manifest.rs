@@ -550,7 +550,9 @@ impl FromStr for Version {
         let parts: Option<Vec<u64>> = s
             .split('.')
             .map(|p| {
-                let canonical = !p.is_empty() && (p == "0" || !p.starts_with('0'));
+                let canonical = !p.is_empty()
+                    && p.bytes().all(|b| b.is_ascii_digit())
+                    && (p == "0" || !p.starts_with('0'));
                 canonical.then(|| p.parse().ok()).flatten()
             })
             .collect();
@@ -710,7 +712,17 @@ type = "file"
         assert!(v("1.10.0") > v("1.9.3"));
         assert_eq!(v("1.2"), v("1.2.0"));
         assert!(v("2") > v("1.99.99.99"));
-        for bad in ["", "1.", "01.2", "1.2.3.4.5", "1.2-beta", "v1"] {
+        for bad in [
+            "",
+            "1.",
+            "01.2",
+            "1.2.3.4.5",
+            "1.2-beta",
+            "v1",
+            "+1.0.0",
+            "1.+2",
+            " 1",
+        ] {
             assert!(bad.parse::<Version>().is_err(), "{bad}");
         }
     }

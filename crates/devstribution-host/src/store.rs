@@ -11,7 +11,7 @@ use devstribution_core::manifest::{AppId, Kind, Manifest, Version};
 use devstribution_core::package::{
     self, Limits, PYPROJECT, SignatureStatus, VerifiedPackage, VerifyOptions,
 };
-use devstribution_core::signing::parse_public_key;
+use devstribution_core::signing::{parse_public_key, public_key_base64, public_key_id};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -36,6 +36,9 @@ pub struct AppRecord {
     pub id: String,
     pub version: String,
     pub content_hash: String,
+    /// Full SHA-256 of the content (records from before it existed have it empty).
+    #[serde(default)]
+    pub content_sha256: String,
     pub key_id: String,
     pub installed_at: u64,
     pub origin: Option<Origin>,
@@ -113,6 +116,7 @@ pub struct PendingInstall {
     // Kept for the install step, not shown.
     pub publisher_key: String,
     pub content_hash: String,
+    pub content_sha256: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -278,15 +282,21 @@ impl Store {
         let id: AppId = record.id.parse().map_err(|e: String| anyhow!(e))?;
         let app_dir = self.paths.app_dir(&id, &record.content_hash);
         let manifest = Manifest::parse(&fs::read_to_string(app_dir.join(PYPROJECT))?)?;
-        let trust = if state.pins.contains_key(&id.namespace) {
+        let pin = state.pins.get(&id.namespace);
+        let trust = if pin.is_some() {
             Trust::FirstUse
         } else {
             Trust::NewPublisher
         };
+        let mut record = record.clone();
+        // Records and pins from older versions hold minisign's key number; show the fingerprint.
+        if let Some(fp) = pin.and_then(|p| fingerprint_of(&p.key)) {
+            record.key_id = fp;
+        }
         Ok(InstalledApp {
             icon: icon_data_url(&app_dir, &manifest),
             env_dir: self.paths.env_dir(&id, &record.content_hash),
-            record: record.clone(),
+            record,
             manifest,
             trust,
             app_dir,
@@ -320,38 +330,15 @@ impl Store {
         let size_bytes = fs::metadata(package_path)
             .with_context(|| format!("cannot open {}", package_path.display()))?
             .len();
-        // The namespace is only known after reading the package: peek at it with no trusted
-        // key, then verify for real against the pinned key, if any.
-        let peek_dir = stage.join("peek");
+        // The package is read exactly once: the publisher's key and the app id checked below
+        // are those of the very files that get installed. (Reading it a second time to check
+        // against the pinned key would let a file swapped in between pass as another app.)
         let opts = VerifyOptions {
             trusted_key: None,
             limits: Limits::default(),
         };
-        let peek = package::extract_and_verify(package_path, &peek_dir, &opts)?;
-        let namespace = peek.manifest.id.namespace.clone();
-        let verified: VerifiedPackage = match state.pins.get(&namespace) {
-            Some(pin) => {
-                let _ = fs::remove_dir_all(&peek_dir);
-                let key = parse_public_key(&pin.key)?;
-                let opts = VerifyOptions {
-                    trusted_key: Some(&key),
-                    limits: Limits::default(),
-                };
-                package::extract_and_verify(package_path, &stage.join("app"), &opts).map_err(
-                    |e| {
-                        anyhow!(
-                            "{e}. Apps from `{namespace}` you installed before were signed with \
-                             key {}; this package was not, so it may not come from the same publisher.",
-                            pin.key_id
-                        )
-                    },
-                )?
-            }
-            None => {
-                fs::rename(&peek_dir, stage.join("app"))?;
-                peek
-            }
-        };
+        let verified: VerifiedPackage =
+            package::extract_and_verify(package_path, &stage.join("app"), &opts)?;
         let m = &verified.manifest;
         let id = m.id.to_string();
         if !m.resources.is_empty() {
@@ -359,34 +346,23 @@ impl Store {
                 "this app needs downloadable resources, which this version of the launcher does not support yet"
             );
         }
-
+        let (action, trust) = admit(
+            state,
+            &m.id,
+            &m.version,
+            &verified.publisher_key,
+            &verified.content_sha256,
+            &verified.content_hash,
+        )?;
         let installed = state.apps.get(&id);
-        let action = match installed {
-            None => InstallAction::Install,
-            Some(r) if r.content_hash == verified.content_hash => InstallAction::Reinstall,
-            Some(_) => InstallAction::Update,
+        let key_id = match &verified.signature {
+            SignatureStatus::Trusted { key_id } | SignatureStatus::NewKey { key_id } => {
+                key_id.clone()
+            }
         };
-        if let Some(highest) = state.highest.get(&id) {
-            let highest: Version = highest.parse().map_err(|e: String| anyhow!(e))?;
-            if m.version < highest {
-                bail!(
-                    "version {} is older than version {highest}, which was already installed; \
-                     older versions are refused (they may have known problems)",
-                    m.version
-                );
-            }
-            if m.version == highest && action == InstallAction::Update {
-                bail!(
-                    "this package says version {} but its content differs from the installed \
-                     {highest}: the publisher must give every release a new version number",
-                    m.version
-                );
-            }
-        }
-
-        let (key_id, trust) = match &verified.signature {
-            SignatureStatus::Trusted { key_id } => (key_id.clone(), "first_use"),
-            SignatureStatus::NewKey { key_id } => (key_id.clone(), "new_publisher"),
+        let trust = match trust {
+            Trust::FirstUse => "first_use",
+            Trust::NewPublisher => "new_publisher",
         };
         let mut warnings = Vec::new();
         if trust == "new_publisher" {
@@ -435,6 +411,7 @@ impl Store {
             warnings,
             publisher_key: verified.publisher_key.clone(),
             content_hash: verified.content_hash.clone(),
+            content_sha256: verified.content_sha256.clone(),
         };
         fs::write(stage.join("pending.json"), serde_json::to_vec(&pending)?)?;
         Ok(pending)
@@ -460,6 +437,19 @@ impl Store {
             &fs::read(stage.join("pending.json")).context("this install is no longer pending")?,
         )?;
         let id: AppId = pending.id.parse().map_err(|e: String| anyhow!(e))?;
+        let version: Version = pending.version.parse().map_err(|e: String| anyhow!(e))?;
+        // The checks of the confirmation screen again, against the state as it is now: another
+        // install confirmed in the meantime may have pinned a different key for this publisher
+        // or installed a newer version.
+        admit(
+            &self.load()?,
+            &id,
+            &version,
+            &pending.publisher_key,
+            &pending.content_sha256,
+            &pending.content_hash,
+        )
+        .context("this install is no longer valid")?;
         let app_dir = self.paths.app_dir(&id, &pending.content_hash);
         let env_dir = self.paths.env_dir(&id, &pending.content_hash);
 
@@ -500,6 +490,15 @@ impl Store {
         }
 
         let mut state = self.load()?;
+        admit(
+            &state,
+            &id,
+            &version,
+            &pending.publisher_key,
+            &pending.content_sha256,
+            &pending.content_hash,
+        )
+        .context("this install is no longer valid")?;
         let last_inputs = state
             .apps
             .get(&pending.id)
@@ -520,6 +519,7 @@ impl Store {
                 id: pending.id.clone(),
                 version: pending.version.clone(),
                 content_hash: pending.content_hash.clone(),
+                content_sha256: pending.content_sha256.clone(),
                 key_id: pending.key_id.clone(),
                 installed_at: now_secs(),
                 origin: pending.origin.clone(),
@@ -783,6 +783,68 @@ impl Store {
             usage,
         })
     }
+}
+
+/// Whether a verified package may be installed given what is installed and pinned: the
+/// publisher's key must be the pinned one, and the version must not go back (nor stay the same
+/// with different content). Run when the package is inspected and again when it is installed.
+fn admit(
+    state: &State,
+    id: &AppId,
+    version: &Version,
+    publisher_key: &str,
+    content_sha256: &str,
+    content_hash: &str,
+) -> Result<(InstallAction, Trust)> {
+    let trust = match state.pins.get(&id.namespace) {
+        Some(pin) if same_key(&pin.key, publisher_key) => Trust::FirstUse,
+        Some(pin) => bail!(
+            "this package is signed with key {}, but the apps from `{}` you installed before were \
+             signed with key {}: it may not come from the same publisher, so it was refused",
+            fingerprint_of(publisher_key).unwrap_or_default(),
+            id.namespace,
+            fingerprint_of(&pin.key).unwrap_or_else(|| pin.key_id.clone()),
+        ),
+        None => Trust::NewPublisher,
+    };
+    let key = id.to_string();
+    let action = match state.apps.get(&key) {
+        None => InstallAction::Install,
+        Some(r) if r.content_sha256.is_empty() && r.content_hash == content_hash => {
+            InstallAction::Reinstall
+        }
+        Some(r) if !r.content_sha256.is_empty() && r.content_sha256 == content_sha256 => {
+            InstallAction::Reinstall
+        }
+        Some(_) => InstallAction::Update,
+    };
+    if let Some(highest) = state.highest.get(&key) {
+        let highest: Version = highest.parse().map_err(|e: String| anyhow!(e))?;
+        if *version < highest {
+            bail!(
+                "version {version} is older than version {highest}, which was already installed; \
+                 older versions are refused (they may have known problems)"
+            );
+        }
+        if *version == highest && action == InstallAction::Update {
+            bail!(
+                "this package says version {version} but its content differs from the installed \
+                 {highest}: the publisher must give every release a new version number"
+            );
+        }
+    }
+    Ok((action, trust))
+}
+
+fn same_key(a: &str, b: &str) -> bool {
+    match (parse_public_key(a), parse_public_key(b)) {
+        (Ok(a), Ok(b)) => public_key_base64(&a) == public_key_base64(&b),
+        _ => false,
+    }
+}
+
+fn fingerprint_of(key: &str) -> Option<String> {
+    parse_public_key(key).ok().map(|k| public_key_id(&k))
 }
 
 fn is_token(token: &str) -> bool {
