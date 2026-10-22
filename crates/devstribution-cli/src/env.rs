@@ -49,10 +49,10 @@ fn dunce_canonical(path: &Path) -> Option<PathBuf> {
     #[cfg(windows)]
     {
         let s = canonical.to_string_lossy();
-        if let Some(stripped) = s.strip_prefix(r"\\?\") {
-            if !stripped.starts_with("UNC\\") {
-                return Some(PathBuf::from(stripped));
-            }
+        if let Some(stripped) = s.strip_prefix(r"\\?\")
+            && !stripped.starts_with("UNC\\")
+        {
+            return Some(PathBuf::from(stripped));
         }
     }
     Some(canonical)
