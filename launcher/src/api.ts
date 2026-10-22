@@ -95,6 +95,8 @@ export interface Stats {
   total_duration_ms: number;
   per_day: { date: string; ok: number; error: number; cancelled: number }[];
   top_apps: { app_id: string; title: string; runs: number }[];
+  /** Every app that ever ran, latest first; `runs` counts the stats window (30 days). */
+  usage: { app_id: string; runs: number; last_run_at: number }[];
 }
 
 export interface Overview {

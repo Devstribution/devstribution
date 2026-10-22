@@ -1,43 +1,56 @@
-import { ShieldCheck, HardDrive, Info, Building2 } from "lucide";
-import type { Ctx, Rendered } from "../main";
-import { h, icon, relTime } from "../ui";
+import { X } from "lucide";
+import type { Ctx } from "../main";
+import { h, icon, clear, relTime, toast, errorText } from "../ui";
 
-export async function settingsView(ctx: Ctx): Promise<Rendered> {
-  const s = await ctx.api.settings();
-  const head = (ic: typeof Info, cls: string, title: string, hint?: string) =>
-    h("div", { class: "card-head" }, h("div", { class: `kpi-icon ${cls}`, style: "width:36px;height:36px;border-radius:10px" }, icon(ic, 18)),
-      h("h3", null, title), hint ? h("span", { class: "hint" }, hint) : null);
+export type Theme = "light" | "dark" | "system";
+const THEMES: [Theme, string][] = [["light", "Light"], ["dark", "Dark"], ["system", "System"]];
 
-  return {
-    title: "Settings",
-    subtitle: "How this launcher decides what to trust",
-    node: h("div", { class: "grid one-one" },
-      h("div", { class: "grid" },
-        h("section", { class: "card" }, head(Building2, "blue", "Mode"),
-          h("div", { class: "banner blue" }, h("div", null,
-            h("strong", null, "Free mode"),
-            "You decide which apps to install. Every package is checked: files must match the publisher's signature, and later versions must come from the same publisher key. ",
-            "When your IT department manages devstribution, its policy (approved publishers, blocked apps) appears here and replaces these choices."))),
-        h("section", { class: "card" }, head(ShieldCheck, "green", "Publishers you trust", `${s.publishers.length}`),
-          s.publishers.length
-            ? h("table", { class: "table" },
-                h("thead", null, h("tr", null, ["Publisher", "Key", "Since", "How"].map((t) => h("th", null, t)))),
-                h("tbody", null, s.publishers.map((p) => h("tr", { style: "cursor:default" },
-                  h("td", null, h("strong", null, p.namespace)),
-                  h("td", { class: "mono" }, p.key_id),
-                  h("td", null, relTime(p.pinned_at)),
-                  h("td", null, h("span", { class: "chip" }, p.source === "first-use" ? "First install" : p.source))))))
-            : h("div", { class: "muted" }, "None yet: the first app you install from a publisher pins its key."))),
-      h("div", { class: "grid" },
-        h("section", { class: "card" }, head(HardDrive, "violet", "Storage"),
-          h("dl", { class: "kv" },
-            h("dt", null, "Data folder"), h("dd", { class: "mono" }, s.data_dir),
-            h("dt", null, "Contents"), h("dd", null, "apps, Python environments, run results and logs"))),
-        h("section", { class: "card" }, head(Info, "orange", "About"),
-          h("dl", { class: "kv" },
-            h("dt", null, "Launcher"), h("dd", null, `devstribution ${s.version}`),
-            h("dt", null, "Environments"), h("dd", null, s.uv_version ?? "uv not found"),
-            h("dt", null, "Platform"), h("dd", null, s.platform),
-            h("dt", null, "License"), h("dd", null, "MIT or Apache-2.0"))))),
+let open: (() => void) | null = null;
+
+/** The settings popover above the round button in the bottom-right corner. */
+export function toggleSettings(ctx: Ctx) {
+  if (open) { open(); return; }
+  const scrim = h("div", { class: "scrim clear" });
+  const pop = h("aside", { class: "popover", role: "dialog", "aria-label": "Settings" });
+  const close = () => {
+    scrim.remove();
+    pop.remove();
+    document.removeEventListener("keydown", onKey);
+    open = null;
   };
+  const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+  scrim.addEventListener("click", close);
+  document.addEventListener("keydown", onKey);
+  document.body.append(scrim, pop);
+  open = close;
+
+  const themeSeg = h("div", { class: "seg full", role: "radiogroup", "aria-label": "Appearance" });
+  const drawTheme = () => clear(themeSeg, THEMES.map(([t, label]) =>
+    h("button", { class: ctx.theme.get() === t ? "on" : "", role: "radio", "aria-checked": String(ctx.theme.get() === t), onclick: () => { ctx.theme.set(t); drawTheme(); } }, label)));
+  drawTheme();
+
+  const head = h("div", { class: "popover-head" }, h("strong", null, "Settings"),
+    h("button", { class: "icon-btn", "aria-label": "Close", onclick: close }, icon(X, 16)));
+  clear(pop, head, h("div", { class: "settings-group" }, h("span", { class: "section-label" }, "Appearance"), themeSeg));
+
+  ctx.api.settings().then((s) => {
+    if (open !== close) return;
+    pop.append(
+      h("div", { class: "settings-group" },
+        h("span", { class: "section-label" }, "Publishers you trust"),
+        s.publishers.length
+          ? s.publishers.map((p) => h("div", { class: "publisher" },
+              h("div", { style: "flex:1;min-width:0" }, h("div", { class: "name" }, p.namespace), h("div", { class: "mono muted" }, p.key_id)),
+              h("span", { class: "muted", style: "font-size:12px", title: p.source === "first-use" ? "Pinned when you installed its first app" : p.source }, relTime(p.pinned_at))))
+          : h("div", { class: "muted", style: "font-size:13px" }, "None yet: the first app you install from a publisher pins its key.")),
+      h("div", { class: "settings-group" },
+        h("span", { class: "section-label" }, "Mode"),
+        h("div", { style: "font-size:13px;color:var(--text-2)" },
+          "Free mode: you decide what to install. Every package is checked, and later versions must come from the same publisher key. If your IT department manages devstribution, its rules show here.")),
+      h("div", { class: "settings-group" },
+        h("span", { class: "section-label" }, "Storage"),
+        h("div", { class: "mono", style: "overflow-wrap:anywhere;color:var(--text-2)" }, s.data_dir),
+        h("div", { class: "muted", style: "font-size:12px" }, "Apps, their Python environments, run results and logs.")),
+      h("div", { class: "about" }, `devstribution ${s.version} · ${s.uv_version ?? "uv not found"} · ${s.platform} · MIT or Apache-2.0`));
+  }).catch((e) => toast(errorText(e), "error"));
 }

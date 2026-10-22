@@ -54,12 +54,14 @@ The parts that compile on Windows but have never run there. Each gets a result i
 
 ## 5. User experience
 
-- ☐ Uninstall easy to find (report: Launcher UX 1).
+- ☑ New design ("Launchpad"): apps first, recent and most used on Home, filters on Apps, an
+  Activity dashboard, apps open in a side panel, settings behind the round button; light and dark.
+- ◐ Uninstall easy to find (report: Launcher UX 1): now in every app panel's ⋯ menu, next to Pin and
+  Repair; check with users whether that is enough.
 - ☐ An output type for "a folder the user chose", so stateful apps get an "Open" button
   (report: packaging 2).
 - ☐ Error messages reviewed end to end: every failure says what happened and what to do.
 - ☐ About page with version, licences of bundled software, and where the data folder is.
-- ☐ Navigation sidebar polish.
 
 ## 6. Release engineering
 

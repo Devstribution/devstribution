@@ -9,7 +9,7 @@ platform guarantees that what you run is exactly what that publisher published.
 **Status: pre-alpha proof of concept.** Not ready for real users yet. The design is in
 [docs/plan.md](docs/plan.md).
 
-![Home dashboard](docs/images/home.png)
+![The launcher: home with recent and most used apps](docs/images/home.png)
 
 ## What exists today
 
@@ -17,7 +17,7 @@ A working proof of concept (see [docs/HANDOFF.md](docs/HANDOFF.md) for what is v
 
 | Part | Where |
 |---|---|
-| Launcher (Tauri): dashboard, apps, install confirmation, run screen, history, settings | `launcher/` |
+| Launcher (Tauri): home, apps with filters, activity dashboard, install confirmation, app panel, settings; light and dark | `launcher/` |
 | Install store, uv environments, supervised runs, history, secrets | `crates/devstribution-host` |
 | Package format: manifest, `FILES.sha256`, minisign signatures, safe extraction, wheels-only check | `crates/devstribution-core` |
 | Developer CLI: `init`, `dev`, `pack`, `keygen`, `verify` | `crates/devstribution-cli` |
@@ -27,6 +27,8 @@ A working proof of concept (see [docs/HANDOFF.md](docs/HANDOFF.md) for what is v
 | Install confirmation | Running an app |
 |---|---|
 | ![Install](docs/images/install.png) | ![App](docs/images/app.png) |
+| **Apps** | **Activity** |
+| ![Apps](docs/images/apps.png) | ![Activity](docs/images/activity.png) |
 
 ## Try it
 

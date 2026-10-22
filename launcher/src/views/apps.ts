@@ -1,46 +1,82 @@
-import { Play, Plus, ShieldCheck, ShieldAlert } from "lucide";
+import { Search } from "lucide";
+import type { AppView } from "../api";
 import type { Ctx, Rendered } from "../main";
-import { h, icon, appIcon, KIND_LABEL } from "../ui";
-import { quickRun } from "./app";
+import { h, icon, appIcon, clear, relTime, worksWith, plural } from "../ui";
 
-const FILTERS: [string, string][] = [["all", "All"], ["form", "Forms"], ["gui", "Desktop"], ["cli", "Command line"]];
-let filter = "all";
+// Kept across visits (and across the refresh after each run) so the page doesn't reset under the user.
+const state = { query: "", works: "All", publisher: "Anyone", sort: "Most used" as Sort };
+type Sort = "Most used" | "Recent" | "A–Z";
+const SORTS: Sort[] = ["Most used", "Recent", "A–Z"];
 
 export async function appsView(ctx: Ctx): Promise<Rendered> {
-  const { apps } = await ctx.api.overview();
-  const grid = h("div", { class: "apps-grid" });
+  const { apps, stats } = await ctx.api.overview();
+  const usage = new Map(stats.usage.map((u) => [u.app_id, u]));
+  const runs = (a: AppView) => usage.get(a.id)?.runs ?? 0;
+  const last = (a: AppView) => usage.get(a.id)?.last_run_at ?? 0;
+
+  // Only filters some app actually matches; a filter that empties the list on its own is noise.
+  const worksOptions = ["Excel", "SAP", "Internet", "Own window"].filter((w) => apps.some((a) => worksWith(a).includes(w)));
+  const publishers = [...new Set(apps.map((a) => a.namespace))].sort();
+  if (state.works !== "All" && !worksOptions.includes(state.works)) state.works = "All";
+  if (state.publisher !== "Anyone" && !publishers.includes(state.publisher)) state.publisher = "Anyone";
+
+  const input = h("input", { type: "search", placeholder: "Search apps", "aria-label": "Search apps", value: state.query });
+  const sortBox = h("div", { class: "seg", role: "radiogroup", "aria-label": "Sort" });
   const chips = h("div", { class: "filters" });
+  const countLine = h("div", { class: "count-line" });
+  const list = h("div", { style: "display:flex;flex-direction:column;gap:10px" });
+
+  const chip = (label: string, on: boolean, pick: () => void) =>
+    h("button", { class: `chip ${on ? "on" : ""}`, "aria-pressed": String(on), onclick: pick }, label);
 
   const draw = () => {
-    chips.replaceChildren(...FILTERS.map(([key, label]) =>
-      h("button", { class: `filter ${filter === key ? "active" : ""}`, onclick: () => { filter = key; draw(); } }, label)));
-    const shown = apps.filter((a) =>
-      (filter === "all" || a.kind === filter) &&
-      (!ctx.search || `${a.title} ${a.description ?? ""} ${a.namespace}`.toLowerCase().includes(ctx.search)));
-    grid.replaceChildren(
-      ...shown.map((a) =>
-        h("article", { class: "card app-card", onclick: () => ctx.navigate(`#/app/${encodeURIComponent(a.id)}`) },
-          h("div", { class: "top" }, appIcon(a),
-            h("div", { style: "min-width:0" },
-              h("h3", null, a.title),
-              h("div", { class: "by" }, a.trust === "first_use" ? icon(ShieldCheck, 13) : icon(ShieldAlert, 13), `by ${a.namespace} · v${a.version}`))),
-          h("p", { class: "desc" }, a.description ?? "No description."),
-          h("div", { class: "foot" },
-            h("span", { class: "chip blue" }, KIND_LABEL[a.kind] ?? a.kind),
-            a.permissions.network.length ? h("span", { class: "chip" }, "Internet") : null,
-            a.permissions.sap ? h("span", { class: "chip violet" }, "SAP") : null,
-            h("button", { class: "play", title: `Run ${a.title}`, onclick: (e: Event) => { e.stopPropagation(); quickRun(ctx, a); } }, icon(Play, 17))))),
-      h("button", { class: "install-tile", onclick: () => ctx.install() },
-        h("div", { class: "plus" }, icon(Plus, 22)),
-        h("strong", null, "Install an app"),
-        h("span", null, "Choose a .dsapp file, or drop one on the window")),
-    );
+    clear(sortBox, SORTS.map((s) =>
+      h("button", { class: state.sort === s ? "on" : "", role: "radio", "aria-checked": String(state.sort === s), onclick: () => { state.sort = s; draw(); } }, s)));
+    clear(chips,
+      worksOptions.length ? h("div", { class: "chips", role: "group", "aria-label": "Works with" }, h("span", { class: "label" }, "Works with"),
+        ["All", ...worksOptions].map((w) => chip(w, state.works === w, () => { state.works = w; draw(); }))) : null,
+      publishers.length > 1 ? h("div", { class: "chips", role: "group", "aria-label": "Publisher" }, h("span", { class: "label" }, "Publisher"),
+        ["Anyone", ...publishers].map((p) => chip(p, state.publisher === p, () => { state.publisher = p; draw(); }))) : null);
+
+    const q = state.query.trim().toLowerCase();
+    const shown = apps
+      .filter((a) => state.works === "All" || worksWith(a).includes(state.works))
+      .filter((a) => state.publisher === "Anyone" || a.namespace === state.publisher)
+      .filter((a) => !q || `${a.title} ${a.description ?? ""} ${a.namespace}`.toLowerCase().includes(q))
+      .sort(state.sort === "A–Z" ? (a, b) => a.title.localeCompare(b.title)
+        : state.sort === "Recent" ? (a, b) => last(b) - last(a)
+        : (a, b) => runs(b) - runs(a) || last(b) - last(a));
+
+    const filtered = state.works !== "All" || state.publisher !== "Anyone" || !!q;
+    clear(countLine, shown.length === apps.length ? `All ${plural(apps.length, "app")}` : `${shown.length} of ${plural(apps.length, "app")}`,
+      filtered ? [" · ", h("button", { class: "link", style: "font-size:13px", onclick: () => {
+        Object.assign(state, { query: "", works: "All", publisher: "Anyone" });
+        input.value = "";
+        draw();
+      } }, "Clear filters")] : null);
+
+    clear(list, shown.length
+      ? shown.map((a) => {
+          const w = worksWith(a);
+          return h("div", { class: "app-row" },
+            appIcon(a),
+            h("div", { class: "main-col" }, h("div", { class: "t" }, a.title), h("div", { class: "d", title: a.description ?? "" }, a.description ?? "No description.")),
+            h("div", { class: "meta" },
+              h("span", null, `by ${a.namespace}${w.length ? ` · ${w.join(", ")}` : ""}`),
+              h("span", null, last(a) ? `Used ${relTime(last(a))} · ${plural(runs(a), "run")} this month` : "Not used yet")),
+            h("button", { class: "btn primary", onclick: () => ctx.openApp(a.id) }, "Open"));
+        })
+      : h("div", { class: "empty-box" }, "No app matches these filters."));
   };
+  input.addEventListener("input", () => { state.query = input.value; draw(); });
   draw();
 
   return {
-    title: "Apps",
-    subtitle: ctx.search ? `Matching “${ctx.search}”` : `${apps.length} installed`,
-    node: h("div", { class: "grid" }, chips, grid),
+    node: h("div", { class: "page" },
+      h("div", { class: "page-title" }, h("h1", null, "Apps"),
+        h("label", { class: "search-box" }, icon(Search, 16), input),
+        sortBox),
+      chips, countLine, list,
+      h("button", { class: "btn", style: "align-self:flex-start", onclick: () => ctx.install() }, "Install another app…")),
   };
 }

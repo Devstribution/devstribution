@@ -74,6 +74,40 @@ const apps: AppView[] = [
   },
   {
     ...base,
+    id: "acme/supplier-reconciliation",
+    title: "Supplier reconciliation",
+    description: "Matches supplier statements against the ledger and flags the differences.",
+    version: "1.2.0",
+    kind: "form",
+    namespace: "acme",
+    key_id: "C3F19A0B66D2E871",
+    icon: null,
+    inputs: [
+      { name: "statement", type: "file", label: "Supplier statement", accept: [".xlsx", ".pdf"], choices: [], required: true },
+      { name: "ledger", type: "file", label: "Ledger export", accept: [".xlsx"], choices: [], required: true },
+    ],
+    outputs: [{ name: "report", type: "file", label: "Reconciliation" }],
+    permissions: { ...noPerms, folders: ["user-selected"] },
+    requires: ["excel"],
+    installed_at: now() - 6 * DAY,
+  },
+  {
+    ...base,
+    id: "finance/bank-statements",
+    title: "Bank statements import",
+    description: "Downloads the month's statements from the bank portal and adds them to the ledger file.",
+    version: "0.9.0",
+    kind: "form",
+    namespace: "finance",
+    key_id: "8D41C0A9F2B37E10",
+    icon: null,
+    inputs: [{ name: "month", type: "date", label: "Month", accept: [], choices: [], required: true }],
+    outputs: [{ name: "summary", type: "text", label: "Summary" }],
+    permissions: { network: ["bank.example.com"], folders: [], sap: false, secrets: [] },
+    installed_at: now() - 12 * DAY,
+  },
+  {
+    ...base,
     id: "devstribution/hello-gui",
     title: "Hello GUI",
     description: "A tkinter window: the smallest app that brings its own UI.",
@@ -99,10 +133,13 @@ function seeded(seed: number) {
 function demoRuns(): RunRecord[] {
   const rand = seeded(42);
   const runs: RunRecord[] = [];
-  for (let d = 13; d >= 0; d--) {
-    const n = Math.floor(rand() * 6) + (d % 7 < 5 ? 3 : 0);
+  // Weighted so "often" and "recent" differ: the reconciliation app ran last, Excel report most.
+  const weights = [0.42, 0.16, 0.08, 0.1, 0.24];
+  const pick = () => { let x = rand(); for (let i = 0; i < weights.length; i++) { x -= weights[i]; if (x < 0) return apps[i]; } return apps[0]; };
+  for (let d = 29; d >= 0; d--) {
+    const n = Math.floor(rand() * 4) + (d % 7 < 5 ? 2 : 0);
     for (let i = 0; i < n; i++) {
-      const app = apps[Math.floor(rand() * 3)];
+      const app = d === 0 && i === n - 1 ? apps[3] : pick();
       const started = now() - d * DAY - Math.floor(rand() * 8 * 3600);
       const r = rand();
       const status = r > 0.93 ? "error" : r > 0.88 ? "cancelled" : "ok";
@@ -130,7 +167,7 @@ let runs = demoRuns();
 
 function stats(): Stats {
   const per_day = [] as Stats["per_day"];
-  for (let d = 13; d >= 0; d--) {
+  for (let d = 29; d >= 0; d--) {
     const date = new Date((now() - d * DAY) * 1000).toISOString().slice(0, 10);
     per_day.push({ date, ok: 0, error: 0, cancelled: 0 });
   }
@@ -156,6 +193,11 @@ function stats(): Stats {
     total_duration_ms: total,
     per_day,
     top_apps: [...top.values()].sort((a, b) => b.runs - a.runs).slice(0, 5),
+    usage: [...new Set(runs.map((r) => r.app_id))].map((app_id) => ({
+      app_id,
+      runs: top.get(app_id)?.runs ?? 0,
+      last_run_at: Math.max(...runs.filter((r) => r.app_id === app_id).map((r) => r.started_at)),
+    })).sort((a, b) => b.last_run_at - a.last_run_at),
   };
 }
 
@@ -316,11 +358,12 @@ export function mockApi(): Api {
         data_dir: "C:\\Users\\edo\\AppData\\Local\\devstribution",
         platform: "windows",
         mode: "free",
-        uv_version: "uv 0.11.32",
+        uv_version: "uv 0.13.4",
         publishers: [
           { namespace: "devstribution", key_id: "2972B9E777FFC794", pinned_at: now() - 9 * DAY, source: "first-use" },
           { namespace: "finance", key_id: "8D41C0A9F2B37E10", pinned_at: now() - 21 * DAY, source: "first-use" },
           { namespace: "ops", key_id: "51E0AB7733C9D2F4", pinned_at: now() - 3 * DAY, source: "first-use" },
+          { namespace: "acme", key_id: "C3F19A0B66D2E871", pinned_at: now() - 6 * DAY, source: "first-use" },
         ],
       };
     },

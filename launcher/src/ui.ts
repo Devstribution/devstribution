@@ -53,15 +53,8 @@ export function clear(el: Element, ...children: Child[]) {
 
 // ---------- app icon tiles ----------
 
-const PALETTE = [
-  ["#3f6bff", "#6d8cff"],
-  ["#7a4dff", "#a17bff"],
-  ["#14b8b0", "#38d6c4"],
-  ["#ff8a3d", "#ffb067"],
-  ["#f04494", "#ff7ab8"],
-  ["#17b26a", "#4fd492"],
-  ["#2b8cff", "#5ec1ff"],
-];
+/** Solid tile colours: the apps carry the colour, the launcher's chrome stays neutral. */
+const PALETTE = ["#2563eb", "#7c3aed", "#0e9f6e", "#ea580c", "#db2777", "#0891b2", "#4f46e5", "#ca8a04"];
 
 function hash(s: string) {
   let x = 0;
@@ -69,16 +62,19 @@ function hash(s: string) {
   return x;
 }
 
+export function appColor(id: string): string {
+  return PALETTE[hash(id) % PALETTE.length];
+}
+
 const PYTHON_SVG = `<svg viewBox="0 0 24 24" fill="#fff"><path d="M11.9 2C7.3 2 7.6 4 7.6 4v2.1H12v.6H5.8S2.8 6.4 2.8 11.1s2.6 4.5 2.6 4.5H7v-2.2s-.1-2.6 2.6-2.6h4.3s2.5 0 2.5-2.4V4.4S16.8 2 11.9 2zM9.5 3.4a.8.8 0 1 1 0 1.6.8.8 0 0 1 0-1.6z"/><path opacity=".78" d="M12.1 22c4.6 0 4.3-2 4.3-2v-2.1H12v-.6h6.2s3 .3 3-4.4-2.6-4.5-2.6-4.5H17v2.2s.1 2.6-2.6 2.6h-4.3s-2.5 0-2.5 2.4v4S7.2 22 12.1 22zm2.4-1.4a.8.8 0 1 1 0-1.6.8.8 0 0 1 0 1.6z"/></svg>`;
 
 /** The app's own icon, or the Python logo on a colour picked from its id. */
-export function appIcon(app: { id: string; icon?: string | null }, size: "" | "sm" | "lg" = ""): HTMLElement {
+export function appIcon(app: { id: string; icon?: string | null }, size: "" | "xs" | "sm" | "lg" | "xl" = ""): HTMLElement {
   const tile = h("div", { class: `app-icon ${size}` });
   if (app.icon) {
     tile.appendChild(h("img", { src: app.icon, alt: "" }));
   } else {
-    const [a, b] = PALETTE[hash(app.id) % PALETTE.length];
-    tile.style.background = `linear-gradient(135deg, ${a}, ${b})`;
+    tile.style.background = appColor(app.id);
     tile.innerHTML = PYTHON_SVG;
   }
   return tile;
@@ -124,29 +120,45 @@ export const KIND_LABEL: Record<string, string> = {
 
 // ---------- recurring bits ----------
 
-export function statusPill(status: RunStatus): HTMLElement {
-  const label = { ok: "Succeeded", error: "Failed", cancelled: "Cancelled", running: "Running" }[status];
-  return h("span", { class: `status ${status}` }, label);
+export const STATUS_LABEL: Record<RunStatus, string> = { ok: "Done", error: "Didn’t work", cancelled: "Cancelled", running: "Running" };
+
+export function statusText(status: RunStatus): HTMLElement {
+  return h("span", { class: `status-text ${status}` }, STATUS_LABEL[status]);
 }
 
-export function trustChip(trust: string): HTMLElement {
+export function trustTag(trust: string): HTMLElement {
   return trust === "first_use"
-    ? h("span", { class: "chip green", title: "Signed with the same key as the first app you installed from this publisher" },
-        icon(ShieldCheck, 13), "Same key as first install")
-    : h("span", { class: "chip amber", title: "First app seen from this publisher" }, icon(ShieldAlert, 13), "New publisher");
+    ? h("span", { class: "tag green", title: "Signed with the key pinned when you installed this publisher's first app" },
+        icon(ShieldCheck, 12), "Signature verified")
+    : h("span", { class: "tag amber", title: "First app seen from this publisher" }, icon(ShieldAlert, 12), "New publisher");
+}
+
+/** What an app works with, from what its manifest declares: the Apps page filters on these. */
+export function worksWith(app: { kind: string; requires: string[]; permissions: { network: string[]; sap: boolean } }): string[] {
+  const out: string[] = [];
+  if (app.requires.some((r) => r.toLowerCase().includes("excel"))) out.push("Excel");
+  if (app.permissions.sap || app.requires.some((r) => r.toLowerCase().startsWith("sap"))) out.push("SAP");
+  if (app.permissions.network.length) out.push("Internet");
+  if (app.kind !== "form") out.push("Own window");
+  return out;
+}
+
+export function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
 let toastBox: HTMLElement | null = null;
 
-export function toast(message: string, kind: "info" | "error" | "ok" = "info") {
+export function toast(message: string, kind: "info" | "error" | "ok" = "info", action?: { label: string; run: () => void }) {
   if (!toastBox) {
-    toastBox = h("div", { class: "toasts" });
+    toastBox = h("div", { class: "toasts", role: "status" });
     document.body.appendChild(toastBox);
   }
   const ic = kind === "error" ? CircleAlert : kind === "ok" ? CircleCheck : Info;
-  const el = h("div", { class: `toast ${kind}` }, icon(ic, 18), h("div", null, message));
+  const el = h("div", { class: `toast ${kind}` }, icon(ic, 17), h("div", null, message),
+    action ? h("button", { class: "link", onclick: () => { el.remove(); action.run(); } }, action.label) : null);
   toastBox.appendChild(el);
-  setTimeout(() => el.remove(), kind === "error" ? 9000 : 4000);
+  setTimeout(() => el.remove(), kind === "error" || action ? 9000 : 4000);
 }
 
 export function errorText(e: unknown): string {
