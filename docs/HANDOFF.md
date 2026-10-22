@@ -34,7 +34,7 @@ Screenshots: `docs/images/`. The UI also runs in a plain browser with demo data
 
 ## Setting up on Windows
 
-Prerequisites: Rust (rustup, MSVC toolchain), Node 22+, uv, and the Visual Studio C++ build
+Prerequisites: Rust (rustup, MSVC toolchain), Node 20.19+ or 22.12+ (Vite 8), uv, and the Visual Studio C++ build
 tools. WebView2 is already part of Windows 10/11.
 
 ```powershell
@@ -43,7 +43,8 @@ python -m unittest discover -s runner/tests  # runner protocol and code checks
 
 cd launcher
 npm ci
-npm run sidecar                              # copies your uv to src-tauri/binaries/uv-<triple>.exe
+npm run sidecar                              # downloads the pinned uv (uv-pin.json), checks its sha256
+                                             # offline: npm run sidecar -- --from-path (copies your uv)
 npx tauri dev                                # launcher with hot reload
 ```
 
@@ -65,7 +66,7 @@ host runs uv with `UV_PYTHON_PREFERENCE=only-managed`, so app environments are a
 uv's own Python builds, and the runner starts Python with `-I` (ignores `PYTHONPATH` and user
 site-packages). Two things to watch:
 
-- Run `cargo test` from a shell where `uv` is on PATH (it is not a conda package).
+- Run `cargo test` from a shell where `uv` is on PATH (`conda install -c conda-forge uv` works).
 - `devstribution dev`'s code check runs `uv run --no-project python`, which may pick conda's
   Python; harmless (it only parses the app's code with `ast`).
 
@@ -86,8 +87,8 @@ test to run.
 
 1. Run the steps above on Windows and fix what breaks; CI (`.github/workflows/ci.yml`) already
    builds and lints everything on Windows, macOS and Linux once a PR is open.
-2. Release build of the sidecar: download a pinned uv release and verify its sha256 instead of
-   copying the one on PATH (`launcher/scripts/sidecar-uv.mjs`).
+2. ~~Release build of the sidecar~~: done, `npm run sidecar` downloads the uv pinned in
+   `launcher/uv-pin.json` and checks its sha256; `tauri build` runs it.
 3. Installer: `npx tauri build` (NSIS, per-user), then signing (SignPath).
 4. Phase 2 of the plan: managed mode (HKLM policy), catalog and GitHub namespace verification,
    `devstribution://` links, revocation.

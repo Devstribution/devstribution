@@ -14,7 +14,9 @@ pub mod signing;
 
 pub use error::{Error, Result};
 
-/// Package format version written by this crate and the only one it accepts.
+/// Package format version written by this crate. Format 1 is frozen (docs/format.md): later
+/// versions of this crate must keep accepting it, and a package with a higher number is refused
+/// with [`Error::NewerFormat`] rather than a parse error.
 pub const SCHEMA_VERSION: u32 = 1;
 
 /// Name of the file holding the hashes of every other file in the package.

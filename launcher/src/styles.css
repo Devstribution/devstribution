@@ -30,6 +30,8 @@
   --radius: 16px;
   --radius-sm: 10px;
   --gradient: linear-gradient(135deg, var(--primary) 0%, var(--primary-2) 100%);
+  --scroll-thumb: rgba(28, 37, 64, 0.18);
+  --scroll-thumb-hover: rgba(28, 37, 64, 0.32);
   color-scheme: light;
 }
 
@@ -55,6 +57,8 @@
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.25), 0 8px 24px rgba(0, 0, 0, 0.25);
   --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.5);
+  --scroll-thumb: rgba(232, 236, 248, 0.16);
+  --scroll-thumb-hover: rgba(232, 236, 248, 0.3);
   color-scheme: dark;
 }
 
@@ -115,7 +119,7 @@ svg.lucide { flex: none; }
 .mode-pill { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); padding: 12px 8px 0; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px var(--success-soft); }
 
-.main { overflow: auto; display: flex; flex-direction: column; min-width: 0; }
+.main { overflow: hidden auto; display: flex; flex-direction: column; min-width: 0; scrollbar-gutter: stable; }
 .topbar {
   position: sticky; top: 0; z-index: 5;
   display: flex; align-items: center; gap: 16px;
@@ -153,7 +157,9 @@ svg.lucide { flex: none; }
 .card-head .hint { color: var(--muted); font-size: 12.5px; }
 .card-head .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 
-.grid { display: grid; gap: 20px; }
+/* One shrinkable column by default: an implicit `auto` column can't get narrower than its longest
+   unbreakable value (a Windows path, a wide table), which pushed the page sideways. */
+.grid { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); }
 .grid.kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .grid.two-one { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
 .grid.one-one { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
@@ -376,7 +382,9 @@ table.table { width: 100%; border-collapse: collapse; }
 .output-file .ficon { width: 40px; height: 40px; border-radius: 12px; background: var(--success-soft); color: var(--success); display: grid; place-items: center; }
 .output-file .name { font-weight: 600; font-size: 13.5px; word-break: break-all; }
 .output-file .label { font-size: 12px; color: var(--muted); }
-.output-text { padding: 12px 14px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--border); }
+.output-text { padding: 12px 14px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--border); overflow-wrap: anywhere; }
+.table-scroll { overflow-x: auto; margin-top: 8px; }
+.table-scroll .table td, .table-scroll .table th { white-space: nowrap; }
 .output-text .label { font-size: 12px; color: var(--muted); font-weight: 600; }
 .error-box { padding: 12px 14px; border-radius: 14px; background: var(--danger-soft); color: var(--danger); font-weight: 500; }
 .log {
@@ -390,7 +398,7 @@ details summary { cursor: pointer; color: var(--text-2); font-weight: 600; font-
 
 .kv { display: grid; grid-template-columns: 140px 1fr; gap: 10px 16px; font-size: 13px; }
 .kv dt { color: var(--muted); }
-.kv dd { margin: 0; color: var(--text); word-break: break-word; }
+.kv dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
 .perm-list { display: flex; flex-direction: column; gap: 10px; }
 .perm { display: flex; gap: 12px; align-items: flex-start; }
 .perm .pi { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: var(--surface-2); color: var(--text-2); flex: none; }
@@ -471,3 +479,17 @@ details summary { cursor: pointer; color: var(--text-2); font-weight: 600; font-
 .welcome .art { justify-self: center; display: grid; grid-template-columns: repeat(3, 64px); gap: 14px; transform: rotate(-8deg); }
 .welcome .art div { width: 64px; height: 64px; border-radius: 18px; background: rgba(255, 255, 255, .18); display: grid; place-items: center; }
 .welcome .art div:nth-child(2n) { background: rgba(255, 255, 255, .3); }
+
+/* ---------- scrollbars ---------- */
+
+/* Slim, rounded and themed instead of the system's grey bars (WebView2 on Windows draws wide ones).
+   The transparent border keeps the thumb off the edges. */
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb); border-radius: 999px;
+  border: 3px solid transparent; background-clip: padding-box; min-height: 40px;
+}
+::-webkit-scrollbar-thumb:hover { background-color: var(--scroll-thumb-hover); }
+::-webkit-scrollbar-button { display: none; }
+.log::-webkit-scrollbar-thumb { background-color: rgba(201, 210, 234, 0.22); }

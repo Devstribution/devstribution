@@ -186,6 +186,9 @@ Principle: **robust for IT, frictionless for everyone else**. One launcher; beha
 **Implementation order**: (1) author signatures + namespace binding + free/managed mode + minimal policy, (2) `.trust` and import, (3) revocation, rotation, anti-downgrade, logs, (4) advanced options (ring, mirror, pin).
 
 ## App package standard (v1)
+
+> Format 1 is now frozen and specified in [`format.md`](format.md), which takes precedence over
+> this section wherever they differ.
 Goal: receive an app as **a data file**, verify it and launch it in a uniform way. Extension: `.dsapp`.
 
 ### Package format

@@ -1,9 +1,14 @@
-# Status quo: 21 October 2026
+# Status quo: 22 October 2026
+
+> The plan from here to a signed 1.0 is in [`roadmap.md`](roadmap.md). This page records where
+> things stood; the TODO list below is superseded by the roadmap.
 
 ## Where we are
 
-The proof of concept from [`plan.md`](plan.md) is built and open for review as
-[PR #3](https://github.com/Devstribution/devstribution/pull/3), branch `claude/youthful-ritchie-ursrrw`.
+The proof of concept from [`plan.md`](plan.md) is built and merged
+([PR #3](https://github.com/Devstribution/devstribution/pull/3)), and the first Windows run's fixes
+too ([PR #4](https://github.com/Devstribution/devstribution/pull/4), findings in
+[`report.md`](report.md)). A first real app (`ricon.dsapp`) has been packed and delivered with it.
 
 | Part | State |
 |---|---|

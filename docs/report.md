@@ -26,7 +26,7 @@ safe choice).
 
 | # | Finding | Where | State |
 |---|---|---|---|
-| 1 | **`pack` has no way to leave out a folder.** `app_1/output/` holds client data (Excel, SQLite, diagnostic zips) and would have been packed and signed. Worked around by packing a clean copy; a `[tool.devstribution] exclude = [...]` list (or honouring `.gitignore`) is needed. | `crates/devstribution-core/src/package.rs` (`EXCLUDED_DIRS`) | Open |
+| 1 | **`pack` has no way to leave out a folder.** `app_1/output/` holds client data (Excel, SQLite, diagnostic zips) and would have been packed and signed. Worked around by packing a clean copy; a `[tool.devstribution] exclude = [...]` list (or honouring `.gitignore`) is needed. | `crates/devstribution-core/src/package.rs` (`EXCLUDED_DIRS`) | Fixed |
 | 2 | **Stateful apps don't fit the per-run output folder.** The app keeps its Excel di lavoro, archive and database between runs, so it writes to a folder the user picks; `file` outputs must be inside `ctx.output_dir`, so the result can only be shown as text, without an "Open result" button. An output type for "a folder the user chose" would fix it. | `runner/devstribution_runner/_runner.py:277` | Open |
 | 3 | No cooperative cancellation: the app never calls `ctx.progress()`, so Cancel relies on the 3 s `KeyboardInterrupt` fallback. Fine to test the fallback with. | `app_1/main.py` | Note |
 
@@ -34,10 +34,10 @@ safe choice).
 
 | # | Finding | Where | State |
 |---|---|---|---|
-| 1 | `HANDOFF.md` says uv "is not a conda package": it is, on conda-forge (`conda install -c conda-forge uv`). | `docs/HANDOFF.md` | Open |
-| 2 | `HANDOFF.md` asks for Node 22+, but the lockfile needs `^20.19.0 \|\| >=22.12.0` (Vite 8, Rolldown); Node 20.20 works. | `docs/HANDOFF.md` | Open |
-| 3 | `status_quo.md` still says PR #3 is open for review; it is merged (`74c4f90`). | `docs/status_quo.md` | Open |
-| 4 | `npx tauri dev` rewrites `tauri = "2"` as `{ version = "2", features = [] }` (same meaning) in the launcher's Cargo.toml, leaving the tree dirty after every run. Commit the rewritten form so it stops. | `launcher/src-tauri/Cargo.toml` | Open |
+| 1 | `HANDOFF.md` says uv "is not a conda package": it is, on conda-forge (`conda install -c conda-forge uv`). | `docs/HANDOFF.md` | Fixed |
+| 2 | `HANDOFF.md` asks for Node 22+, but the lockfile needs `^20.19.0 \|\| >=22.12.0` (Vite 8, Rolldown); Node 20.20 works. | `docs/HANDOFF.md` | Fixed |
+| 3 | `status_quo.md` still says PR #3 is open for review; it is merged (`74c4f90`). | `docs/status_quo.md` | Fixed |
+| 4 | `npx tauri dev` rewrites `tauri = "2"` as `{ version = "2", features = [] }` (same meaning) in the launcher's Cargo.toml, leaving the tree dirty after every run. Commit the rewritten form so it stops. | `launcher/src-tauri/Cargo.toml` | Fixed |
 
 ## Environment notes (not project bugs)
 

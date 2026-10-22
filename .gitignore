@@ -18,3 +18,6 @@ dist/
 
 # Client data written by app_1 (Excel, database, logs, diagnostics)
 app_1/output/
+
+# The frozen format-1 package every later version must still accept (see docs/format.md)
+!crates/devstribution-core/tests/fixtures/format-1/hello.dsapp

@@ -16,6 +16,14 @@ pub enum TemplateKind {
 
 const AGENTS_MD: &str = include_str!("../templates/AGENTS.md");
 const GITIGNORE: &str = "__pycache__/\n.venv/\ndist/\n*.dsapp\n*.key\n.env\n";
+const DSAPPIGNORE: &str = "\
+# Left out of the .dsapp package (.gitignore syntax; read after .gitignore).
+# Put here every folder the app writes at run time, so client data is never signed and shipped.
+output/
+
+# A data-like file the app really needs (spreadsheet, database, archive) must be named with `!`:
+# !templates/report.xlsx
+";
 
 pub fn init(
     dir: Option<PathBuf>,
@@ -59,6 +67,7 @@ pub fn init(
     fs::write(dir.join("main.py"), main_py)?;
     fs::write(dir.join("AGENTS.md"), AGENTS_MD)?;
     fs::write(dir.join(".gitignore"), GITIGNORE)?;
+    fs::write(dir.join(".dsappignore"), DSAPPIGNORE)?;
     env::run_uv(&["lock", "--quiet"], &dir).context("creating uv.lock")?;
 
     println!("Created {} in {}", id, dir.display());

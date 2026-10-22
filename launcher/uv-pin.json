@@ -1,0 +1,12 @@
+{
+  "_comment": "The uv release shipped inside the launcher. To update: change version, then copy each archive's sha256 from the release's <asset>.sha256 files (https://github.com/astral-sh/uv/releases) and run `npm run sidecar` on each platform.",
+  "version": "0.13.4",
+  "sha256": {
+    "x86_64-pc-windows-msvc": "ccec7508a07d9933d7cb1261880633efcf1f30d6e6eddab21823f1dae6f23225",
+    "aarch64-pc-windows-msvc": "c4bc5a9534b2bb6a12fe29ea748445e1a6f9cb7bb275211c4fb74c52ecf317a5",
+    "x86_64-apple-darwin": "7be2dcd316122f4b3e5a0a7889f6248266c14425374e105ff7dc9779184603a6",
+    "aarch64-apple-darwin": "e0b1d4743ce64c55d9f0f4a444afa6b81125680070ee04e853fcd0f6c1ebf8f1",
+    "x86_64-unknown-linux-gnu": "2b428396f12572d4429cf210ca234dd599a33b3af0958a4d5ed569d63e3f344f",
+    "aarch64-unknown-linux-gnu": "1ae72b4718729e2ccc4f1ae2c6d1e531ca8467800e0546e9130b3886023a60ab"
+  }
+}

@@ -190,9 +190,39 @@ fn default_platforms() -> Vec<String> {
 
 const PLATFORMS: [&str; 3] = ["windows", "macos", "linux"];
 
+/// Reads only `schema_version`, ignoring everything else, so that a package in a later format
+/// (which may have fields this version does not know) is reported as such, not as a bad manifest.
+#[derive(Deserialize)]
+struct SchemaProbe {
+    tool: Option<SchemaProbeTool>,
+}
+
+#[derive(Deserialize)]
+struct SchemaProbeTool {
+    devstribution: Option<SchemaProbeDs>,
+}
+
+#[derive(Deserialize)]
+struct SchemaProbeDs {
+    schema_version: Option<toml::Value>,
+}
+
 impl Manifest {
     pub fn parse(pyproject: &str) -> Result<Manifest> {
         let bad = |msg: String| Error::Manifest(msg);
+        if let Ok(probe) = toml::from_str::<SchemaProbe>(pyproject) {
+            let found = probe
+                .tool
+                .and_then(|t| t.devstribution)
+                .and_then(|d| d.schema_version)
+                .and_then(|v| v.as_integer());
+            if let Some(found) = found.filter(|&v| v > i64::from(SCHEMA_VERSION)) {
+                return Err(Error::NewerFormat {
+                    found: u32::try_from(found).unwrap_or(u32::MAX),
+                    supported: SCHEMA_VERSION,
+                });
+            }
+        }
         let raw: RawPyproject = toml::from_str(pyproject).map_err(|e| bad(e.to_string()))?;
 
         let project = raw
@@ -623,6 +653,30 @@ type = "file"
     fn with(from: &str, to: &str) -> String {
         assert!(EXAMPLE.contains(from), "{from}");
         EXAMPLE.replacen(from, to, 1)
+    }
+
+    #[test]
+    fn later_formats_ask_for_a_newer_launcher() {
+        // A format-2 manifest may carry fields format 1 doesn't know: the version still wins.
+        let future = with("schema_version = 1", "schema_version = 2\nnew_field = true");
+        match Manifest::parse(&future) {
+            Err(Error::NewerFormat {
+                found: 2,
+                supported: 1,
+            }) => {}
+            other => panic!("expected NewerFormat, got {other:?}"),
+        }
+        let err = Manifest::parse(&future).unwrap_err().to_string();
+        assert!(
+            err.contains("needs a newer version of devstribution"),
+            "{err}"
+        );
+
+        // Older or nonsense numbers stay ordinary manifest errors.
+        assert!(matches!(
+            Manifest::parse(&with("schema_version = 1", "schema_version = 0")),
+            Err(Error::Manifest(_))
+        ));
     }
 
     #[test]

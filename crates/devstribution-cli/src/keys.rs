@@ -150,6 +150,36 @@ pub fn pack(dir: &Path, key: Option<PathBuf>, out: Option<PathBuf>) -> Result<()
     Ok(())
 }
 
+/// `pack --list`: what would go into the package, with no checks of the code and no signing.
+pub fn list(dir: &Path) -> Result<()> {
+    let app_dir = env::absolute(dir)?;
+    let app = package::collect_app_files(&app_dir)?;
+    println!("Would pack {} file(s):", app.files.len());
+    for rel in app.files.keys() {
+        let mark = if app.unconfirmed_data.contains(rel) {
+            "  ! "
+        } else {
+            "    "
+        };
+        println!("{mark}{rel}");
+    }
+    if !app.excluded.is_empty() {
+        println!("Left out:");
+        for rel in &app.excluded {
+            println!("    {rel}");
+        }
+    }
+    if !app.unconfirmed_data.is_empty() {
+        println!(
+            "! {} file(s) look like data: `pack` refuses them until {} leaves them out, or names \
+             them with `!path` if the app ships them on purpose",
+            app.unconfirmed_data.len(),
+            package::IGNORE_FILE
+        );
+    }
+    Ok(())
+}
+
 pub fn verify(file: &Path, key: Option<PathBuf>) -> Result<()> {
     let public_key = match &key {
         Some(path) => {
