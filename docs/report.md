@@ -57,9 +57,19 @@ safe choice).
 | `keygen`, `pack examples/excel-report`, `verify` | Pass |
 | Install `excel-report.dsapp` in the launcher | Pass |
 | Install and run `ricon.dsapp` (pandas, pdfplumber) | Pass, after runner fix 1 |
+| Cancel, cooperative: app → child → grandchild all gone, run `cancelled` | Pass |
+| Cancel, app ignores it: Job Object killed after the grace period, whole tree gone | Pass |
+| Excel via `DispatchEx` + `track_com`: closed after a normal run (`Quit()`) | Pass |
+| Excel, cooperative Cancel: closed by cleanup | Pass |
+| Excel, app ignores Cancel: the app's Excel killed by PID + creation time | Pass |
+| Excel safety: the user's own Excel, open before the run, survives that kill | Pass |
+| Secrets: stored in Credential Manager (`devstribution/<id>/<name>`), reused on the next run without asking | Pass |
+| `gui` app: runs as `pythonw.exe`, no console window | Pass |
+
+The checks used a throwaway test app (`wincheck`: `tree-*` / `excel-*` modes, a secret input) and
+`examples/hello-gui`.
 
 ## Still to check on Windows
 
-From `status_quo.md`: Cancel kills the whole process tree (Job Object), Excel cleanup via COM,
-Mark-of-the-Web origin, file association and single instance (installer), `pythonw.exe` for `gui`
-apps, secrets in Credential Manager.
+Mark-of-the-Web origin, and the file association and single instance: these need the installer
+(`npx tauri build`). Also untested: the launcher exiting mid-run (KILL_ON_JOB_CLOSE).
