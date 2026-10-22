@@ -23,9 +23,18 @@ tokens describe the same thing, so change them together.
 ## Logo
 
 An ink square with rounded corners and a white play triangle: the same mark as the sidebar's
-brand square, with no gradient. The source is `launcher/src/logo.svg`. After changing it,
-regenerate the app icons with `npx tauri icon src/logo.svg` (from `launcher/`), then delete the
-`android/` and `ios/` folders it also writes.
+brand square, with no gradient. There are two drawings of it:
+
+- `launcher/src/logo.svg`: the large logo, with a margin around the square. Used for the macOS
+  icon (`icon.icns`) and `icon.png`.
+- `launcher/src/logo-small.svg`: the small version, used for all the Windows icons (`icon.ico`, the
+  `Square*Logo.png` files) and `32x32.png` to `128x128@2x.png`. The square fills the whole icon, the
+  triangle is bigger, and it's drawn on a 32-unit grid so 16, 32 and 64 px land on whole pixels.
+
+Each icon size is rendered directly from the SVG at that exact size (in a browser), never shrunk
+from a big image. `npx tauri icon` shrinks one big image to every size, which blurs the 16–48 px
+icons that Windows shows in the taskbar and title bar. So use it only for `icon.icns` and
+`icon.png`, and don't let it overwrite `icon.ico` or the PNG files listed above.
 
 ## Palette
 
