@@ -20,6 +20,10 @@ def run(name: str, ctx) -> dict:
 "#;
 
 fn write_app(dir: &Path, version: &str) {
+    write_app_with(dir, version, MAIN);
+}
+
+fn write_app_with(dir: &Path, version: &str, main: &str) {
     fs::create_dir_all(dir).unwrap();
     fs::write(
         dir.join("pyproject.toml"),
@@ -52,7 +56,7 @@ type = "file"
         ),
     )
     .unwrap();
-    fs::write(dir.join("main.py"), MAIN).unwrap();
+    fs::write(dir.join("main.py"), main).unwrap();
     let status = std::process::Command::new(devstribution_host::uv::uv_path())
         .args(["lock", "--quiet"])
         .current_dir(dir)
@@ -198,4 +202,60 @@ fn stale_confirmations_are_checked_again() {
     );
     assert!(err.contains("older"), "{err}");
     assert_eq!(store.app("alice/hello").unwrap().record.version, "2.0.0");
+}
+
+/// A byte that is not UTF-8 or a huge line in the app's output must not end the run, and a
+/// runner changed on disk is put back before the run. (Forged results are checked by the
+/// unit tests of `run`.)
+#[test]
+fn app_output_is_handled_defensively() {
+    const ROGUE: &str = r#"
+import sys
+
+def run(name: str, ctx) -> dict:
+    sys.stderr.buffer.write(b"caf\xe9 " + b"x" * 100000 + b"\n")
+    sys.stderr.flush()
+    print("still running")
+    out = ctx.output_dir / "greeting.txt"
+    out.write_text("hi")
+    return {"greeting": out}
+"#;
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Store::open(Paths {
+        root: tmp.path().join("home"),
+    })
+    .unwrap();
+    write_app_with(&tmp.path().join("src"), "1.0.0", ROGUE);
+    let pkg = tmp.path().join("rogue.dsapp");
+    pack(&tmp.path().join("src"), &signer(), &pkg).unwrap();
+    let pending = store.inspect(&pkg).unwrap();
+    store.install(&pending.token, &mut |_| {}).unwrap();
+
+    let runner_dir = runner::install(&store.paths).unwrap();
+    fs::write(runner_dir.join("json.py"), "raise SystemExit('shadowed')").unwrap();
+    let runner_dir = runner::install(&store.paths).unwrap();
+    assert!(!runner_dir.join("json.py").exists());
+
+    let (spec, _) = store
+        .prepare_run("alice/hello", &Map::new(), &runner_dir)
+        .unwrap();
+    let lines: Arc<Mutex<Vec<String>>> = Arc::default();
+    let sink = {
+        let lines = lines.clone();
+        Arc::new(move |e: RunEvent| match e {
+            RunEvent::Output { line } => lines.lock().unwrap().push(line),
+            RunEvent::Log { message, .. } => lines.lock().unwrap().push(message),
+            _ => {}
+        })
+    };
+    let result = run::start(spec, sink).unwrap().wait();
+    assert_eq!(result.status, RunStatus::Ok, "{:?}", result.error);
+    assert_eq!(result.outputs.len(), 1);
+    let lines = lines.lock().unwrap();
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("caf\u{fffd} ") && l.len() < 20_000)
+    );
+    assert!(lines.iter().any(|l| l == "still running"));
 }

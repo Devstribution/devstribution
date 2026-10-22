@@ -2,7 +2,7 @@
 //! and the hard kill (Job Object on Windows, plus the COM servers the app registered).
 
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
@@ -11,7 +11,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use devstribution_core::manifest::{InputType, Kind, Manifest};
+use devstribution_core::manifest::{InputType, Kind, Manifest, OutputType};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
@@ -20,6 +20,12 @@ pub const GRACE: Duration = Duration::from_secs(10);
 
 /// Default time limit for kinds that are expected to finish (`form`, `cli`).
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(2 * 3600);
+
+/// Longest line kept from the app's output; the rest of a longer line is dropped.
+const MAX_LINE: usize = 16 * 1024;
+
+/// Size at which `app.log` stops growing for the run.
+const MAX_LOG_BYTES: u64 = 20 << 20;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -214,19 +220,30 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
     };
 
     let mut cmd = Command::new(&spec.python);
-    cmd.arg("-I")
+    // `-X utf8`: the app's output reaches the launcher as UTF-8 whatever the Windows code page.
+    cmd.args(["-I", "-X", "utf8"])
         .arg(spec.runner_dir.join("bootstrap.py"))
         .current_dir(&spec.run_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    if spec.manifest.kind == Kind::Form {
-        crate::uv::hide_window(&mut cmd);
-    }
+    // `gui` apps run with pythonw.exe; the others write only to pipes, so a console window
+    // would stay empty.
+    platform::prepare(&mut cmd);
     let mut child = cmd
         .spawn()
         .with_context(|| format!("cannot start {}", spec.python.display()))?;
-    let job = platform::Job::assign(&child);
+    // The process starts suspended (Windows): it joins the Job Object before it can start
+    // anything, so every process it creates is stopped with the run.
+    let job = match platform::Job::assign(&child) {
+        Ok(job) => job,
+        Err(e) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(e);
+        }
+    };
+    let started_at = std::time::SystemTime::now();
 
     let mut stdin = child.stdin.take().expect("piped");
     writeln!(stdin, "{}", start_message(&spec))?;
@@ -239,12 +256,12 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
     let stdout_thread = {
         let (on_event, result_msg, com) =
             (on_event.clone(), result_msg.clone(), com_processes.clone());
+        let run_start = platform::filetime(started_at);
         std::thread::spawn(move || {
-            for line in BufReader::new(stdout).lines() {
-                let Ok(line) = line else { break };
+            for_each_line(stdout, |line| {
                 let Ok(msg) = serde_json::from_str::<Value>(&line) else {
                     on_event(RunEvent::Output { line });
-                    continue;
+                    return;
                 };
                 let text = |k: &str| msg[k].as_str().unwrap_or("").to_string();
                 match msg["type"].as_str() {
@@ -256,17 +273,21 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
                         level: text("level"),
                         message: text("message"),
                     }),
+                    // Only processes started during this run: the app (which runs in the
+                    // same process as the runner) could otherwise name any process of the
+                    // user's and have the launcher end it.
                     Some("com_process") => {
-                        if let Some(pid) = msg["pid"].as_u64() {
-                            com.lock()
-                                .unwrap()
-                                .push((pid as u32, msg["created"].as_u64()));
+                        let created = msg["created"].as_u64();
+                        if let (Some(pid), Some(c)) = (msg["pid"].as_u64(), created) {
+                            if u32::try_from(pid).is_ok() && c + 20_000_000 >= run_start {
+                                com.lock().unwrap().push((pid as u32, created));
+                            }
                         }
                     }
                     Some("result") => *result_msg.lock().unwrap() = Some(msg),
                     _ => {}
                 }
-            }
+            });
         })
     };
 
@@ -276,17 +297,30 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
         let on_event = on_event.clone();
         std::thread::spawn(move || {
             let mut log = fs::File::create(&log_path).ok();
-            for line in BufReader::new(stderr).lines() {
-                let Ok(line) = line else { break };
+            let mut written = 0u64;
+            for_each_line(stderr, |line| {
                 if let Some(f) = log.as_mut() {
-                    let _ = writeln!(f, "{line}");
+                    written += line.len() as u64 + 1;
+                    if written > MAX_LOG_BYTES {
+                        let _ = writeln!(f, "[the log is too long: the rest was not kept]");
+                        log = None;
+                    } else {
+                        let _ = writeln!(f, "{line}");
+                    }
                 }
                 on_event(RunEvent::Output { line });
-            }
+            });
         })
     };
 
     let (control, control_rx) = mpsc::channel();
+    let outputs_declared: Vec<(String, OutputType)> = spec
+        .manifest
+        .outputs
+        .iter()
+        .map(|o| (o.name.clone(), o.kind))
+        .collect();
+    let output_dir = spec.output_dir.clone();
     let join = std::thread::spawn(move || {
         let started = Instant::now();
         let mut stdin = Some(stdin);
@@ -339,7 +373,7 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
 
         let duration_ms = started.elapsed().as_millis() as u64;
         let msg = result_msg.lock().unwrap().take();
-        let result = match msg {
+        let mut result = match msg {
             Some(m) => RunResult {
                 status: match m["status"].as_str() {
                     Some("ok") => RunStatus::Ok,
@@ -369,12 +403,104 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
                 duration_ms,
             },
         };
+        // The result comes from the app's own process, so it is checked here like any other
+        // input: only declared outputs, and files only from the run's output folder.
+        for problem in keep_declared_outputs(&outputs_declared, &output_dir, &mut result.outputs) {
+            on_event(RunEvent::Log {
+                level: "warning".into(),
+                message: problem,
+            });
+        }
+        // An app that crashed or was stopped cannot close the Excel (or other COM server)
+        // it started; do it for it.
+        if result.status != RunStatus::Ok {
+            for (pid, created) in com_processes.lock().unwrap().iter() {
+                platform::terminate_if_same(*pid, *created);
+            }
+        }
         on_event(RunEvent::Finished {
             result: result.clone(),
         });
         result
     });
     Ok(RunHandle { control, join })
+}
+
+/// Calls `f` with every line read from `r`, decoded leniently (an invalid byte becomes `�`
+/// instead of ending the reading) and cut at [`MAX_LINE`] bytes, until the end of the stream.
+fn for_each_line(r: impl Read, mut f: impl FnMut(String)) {
+    let mut reader = BufReader::new(r);
+    let mut line: Vec<u8> = Vec::new();
+    let mut overflow = false;
+    loop {
+        let (consumed, end_of_line) = match reader.fill_buf() {
+            Ok([]) | Err(_) => break,
+            Ok(buf) => match buf.iter().position(|&b| b == b'\n') {
+                Some(i) => {
+                    let room = MAX_LINE.saturating_sub(line.len());
+                    line.extend_from_slice(&buf[..i.min(room)]);
+                    (i + 1, true)
+                }
+                None => {
+                    let room = MAX_LINE.saturating_sub(line.len());
+                    overflow |= buf.len() > room;
+                    line.extend_from_slice(&buf[..buf.len().min(room)]);
+                    (buf.len(), false)
+                }
+            },
+        };
+        reader.consume(consumed);
+        if end_of_line {
+            emit_line(&mut line, &mut overflow, &mut f);
+        }
+    }
+    if !line.is_empty() {
+        emit_line(&mut line, &mut overflow, &mut f);
+    }
+}
+
+fn emit_line(line: &mut Vec<u8>, overflow: &mut bool, f: &mut impl FnMut(String)) {
+    if line.last() == Some(&b'\r') {
+        line.pop();
+    }
+    let mut text = String::from_utf8_lossy(line).into_owned();
+    if *overflow {
+        text.push_str(" […]");
+    }
+    f(text);
+    line.clear();
+    *overflow = false;
+}
+
+/// Keeps only outputs the manifest declares, and `file` outputs only when they name a file
+/// inside the run's output folder. Returns what was dropped, for the run log.
+fn keep_declared_outputs(
+    declared: &[(String, OutputType)],
+    output_dir: &Path,
+    outputs: &mut Map<String, Value>,
+) -> Vec<String> {
+    let mut problems = Vec::new();
+    outputs.retain(|name, value| {
+        let Some((_, kind)) = declared.iter().find(|(n, _)| n == name) else {
+            problems.push(format!(
+                "the app returned `{name}`, which it does not declare: ignored"
+            ));
+            return false;
+        };
+        if *kind == OutputType::File && !value.is_null() {
+            let inside = value
+                .as_str()
+                .is_some_and(|p| is_inside(Path::new(p), output_dir));
+            if !inside {
+                problems.push(format!(
+                    "the file output `{name}` is not in the run's output folder: ignored"
+                ));
+                return false;
+            }
+        }
+        true
+    });
+    problems
 }
 
 fn join_for(handle: JoinHandle<()>, limit: Duration) {
@@ -398,18 +524,36 @@ pub fn is_inside(path: &Path, dir: &Path) -> bool {
 #[cfg(windows)]
 mod platform {
     use std::os::windows::io::AsRawHandle;
-    use std::process::Child;
+    use std::os::windows::process::CommandExt;
+    use std::process::{Child, Command};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
-    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME, HANDLE};
+    use anyhow::{Result, bail};
+    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME, HANDLE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
+    };
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
         SetInformationJobObject, TerminateJobObject,
     };
     use windows_sys::Win32::System::Threading::{
-        GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
+        CREATE_NO_WINDOW, CREATE_SUSPENDED, GetProcessTimes, OpenProcess, OpenThread,
+        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE, ResumeThread, THREAD_SUSPEND_RESUME,
         TerminateProcess,
     };
+
+    /// No console window, and suspended until [`Job::assign`] has put it in its Job Object.
+    pub fn prepare(cmd: &mut Command) {
+        cmd.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
+    }
+
+    /// A time as a Windows FILETIME (100 ns since 1601), the unit of process creation times.
+    pub fn filetime(t: SystemTime) -> u64 {
+        let unix = t.duration_since(UNIX_EPOCH).unwrap_or_default();
+        (unix.as_secs() + 11_644_473_600) * 10_000_000 + u64::from(unix.subsec_nanos() / 100)
+    }
 
     /// The run's Job Object: the app and every process it starts. Closing the launcher closes
     /// the handle, which kills them (KILL_ON_JOB_CLOSE).
@@ -419,22 +563,30 @@ mod platform {
     unsafe impl Send for Job {}
 
     impl Job {
-        pub fn assign(child: &Child) -> Job {
+        /// Puts the suspended `child` in a new Job Object, then lets it run. A run that cannot
+        /// be put in a job is not started: Cancel and closing the launcher could not stop
+        /// what it starts.
+        pub fn assign(child: &Child) -> Result<Job> {
             unsafe {
                 let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
                 if job.is_null() {
-                    return Job(job);
+                    bail!("cannot create a Job Object for the run");
                 }
+                let job = Job(job);
                 let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
                 info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-                SetInformationJobObject(
-                    job,
+                let set = SetInformationJobObject(
+                    job.0,
                     JobObjectExtendedLimitInformation,
                     &info as *const _ as *const _,
                     std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
                 );
-                AssignProcessToJobObject(job, child.as_raw_handle() as HANDLE);
-                Job(job)
+                if set == 0 || AssignProcessToJobObject(job.0, child.as_raw_handle() as HANDLE) == 0
+                {
+                    bail!("cannot put the app in its Job Object");
+                }
+                resume(child.id())?;
+                Ok(job)
             }
         }
 
@@ -450,6 +602,37 @@ mod platform {
             if !self.0.is_null() {
                 unsafe { CloseHandle(self.0) };
             }
+        }
+    }
+
+    /// Resumes the threads of a process created suspended (it has exactly one).
+    fn resume(pid: u32) -> Result<()> {
+        unsafe {
+            let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+            if snapshot == INVALID_HANDLE_VALUE {
+                bail!("cannot start the app (no thread snapshot)");
+            }
+            let mut entry: THREADENTRY32 = std::mem::zeroed();
+            entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
+            let mut resumed = 0;
+            let mut more = Thread32First(snapshot, &mut entry) != 0;
+            while more {
+                if entry.th32OwnerProcessID == pid {
+                    let thread = OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID);
+                    if !thread.is_null() {
+                        if ResumeThread(thread) != u32::MAX {
+                            resumed += 1;
+                        }
+                        CloseHandle(thread);
+                    }
+                }
+                more = Thread32Next(snapshot, &mut entry) != 0;
+            }
+            CloseHandle(snapshot);
+            if resumed == 0 {
+                bail!("cannot start the app (its thread could not be resumed)");
+            }
+            Ok(())
         }
     }
 
@@ -483,18 +666,69 @@ mod platform {
 
 #[cfg(not(windows))]
 mod platform {
-    use std::process::Child;
+    use std::process::{Child, Command};
+    use std::time::SystemTime;
+
+    use anyhow::Result;
+
+    pub fn prepare(_cmd: &mut Command) {}
+
+    pub fn filetime(_t: SystemTime) -> u64 {
+        0
+    }
 
     /// Outside Windows the app is killed directly; Job Objects do not exist.
     pub struct Job;
 
     impl Job {
-        pub fn assign(_child: &Child) -> Job {
-            Job
+        pub fn assign(_child: &Child) -> Result<Job> {
+            Ok(Job)
         }
 
         pub fn terminate(&self) {}
     }
 
     pub fn terminate_if_same(_pid: u32, _created: Option<u64>) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn forged_results_are_trimmed_to_what_the_manifest_declares() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("output");
+        fs::create_dir_all(&out).unwrap();
+        fs::write(out.join("ok.txt"), "x").unwrap();
+        let elsewhere = dir.path().join("elsewhere.exe");
+        fs::write(&elsewhere, "x").unwrap();
+        let declared = vec![
+            ("report".to_string(), OutputType::File),
+            ("other".to_string(), OutputType::File),
+            ("summary".to_string(), OutputType::Text),
+        ];
+        let mut outputs = Map::new();
+        outputs.insert("report".into(), json!(out.join("ok.txt")));
+        outputs.insert("other".into(), json!(elsewhere));
+        outputs.insert("summary".into(), json!("fine"));
+        outputs.insert("extra".into(), json!("C:/Windows/System32/calc.exe"));
+        let problems = keep_declared_outputs(&declared, &out, &mut outputs);
+        assert_eq!(problems.len(), 2, "{problems:?}");
+        let mut kept: Vec<&str> = outputs.keys().map(String::as_str).collect();
+        kept.sort_unstable();
+        assert_eq!(kept, ["report", "summary"]);
+    }
+
+    #[test]
+    fn lines_survive_invalid_bytes_and_are_capped() {
+        let mut data = b"caf\xe9\r\n".to_vec();
+        data.extend(std::iter::repeat_n(b'x', MAX_LINE * 3));
+        data.extend(b"\nlast");
+        let mut lines = Vec::new();
+        for_each_line(&data[..], |l| lines.push(l));
+        assert_eq!(lines[0], "caf\u{fffd}");
+        assert!(lines[1].len() < MAX_LINE + 10 && lines[1].ends_with("[…]"));
+        assert_eq!(lines[2], "last");
+    }
 }

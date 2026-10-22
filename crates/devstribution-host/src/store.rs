@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
@@ -194,6 +195,9 @@ pub fn current_platform() -> &'static str {
 
 pub struct Store {
     pub paths: Paths,
+    /// Held for every read-modify-write of `state.json`, so that an install confirmed while
+    /// a run starts (or two installs) cannot overwrite each other's changes.
+    state_lock: Mutex<()>,
 }
 
 impl Store {
@@ -213,7 +217,10 @@ impl Store {
                 let _ = fs::remove_dir_all(e.path());
             }
         }
-        let store = Store { paths };
+        let store = Store {
+            paths,
+            state_lock: Mutex::new(()),
+        };
         store.close_interrupted_runs();
         Ok(store)
     }
@@ -249,6 +256,32 @@ impl Store {
         let tmp = path.with_extension("json.tmp");
         fs::write(&tmp, serde_json::to_vec_pretty(state)?)?;
         fs::rename(&tmp, &path).context("saving state.json")
+    }
+
+    /// Loads the state, lets `f` change it and saves it, all under the state lock. Nothing is
+    /// saved if `f` fails.
+    fn update_state<T>(&self, f: impl FnOnce(&mut State) -> Result<T>) -> Result<T> {
+        let _guard = self
+            .state_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut state = self.load()?;
+        let out = f(&mut state)?;
+        self.save(&state)?;
+        Ok(out)
+    }
+
+    /// Whether a run of the app is in progress (its record says so).
+    pub fn is_running(&self, id: &str) -> bool {
+        self.runs(Some(id), 20)
+            .is_ok_and(|runs| runs.iter().any(|r| r.status == RunStatus::Running))
+    }
+
+    fn refuse_if_running(&self, id: &str, what: &str) -> Result<()> {
+        if self.is_running(id) {
+            bail!("`{id}` is running: stop it before you {what} it");
+        }
+        Ok(())
     }
 
     // -- installed apps ----------------------------------------------------------------------
@@ -450,8 +483,12 @@ impl Store {
             &pending.content_hash,
         )
         .context("this install is no longer valid")?;
+        self.refuse_if_running(&pending.id, "update")?;
         let app_dir = self.paths.app_dir(&id, &pending.content_hash);
         let env_dir = self.paths.env_dir(&id, &pending.content_hash);
+        // Installed before with the same content (a reinstall): its files are already there.
+        let same_content_installed = self.load()?.apps.get(&pending.id).map(|r| &r.content_hash)
+            == Some(&pending.content_hash);
 
         on_step(InstallStep {
             step: "files",
@@ -468,75 +505,76 @@ impl Store {
             step: "environment",
             message: "Preparing the Python environment".into(),
         });
-        if env_dir.exists() {
-            fs::remove_dir_all(&env_dir)?;
-        }
         let mut forward = |line: &str| {
             on_step(InstallStep {
                 step: "environment",
                 message: line.to_string(),
             })
         };
-        if let Err(e) = uv::sync(&app_dir, &env_dir, LockMode::Frozen, &mut forward) {
-            let _ = fs::remove_dir_all(&env_dir);
-            let mut state = self.load()?;
-            if state.apps.get(&pending.id).map(|r| &r.content_hash) != Some(&pending.content_hash) {
+        if let Err(e) = build_env(&app_dir, &env_dir, &mut forward) {
+            // The installed version, if any, is untouched: only new files go.
+            if !same_content_installed {
                 let _ = fs::remove_dir_all(&app_dir);
-            } else {
-                state.apps.remove(&pending.id);
-                self.save(&state)?;
             }
             return Err(e);
         }
 
-        let mut state = self.load()?;
-        admit(
-            &state,
-            &id,
-            &version,
-            &pending.publisher_key,
-            &pending.content_sha256,
-            &pending.content_hash,
-        )
-        .context("this install is no longer valid")?;
-        let last_inputs = state
-            .apps
-            .get(&pending.id)
-            .map(|r| r.last_inputs.clone())
-            .unwrap_or_default();
-        state
-            .pins
-            .entry(id.namespace.clone())
-            .or_insert_with(|| Pin {
-                key: pending.publisher_key.clone(),
-                key_id: pending.key_id.clone(),
-                pinned_at: now_secs(),
-                source: "first-use".into(),
-            });
-        let replaced = state.apps.insert(
-            pending.id.clone(),
-            AppRecord {
-                id: pending.id.clone(),
-                version: pending.version.clone(),
-                content_hash: pending.content_hash.clone(),
-                content_sha256: pending.content_sha256.clone(),
-                key_id: pending.key_id.clone(),
-                installed_at: now_secs(),
-                origin: pending.origin.clone(),
-                last_inputs,
-            },
-        );
-        let newer = state
-            .highest
-            .get(&pending.id)
-            .and_then(|h| h.parse::<Version>().ok())
-            .is_none_or(|h| pending.version.parse::<Version>().is_ok_and(|v| v > h));
-        if newer {
-            state
-                .highest
-                .insert(pending.id.clone(), pending.version.clone());
-        }
-        self.save(&state)?;
+        let replaced = self
+            .update_state(|state| {
+                admit(
+                    state,
+                    &id,
+                    &version,
+                    &pending.publisher_key,
+                    &pending.content_sha256,
+                    &pending.content_hash,
+                )
+                .context("this install is no longer valid")?;
+                let last_inputs = state
+                    .apps
+                    .get(&pending.id)
+                    .map(|r| r.last_inputs.clone())
+                    .unwrap_or_default();
+                state
+                    .pins
+                    .entry(id.namespace.clone())
+                    .or_insert_with(|| Pin {
+                        key: pending.publisher_key.clone(),
+                        key_id: pending.key_id.clone(),
+                        pinned_at: now_secs(),
+                        source: "first-use".into(),
+                    });
+                let replaced = state.apps.insert(
+                    pending.id.clone(),
+                    AppRecord {
+                        id: pending.id.clone(),
+                        version: pending.version.clone(),
+                        content_hash: pending.content_hash.clone(),
+                        content_sha256: pending.content_sha256.clone(),
+                        key_id: pending.key_id.clone(),
+                        installed_at: now_secs(),
+                        origin: pending.origin.clone(),
+                        last_inputs,
+                    },
+                );
+                let newer = state
+                    .highest
+                    .get(&pending.id)
+                    .and_then(|h| h.parse::<Version>().ok())
+                    .is_none_or(|h| version > h);
+                if newer {
+                    state
+                        .highest
+                        .insert(pending.id.clone(), pending.version.clone());
+                }
+                Ok(replaced)
+            })
+            .inspect_err(|_| {
+                if !same_content_installed {
+                    let _ = fs::remove_dir_all(&app_dir);
+                    let _ = fs::remove_dir_all(&env_dir);
+                }
+            })?;
 
         if let Some(old) = replaced.filter(|r| r.content_hash != pending.content_hash) {
             let _ = fs::remove_dir_all(self.paths.app_dir(&id, &old.content_hash));
@@ -552,40 +590,47 @@ impl Store {
     /// Removes an app, its environment and its secrets. Its publisher stays pinned, so a later
     /// reinstall must still come from the same key; run history is kept.
     pub fn uninstall(&self, id: &str) -> Result<()> {
-        let mut state = self.load()?;
-        let record = state
-            .apps
-            .remove(id)
-            .ok_or_else(|| anyhow!("`{id}` is not installed"))?;
+        self.refuse_if_running(id, "uninstall")?;
         let app_id: AppId = id.parse().map_err(|e: String| anyhow!(e))?;
-        if let Ok(app) = self.describe(&record, &state) {
+        // Secrets first, while the app's manifest (which names them) is still there.
+        if let Ok(app) = self.app(id) {
             for name in crate::run::secret_names(&app.manifest) {
                 let _ = crate::secrets::delete(id, &name);
             }
         }
-        self.save(&state)?;
+        self.update_state(|state| {
+            state
+                .apps
+                .remove(id)
+                .ok_or_else(|| anyhow!("`{id}` is not installed"))
+        })?;
         let _ = fs::remove_dir_all(self.paths.apps().join(&app_id.namespace).join(&app_id.app));
         let _ = fs::remove_dir_all(self.paths.envs().join(&app_id.namespace).join(&app_id.app));
+        let _ = fs::remove_dir_all(
+            self.paths
+                .pycache()
+                .join(&app_id.namespace)
+                .join(&app_id.app),
+        );
         Ok(())
     }
 
     /// Rebuilds an app's environment from its lockfile.
     pub fn repair(&self, id: &str, on_step: &mut dyn FnMut(InstallStep)) -> Result<()> {
+        self.refuse_if_running(id, "repair")?;
         let app = self.app(id)?;
         on_step(InstallStep {
             step: "environment",
             message: "Rebuilding the Python environment".into(),
         });
-        if app.env_dir.exists() {
-            fs::remove_dir_all(&app.env_dir)?;
-        }
         let mut forward = |line: &str| {
             on_step(InstallStep {
                 step: "environment",
                 message: line.to_string(),
             })
         };
-        uv::sync(&app.app_dir, &app.env_dir, LockMode::Frozen, &mut forward)?;
+        // The old environment stays until the new one is complete.
+        build_env(&app.app_dir, &app.env_dir, &mut forward)?;
         on_step(InstallStep {
             step: "ready",
             message: "Ready".into(),
@@ -619,11 +664,12 @@ impl Store {
             bail!("the app's environment is missing; use Repair");
         }
 
-        let mut state = self.load()?;
-        if let Some(r) = state.apps.get_mut(id) {
-            r.last_inputs = resolved.clone();
-        }
-        self.save(&state)?;
+        self.update_state(|state| {
+            if let Some(r) = state.apps.get_mut(id) {
+                r.last_inputs = resolved.clone();
+            }
+            Ok(())
+        })?;
 
         let started_at = now_secs();
         let run_id = format!(
@@ -650,6 +696,14 @@ impl Store {
             output_dir: output_dir.clone(),
         };
         self.save_run(&record)?;
+        // One bytecode cache per installed version: an app cannot leave compiled code that
+        // another app would load.
+        let pycache_dir = self
+            .paths
+            .pycache()
+            .join(&app.manifest.id.namespace)
+            .join(&app.manifest.id.app)
+            .join(&app.record.content_hash);
         let spec = RunSpec {
             manifest: app.manifest,
             app_dir: app.app_dir,
@@ -657,7 +711,7 @@ impl Store {
             runner_dir: runner_dir.to_path_buf(),
             run_dir,
             output_dir,
-            pycache_dir: self.paths.pycache(),
+            pycache_dir,
             inputs: resolved,
             secrets,
             args: Vec::new(),
@@ -783,6 +837,27 @@ impl Store {
             usage,
         })
     }
+}
+
+/// Builds an app's environment next to `env_dir` and moves it into place only when uv has
+/// finished: a failed or interrupted build never leaves a half-made environment that looks
+/// ready, and the environment it replaces keeps working until then.
+fn build_env(app_dir: &Path, env_dir: &Path, on_line: &mut dyn FnMut(&str)) -> Result<()> {
+    let parent = env_dir.parent().expect("has a parent");
+    fs::create_dir_all(parent)?;
+    let name = env_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("env");
+    let building = parent.join(format!("{name}.building-{}", random_hex(4)));
+    if let Err(e) = uv::sync(app_dir, &building, LockMode::Frozen, on_line) {
+        let _ = fs::remove_dir_all(&building);
+        return Err(e);
+    }
+    if env_dir.exists() {
+        fs::remove_dir_all(env_dir).context("replacing the old environment")?;
+    }
+    fs::rename(&building, env_dir).context("moving the environment into place")
 }
 
 /// Whether a verified package may be installed given what is installed and pinned: the
