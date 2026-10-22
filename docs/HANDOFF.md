@@ -1,52 +1,74 @@
-# Handoff: continuing locally
+# Handoff: picking up the next session
 
-State at the end of the cloud session, and how to pick it up on your own machine.
+How to continue on your own machine, and what the next session should do. Where things stand is
+in [`status_quo.md`](status_quo.md); the long-term order of work is in [`roadmap.md`](roadmap.md).
 
-## What works
+## The next session, in order
 
-The full proof of concept, tested end to end in the real Tauri launcher (on Linux, under a
-virtual display):
+1. **Merge the security PR** ("Security review before signing") once CI is green on all three
+   platforms.
+2. **Rebuild on Windows** from `main` (commands below) and run the checks that only Windows can
+   run. Each check is listed in [`security.md`](security.md), "Still to verify on a real Windows
+   PC". Write the results in [`report.md`](report.md) and tick them in the roadmap (step 2):
+   - **Cancel and closing the launcher** stop the app and everything it started. The app now
+     starts suspended and joins its Job Object first. Try an app that starts a child process,
+     and Excel through COM.
+   - **The launcher starts normally** with the restricted DLL loading
+     (`/DEPENDENTLOADFLAG:0x800`, `SetDefaultDllDirectories`).
+   - **The old data moves** from `%LOCALAPPDATA%\devstribution` to
+     `%LOCALAPPDATA%\dev.devstribution.launcher\data` on first start, and the installed apps
+     still run.
+   - **App environments still build behind your company network**: uv now runs with
+     `--no-config`, a cleaned environment and `--system-certs`.
+   - **A real run through the app panel**, Excel file and all, plus the colours and Settings.
+3. **Repack your real app** (`ricon.dsapp`) with the new CLI. `pack` now applies the same checks
+   as the launcher:
+   - wheels from PyPI only, with hashes;
+   - stricter file names;
+   - version numbers made of digits only.
 
-1. Double-click a `.dsapp` (the launcher receives it as an argument). The confirmation screen
-   shows the verified publisher key, the origin and the permissions.
-2. Install: files verified and moved into place, the Python environment created by uv from the
-   lockfile, the publisher key pinned (trust on first use).
-3. App page: the form is generated from the manifest and prefilled from the last run; the
-   native file picker works.
-4. ▶ Run: live progress, Cancel, then "Open result" / "Show in folder". Errors are shown in plain
-   words. Every run is recorded (Runs page, dashboard).
-5. Repair, uninstall, secrets in the system credential store, refusals (another key for the same
-   namespace, downgrade, same version with different content).
+   Fix what it reports and give it a new version number, then reinstall it. The same version with
+   different content is refused, so bump the version or uninstall the old one first.
+4. **Build the installer:** `npx tauri build` in `launcher/`. Then check:
+   - the per-user NSIS installer, which no longer builds an MSI;
+   - double-clicking a `.dsapp`, and a second double-click while the launcher is open;
+   - a `.dsapp` downloaded with a browser shows "Downloaded from the internet";
+   - uninstalling with "delete app data" removes the data folder and the apps' secrets in
+     Credential Manager (`devstribution.exe --forget-secrets`, run by `windows/hooks.nsh`).
+5. **Apply for signing:** SignPath Foundation (free for open source), with Certum's open-source
+   certificate as the fallback. Then sign in CI ([`roadmap.md`](roadmap.md), step 3).
+6. **Phase 0 of [`plan.md`](plan.md):** install and run on a locked-down company PC
+   (AppLocker/WDAC).
 
-Screenshots: `docs/images/`. The UI also runs in a plain browser with demo data
-(`npm run dev` in `launcher/`, then open http://localhost:5173), which is handy for design work.
-
-## Layout
-
-| Path | What |
-|---|---|
-| `crates/devstribution-core` | Package format: manifest, `FILES.sha256`, signatures, packing, safe extraction, lockfile checks |
-| `crates/devstribution-host` | Install store, uv environments, supervised runs (Job Object on Windows), history, secrets |
-| `crates/devstribution-cli` | `devstribution init / dev / pack / keygen / verify` |
-| `runner/` | Stdlib-only Python runner started by the launcher; protocol in `devstribution_runner/_runner.py` |
-| `launcher/` | Tauri app: `src/` (TypeScript UI, no framework), `src-tauri/` (Rust commands over the host crate) |
-| `examples/` | `excel-report` (form), `hello-gui` (gui, tkinter) |
+GitHub settings only you can change: turn on private vulnerability reporting
+(`SECURITY.md` points to it), and merge or close Dependabot's weekly PRs.
 
 ## Setting up on Windows
 
-Prerequisites: Rust (rustup, MSVC toolchain), Node 20.19+ or 22.12+ (Vite 8), uv, and the Visual Studio C++ build
-tools. WebView2 is already part of Windows 10/11.
+Prerequisites:
+- Rust (rustup, MSVC toolchain), 1.90 or newer;
+- Node 20.19+ or 22.12+;
+- uv;
+- the Visual Studio C++ build tools.
+
+WebView2 is part of Windows 10/11.
 
 ```powershell
+git checkout main
+git pull
+
 cargo test                                   # core, host (needs uv on PATH), CLI
 python -m unittest discover -s runner/tests  # runner protocol and code checks
 
 cd launcher
-npm ci
+npm ci                                       # after every pull that changes package-lock.json
 npm run sidecar                              # downloads the pinned uv (uv-pin.json), checks its sha256
-                                             # offline: npm run sidecar -- --from-path (copies your uv)
 npx tauri dev                                # launcher with hot reload
+npx tauri build                              # release build + installer (target\release\bundle\nsis)
 ```
+
+A local file such as `launcher/src-tauri/Cargo.toml` changed by hand blocks `git pull`. Run
+`git diff <file>`, then `git restore <file>` if `main` already has the change.
 
 Try it end to end:
 
@@ -56,51 +78,45 @@ cargo run -p devstribution-cli -- pack examples/excel-report -o excel-report.dsa
 # then drop excel-report.dsapp on the launcher window, or use "Install app"
 ```
 
-Set `DEVSTRIBUTION_HOME` to a scratch folder to keep test installs out of the real data folder,
-`%LOCALAPPDATA%\dev.devstribution.launcher\data` (launchers before the security review used
-`%LOCALAPPDATA%\devstribution`; the new launcher moves that data on first start).
+Set `DEVSTRIBUTION_HOME` to a scratch folder to keep test installs out of the real data folder.
 
-### About the conda environment
+**Development builds and release builds find uv differently:**
+- A **release** launcher uses only the uv next to its executable, the one `npm run sidecar`
+  fetched.
+- A **development** build also accepts `DEVSTRIBUTION_UV`, or `uv` on PATH.
 
-Fine for tooling (running the runner tests, Python scripts). It does not leak into apps: the
-host runs uv with `UV_PYTHON_PREFERENCE=only-managed`, so app environments are always built on
-uv's own Python builds, and the runner starts Python with `-I` (ignores `PYTHONPATH` and user
-site-packages). Two things to watch:
+**The conda environment** is fine for tooling. It doesn't leak into apps: installed apps get uv's
+own Python (`--managed-python`), with conda's variables removed from the environment, and the
+runner starts Python with `-I`. Run `cargo test` from a shell where `uv` is on PATH.
 
-- Run `cargo test` from a shell where `uv` is on PATH (`conda install -c conda-forge uv` works).
-- `devstribution dev`'s code check runs `uv run --no-project python`, which may pick conda's
-  Python; harmless (it only parses the app's code with `ast`).
+## Layout
 
-## Verified here vs. still to verify on Windows
+| Path | What |
+|---|---|
+| `crates/devstribution-core` | Package format: manifest, `FILES.sha256`, signatures and fingerprints, packing, safe extraction, lockfile checks (`lock::check_sources` is the install gate) |
+| `crates/devstribution-host` | Install store (pins, anti-downgrade, `admit`), uv environments (hardened `uv::sync`), supervised runs (Job Object), runner, history, secrets, data folder |
+| `crates/devstribution-cli` | `devstribution init / dev / pack / keygen / verify` |
+| `runner/` | Stdlib-only Python runner started by the launcher; protocol in `devstribution_runner/_runner.py` |
+| `launcher/src` | TypeScript UI, no framework. `style.css` holds the design tokens, documented in [`design.md`](design.md); `look.ts` handles the theme and colour choices. |
+| `launcher/src-tauri` | Rust commands over the host crate, `capabilities/` (what the window may call), `build.rs` (command list, DLL load flag), `windows/hooks.nsh` (uninstaller), icons |
+| `examples/` | `excel-report` (form), `hello-gui` (gui, tkinter) |
+| `docs/` | `plan.md` (design), `roadmap.md` (to 1.0), `format.md` (package spec), `security.md` (threat model, review), `design.md` (look), `report.md` (Windows findings), `status_quo.md` |
 
-Compiled and linted for `x86_64-pc-windows-msvc` from Linux, but **never run on Windows**:
+## Things to know before changing code
 
-- Job Object (kill the whole process tree on Cancel/timeout/launcher exit), `CREATE_NO_WINDOW`.
-- `track_com` and COM server cleanup (needs Excel; use `DispatchEx`).
-- Mark-of-the-Web origin on the confirmation screen (download a `.dsapp` with a browser).
-- File association and single instance (needs the installer: `npx tauri build`).
-- `pythonw.exe` for `gui` apps; secrets in Credential Manager.
+- **Format 1** is specified in [`format.md`](format.md). It was amended once before any release.
+  From the first signed launcher on, a change a format-1 launcher can't read needs
+  `schema_version = 2`. The frozen package in `crates/devstribution-core/tests/fixtures/format-1/`
+  must keep verifying.
+- **Security-relevant changes** (extraction, verification, install, uv invocation, runs, launcher
+  commands, CSP, capabilities) get a line in [`security.md`](security.md). Repeat the review before
+  each release that touches them.
+- **A new launcher command** goes in three places:
+  - `generate_handler!` in `lib.rs`;
+  - `COMMANDS` in `build.rs`;
+  - an `allow-<name>` line in `capabilities/default.json`.
 
-Phase 0 of `docs/plan.md` (the locked-down PC with AppLocker/WDAC) is still the first real-world
-test to run.
-
-## Next steps, in order
-
-1. Run the steps above on Windows and fix what breaks; CI (`.github/workflows/ci.yml`) already
-   builds and lints everything on Windows, macOS and Linux once a PR is open.
-2. ~~Release build of the sidecar~~: done, `npm run sidecar` downloads the uv pinned in
-   `launcher/uv-pin.json` and checks its sha256; `tauri build` runs it.
-3. Installer: `npx tauri build` (NSIS, per-user), then signing (SignPath).
-4. Phase 2 of the plan: managed mode (HKLM policy), catalog and GitHub namespace verification,
-   `devstribution://` links, revocation.
-5. Remaining app kinds (`web`, `background`) and `resources` downloads (refused at install today).
-
-## Known gaps (POC)
-
-- Runs are not sandboxed beyond the Job Object; trust is in the publisher (see the plan).
-- No signature enforcement policy yet beyond pinning: a new namespace is accepted after the user
-  confirms, as the plan's free mode describes.
-- The runner is written to the data folder on first start rather than shipped in the install
-  folder (fine per-user; per-machine mode needs it in Program Files).
-- No automated UI tests; the UI was checked with screenshots against the mock backend and the
-  real launcher.
+  The window can't call it otherwise.
+- **Icons:** the Windows icons are rendered at each exact size from `src/logo-small.svg`. Don't let
+  `tauri icon` overwrite them (see [`design.md`](design.md), "Logo").
+- **CI:** actions are pinned by commit SHA. Update them through Dependabot, not by hand to a tag.
