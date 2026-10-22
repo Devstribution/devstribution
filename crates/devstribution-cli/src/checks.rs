@@ -8,7 +8,8 @@ use std::process::Stdio;
 use anyhow::{Context, Result, bail};
 use devstribution_core::lock::check_lock;
 use devstribution_core::manifest::Manifest;
-use devstribution_core::package::{PYPROJECT, UV_LOCK};
+use devstribution_core::package::{self, PYPROJECT, UV_LOCK};
+use devstribution_core::scan::{self, Severity};
 use serde_json::{Value, json};
 
 pub struct Checked {
@@ -48,6 +49,7 @@ pub fn check_app(app_dir: &Path, runner_dir: &Path) -> Result<Checked> {
     let code = check_code(app_dir, runner_dir, &manifest)?;
     errors.extend(code.0);
     warnings.extend(code.1);
+    warnings.extend(scan_warnings(app_dir, &manifest)?);
 
     if !errors.is_empty() {
         print_warnings(&warnings);
@@ -59,6 +61,29 @@ pub fn check_app(app_dir: &Path, runner_dir: &Path) -> Result<Checked> {
         );
     }
     Ok(Checked { manifest, warnings })
+}
+
+/// The code scan's findings that users will see as warnings or worse when they install.
+fn scan_warnings(app_dir: &Path, manifest: &Manifest) -> Result<Vec<String>> {
+    let files = package::collect_app_files(app_dir)?;
+    let report = scan::scan(
+        app_dir,
+        files.files.keys().map(String::as_str),
+        &manifest.permissions,
+    );
+    Ok(report
+        .findings
+        .iter()
+        .filter(|f| f.severity >= Severity::Warning)
+        .map(|f| {
+            format!(
+                "code scan ({}): {}: {}",
+                f.severity.as_str(),
+                crate::scan::location(f),
+                f.message
+            )
+        })
+        .collect())
 }
 
 /// Static checks of the Python code (`check_app.py`), run with any Python uv finds.

@@ -615,6 +615,8 @@ kbd { font: inherit; font-size: var(--fs-xs); border: 1px solid var(--border-str
 .perm-list { display: flex; flex-direction: column; gap: 10px; }
 .perm { display: flex; gap: var(--sp-3); align-items: flex-start; }
 .perm .pi { width: 34px; height: 34px; border-radius: var(--r-sm); display: grid; place-items: center; background: var(--surface-2); color: var(--text-2); flex: none; }
+.perm .pi.warning { background: var(--warning); color: var(--on-warning); }
+.perm .pi.danger { background: var(--danger); color: var(--on-danger); }
 .perm .pt { font-weight: var(--fw-bold); font-size: var(--fs-sm); }
 .perm .ps { font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; }
 .secret-row { display: flex; align-items: center; gap: 10px; padding: 10px var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-md); }

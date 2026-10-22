@@ -5,6 +5,7 @@ mod dev;
 mod env;
 mod init;
 mod keys;
+mod scan;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -80,6 +81,16 @@ enum Command {
         #[arg(long)]
         no_password: bool,
     },
+    /// Scan an app folder or a .dsapp for code worth a second look (network, programs, hidden
+    /// code, malware-like behaviour). Exits with 1 when something looks like malware
+    Scan {
+        /// App folder or .dsapp file (default: current folder)
+        #[arg(default_value = ".")]
+        target: PathBuf,
+        /// Print the findings as JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Check a .dsapp file: structure, hashes and (with --key) the publisher's signature
     Verify {
         file: PathBuf,
@@ -116,6 +127,7 @@ fn main() -> ExitCode {
             dir,
             no_password,
         } => keys::keygen(&namespace, dir, no_password).map(|_| 0),
+        Command::Scan { target, json } => scan::scan(&target, json),
         Command::Verify { file, key } => keys::verify(&file, key).map(|_| 0),
     };
     match result {

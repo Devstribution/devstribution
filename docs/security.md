@@ -30,6 +30,7 @@ apps, within the limits listed below.
 | Package or run data running script in the launcher window | Everything reaches the page as text; no `innerHTML` with data; strict CSP (`script-src 'self'`, no objects, frames, forms or base URL); icons only as `data:` images. |
 | The launcher window being used to do more than the launcher needs | The window may call only the launcher's own commands, event listening, the file picker and yes/no questions (no `core:default`). The backend checks every argument (ids, run ids, secret names, paths). |
 | A DLL planted next to the signed launcher (Windows) | Imported DLLs load from System32 only (`/DEPENDENTLOADFLAG`), others never from the current folder or PATH (`SetDefaultDllDirectories`). The launcher's data is kept out of its install folder. |
+| An app whose code does more than it declares, or hides what it does | Before the install button, the code scan lists what the code uses and flags undeclared network or SAP use, programs and compiled files that cannot be reviewed, code built at run time, and what is typical of malware (decode-and-run, start-with-Windows entries, browser password stores, antivirus switches, process injection, hidden text-direction characters). A red banner and "Install anyway" when something looks like malware. The scan reads, never runs, the code; see limit 2. |
 | A downloaded package without a warning | Mark-of-the-Web is read (also UTF-16); a mark that cannot be understood counts as "from the internet". |
 | A tampered CI pipeline (once it signs releases) | Actions pinned to commit SHAs, read-only token, `cargo audit` and `npm audit` on every change, Dependabot updates. |
 
@@ -52,7 +53,9 @@ These are deliberate limits of the current design. Each one says why, and what w
 2. **Apps are not sandboxed.** The permissions shown at install (internet, files, secrets, SAP) are
    what the publisher *declares*. Nothing yet stops an app from doing more: it runs with the user's
    rights. Trust in the publisher is the protection, which is why the confirmation screen is
-   explicit about new publishers. Planned: the IT review kit ([`plan.md`](plan.md)), then
+   explicit about new publishers. The code scan shown there is a static reading of the package's
+   own Python files: it does not read dependencies, and code that builds names or downloads code
+   at run time can get past it. It is a prompt to ask questions, not a verdict. Planned: the IT review kit ([`plan.md`](plan.md)), then
    enforcement (AppContainer, per-app firewall rules) where the cost is reasonable.
 3. **Trust on first use.** Outside managed mode, whoever first installs a namespace on a PC pins its
    key, and the name is marked "unverified". Catalog and GitHub-source verification (Phase 2)

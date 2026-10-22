@@ -93,9 +93,9 @@ runner starts Python with `-I`. Run `cargo test` from a shell where `uv` is on P
 
 | Path | What |
 |---|---|
-| `crates/devstribution-core` | Package format: manifest, `FILES.sha256`, signatures and fingerprints, packing, safe extraction, lockfile checks (`lock::check_sources` is the install gate) |
+| `crates/devstribution-core` | Package format: manifest, `FILES.sha256`, signatures and fingerprints, packing, safe extraction, lockfile checks (`lock::check_sources` is the install gate), the code scan (`scan`) |
 | `crates/devstribution-host` | Install store (pins, anti-downgrade, `admit`), uv environments (hardened `uv::sync`), supervised runs (Job Object), runner, history, secrets, data folder |
-| `crates/devstribution-cli` | `devstribution init / dev / pack / keygen / verify` |
+| `crates/devstribution-cli` | `devstribution init / dev / pack / keygen / verify / scan` |
 | `runner/` | Stdlib-only Python runner started by the launcher; protocol in `devstribution_runner/_runner.py` |
 | `launcher/src` | TypeScript UI, no framework. `style.css` holds the design tokens, documented in [`design.md`](design.md); `look.ts` handles the theme and colour choices. |
 | `launcher/src-tauri` | Rust commands over the host crate, `capabilities/` (what the window may call), `build.rs` (command list, DLL load flag), `windows/hooks.nsh` (uninstaller), icons |
@@ -119,4 +119,7 @@ runner starts Python with `-I`. Run `cargo test` from a shell where `uv` is on P
   The window can't call it otherwise.
 - **Icons:** the Windows icons are rendered at each exact size from `src/logo-small.svg`. Don't let
   `tauri icon` overwrite them (see [`design.md`](design.md), "Logo").
+- **The code scan** (`crates/devstribution-core/src/scan.rs`) is one rule table used by `pack`,
+  `devstribution scan` and the install screen. A new rule needs a test that an ordinary app stays
+  clean (`ordinary_app_is_clean`): every false alarm teaches users to ignore the screen.
 - **CI:** actions are pinned by commit SHA. Update them through Dependabot, not by hand to a tag.

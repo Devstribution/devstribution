@@ -28,6 +28,7 @@ safe choice).
 |---|---|---|---|
 | 1 | **`pack` has no way to leave out a folder.** `app_1/output/` holds client data (Excel, SQLite, diagnostic zips) and would have been packed and signed. Worked around by packing a clean copy; a `[tool.devstribution] exclude = [...]` list (or honouring `.gitignore`) is needed. | `crates/devstribution-core/src/package.rs` (`EXCLUDED_DIRS`) | Fixed |
 | 2 | **Stateful apps don't fit the per-run output folder.** The app keeps its Excel di lavoro, archive and database between runs, so it writes to a folder the user picks; `file` outputs must be inside `ctx.output_dir`, so the result can only be shown as text, without an "Open result" button. An output type for "a folder the user chose" would fix it. | `runner/devstribution_runner/_runner.py:277` | Open |
+| 4 | **The code scan's first real run flagged `socket` in three files** without declared network access. They only call `socket.gethostname()` for the diagnostics. The scanner now counts `socket` only when another member is used. | `crates/devstribution-core/src/scan.rs` (`SOFT_MODULES`) | Fixed; test `harmless_socket_use_is_not_network` |
 | 3 | No cooperative cancellation: the app never calls `ctx.progress()`, so Cancel relies on the 3 s `KeyboardInterrupt` fallback. Fine to test the fallback with. | `app_1/main.py` | Note |
 
 ## Setup and docs
