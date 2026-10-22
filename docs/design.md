@@ -68,7 +68,7 @@ Each status has three tokens:
 | Status | Fill | Text on fill | Words on surface (light / dark) | Means |
 |---|---|---|---|---|
 | success | `#15803d` | white | `#15803d` / `#4ade80` | Done, signature verified |
-| warning | `#f59e0b` | black | `#b45309` / `#fbbf24` | New publisher, preview build |
+| warning | `#facc15` | black | `#b45309` / `#fbbf24` | New publisher, preview build |
 | danger | `#b91c1c` (dark `#dc2626`) | white | `#b91c1c` / `#f87171` | Didn't work, can't install |
 | info | `#1d4ed8` (dark `#2563eb`) | white | `#1d4ed8` / `#60a5fa` | Downloaded from the internet |
 
@@ -83,7 +83,7 @@ blindness can tell apart:
 `--app-1` to `--app-8` are the tile colours for apps without their own icon. Each app always gets
 the same one, picked by hashing its id:
 
-`#2563eb` `#7c3aed` `#0e9f6e` `#ea580c` `#db2777` `#0891b2` `#4f46e5` `#ca8a04`
+`#2563eb` `#7c3aed` `#0e9f6e` `#ea580c` `#db2777` `#0891b2` `#4f46e5` `#f59e0b`
 
 They always carry white text. The launcher's chrome never uses them.
 
