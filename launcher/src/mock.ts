@@ -368,7 +368,7 @@ export function mockApi(): Api {
       };
     },
     async takePendingFiles() { return []; },
-    async onRunEvent(cb) { const l: Listener<[string, RunEvent]> = ([id, e]) => cb(id, e); runListeners.push(l); return off(runListeners, l); },
+    async onRunEvents(cb) { const l: Listener<[string, RunEvent]> = ([id, e]) => cb(id, [e]); runListeners.push(l); return off(runListeners, l); },
     async onInstallStep(cb) { stepListeners.push(cb); return off(stepListeners, cb); },
     async onRunsChanged(cb) { changed.push(cb); return off(changed, cb); },
     async onOpenFiles() { return () => {}; },

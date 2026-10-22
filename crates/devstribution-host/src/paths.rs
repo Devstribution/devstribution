@@ -1,9 +1,17 @@
-//! The local folders (`%LOCALAPPDATA%\devstribution\` on Windows).
+//! The local folders (`%LOCALAPPDATA%\dev.devstribution.launcher\data\` on Windows).
 
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use devstribution_core::manifest::AppId;
+
+/// The launcher's bundle identifier (`tauri.conf.json`).
+pub const BUNDLE_ID: &str = "dev.devstribution.launcher";
+
+/// The folders the data folder holds, as the first launchers created them.
+const OLD_FOLDERS: &[&str] = &[
+    "apps", "envs", "runs", "staging", "state", "cache", "runner", "dev-envs",
+];
 
 #[derive(Debug, Clone)]
 pub struct Paths {
@@ -11,15 +19,48 @@ pub struct Paths {
 }
 
 impl Paths {
-    /// `DEVSTRIBUTION_HOME` if set (tests, CI, portable use), else the user's local data folder.
+    /// `DEVSTRIBUTION_HOME` if set (tests, CI, portable use), else `data` in the launcher's
+    /// own local data folder (named after its bundle id).
+    ///
+    /// Not `%LOCALAPPDATA%\devstribution`: that is where the per-user installer puts the
+    /// launcher's program files, and data must not sit next to the signed executables. The
+    /// bundle-id folder is also the one the uninstaller removes when asked to delete app data.
     pub fn from_env() -> Result<Paths> {
         let root = match std::env::var_os("DEVSTRIBUTION_HOME") {
             Some(home) => PathBuf::from(home),
             None => dirs::data_local_dir()
                 .context("cannot find the local data folder")?
-                .join("devstribution"),
+                .join(BUNDLE_ID)
+                .join("data"),
         };
         Ok(Paths { root })
+    }
+
+    /// Moves the data of launchers before 0.2 (`%LOCALAPPDATA%\devstribution\…`) to `self`,
+    /// once, when `self` has none yet.
+    pub fn migrate_old_location(&self) -> Result<()> {
+        let Some(old) = dirs::data_local_dir().map(|d| d.join("devstribution")) else {
+            return Ok(());
+        };
+        if old == self.root
+            || !old.join("state").join("state.json").is_file()
+            || self.root.join("state").join("state.json").exists()
+        {
+            return Ok(());
+        }
+        std::fs::create_dir_all(&self.root)?;
+        for name in OLD_FOLDERS {
+            let from = old.join(name);
+            if from.is_dir() {
+                let to = self.root.join(name);
+                if to.exists() {
+                    std::fs::remove_dir_all(&to)?;
+                }
+                std::fs::rename(&from, &to)
+                    .with_context(|| format!("moving {} to {}", from.display(), to.display()))?;
+            }
+        }
+        Ok(())
     }
 
     /// Extracted, verified app code: `apps\<namespace>\<app>\<content-hash>\`.

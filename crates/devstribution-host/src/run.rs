@@ -278,10 +278,11 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
                     // user's and have the launcher end it.
                     Some("com_process") => {
                         let created = msg["created"].as_u64();
-                        if let (Some(pid), Some(c)) = (msg["pid"].as_u64(), created) {
-                            if u32::try_from(pid).is_ok() && c + 20_000_000 >= run_start {
-                                com.lock().unwrap().push((pid as u32, created));
-                            }
+                        if let (Some(pid), Some(c)) = (msg["pid"].as_u64(), created)
+                            && u32::try_from(pid).is_ok()
+                            && c + 20_000_000 >= run_start
+                        {
+                            com.lock().unwrap().push((pid as u32, created));
                         }
                     }
                     Some("result") => *result_msg.lock().unwrap() = Some(msg),

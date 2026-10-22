@@ -228,13 +228,13 @@ impl Manifest {
         let project = raw
             .project
             .ok_or_else(|| bad("missing the [project] table".into()))?;
-        if let Some(dynamic) = &project.dynamic {
-            if !dynamic.is_empty() {
-                return Err(bad(format!(
-                    "[project].dynamic = {dynamic:?}: dynamic metadata needs a build step; \
+        if let Some(dynamic) = &project.dynamic
+            && !dynamic.is_empty()
+        {
+            return Err(bad(format!(
+                "[project].dynamic = {dynamic:?}: dynamic metadata needs a build step; \
                      write the values directly"
-                )));
-            }
+            )));
         }
         let name = project
             .name
@@ -507,10 +507,10 @@ impl FromStr for Entry {
         if module.is_empty() || !module.split('.').all(is_identifier) {
             return Err(format!("`{s}`: `{module}` is not a module name"));
         }
-        if let Some(f) = function {
-            if !is_identifier(f) {
-                return Err(format!("`{s}`: `{f}` is not a function name"));
-            }
+        if let Some(f) = function
+            && !is_identifier(f)
+        {
+            return Err(format!("`{s}`: `{f}` is not a function name"));
         }
         Ok(Entry {
             module: module.into(),

@@ -110,10 +110,10 @@ fn ignore_rules(app_dir: &Path) -> Result<ignore::gitignore::Gitignore> {
     let mut builder = ignore::gitignore::GitignoreBuilder::new(app_dir);
     for name in [GITIGNORE, IGNORE_FILE] {
         let path = app_dir.join(name);
-        if path.is_file() {
-            if let Some(e) = builder.add(&path) {
-                return Err(Error::Package(format!("{name}: {e}")));
-            }
+        if path.is_file()
+            && let Some(e) = builder.add(&path)
+        {
+            return Err(Error::Package(format!("{name}: {e}")));
         }
     }
     builder
@@ -240,13 +240,13 @@ pub fn check_app_files(app: &AppFiles, manifest: &Manifest) -> Result<()> {
             entry_files(&manifest.entry.module)[0]
         )));
     }
-    if let Some(icon) = &manifest.icon {
-        if !app.files.contains_key(icon) {
-            return Err(Error::Manifest(format!(
-                "icon `{icon}` is not in the package (missing, or left out by .gitignore or \
+    if let Some(icon) = &manifest.icon
+        && !app.files.contains_key(icon)
+    {
+        return Err(Error::Manifest(format!(
+            "icon `{icon}` is not in the package (missing, or left out by .gitignore or \
                  {IGNORE_FILE})"
-            )));
-        }
+        )));
     }
     Ok(())
 }
@@ -432,7 +432,10 @@ fn extract_inner(package: &Path, dest: &Path, opts: &VerifyOptions) -> Result<Ve
         let mut entry = archive
             .by_index(i)
             .map_err(|e| refuse(format!("corrupt entry: {e}")))?;
-        let name = entry.name().to_owned();
+        let name = entry
+            .name()
+            .map_err(|e| refuse(format!("an entry name cannot be read: {e}")))?
+            .into_owned();
         let is_dir = name.ends_with('/');
         let path = name.strip_suffix('/').unwrap_or(&name);
         validate_relative_path(path).map_err(refuse)?;
@@ -607,12 +610,12 @@ fn extract_inner(package: &Path, dest: &Path, opts: &VerifyOptions) -> Result<Ve
             manifest.entry.module
         )));
     }
-    if let Some(icon) = &manifest.icon {
-        if list.get(icon).is_none() {
-            return Err(Error::Manifest(format!(
-                "icon `{icon}` is not in the package"
-            )));
-        }
+    if let Some(icon) = &manifest.icon
+        && list.get(icon).is_none()
+    {
+        return Err(Error::Manifest(format!(
+            "icon `{icon}` is not in the package"
+        )));
     }
 
     Ok(VerifiedPackage {
@@ -747,7 +750,7 @@ source = { virtual = "." }
         let mut zip = ZipWriter::new(fs::File::create(dst).unwrap());
         for i in 0..archive.len() {
             let mut entry = archive.by_index(i).unwrap();
-            let name = entry.name().to_owned();
+            let name = entry.name().unwrap().into_owned();
             let mut data = Vec::new();
             entry.read_to_end(&mut data).unwrap();
             for (n, d) in edit(&name, data) {

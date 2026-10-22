@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-repair-app"
+description = "Enables the repair_app command without any pre-configured scope."
+commands.allow = ["repair_app"]
+
+[[permission]]
+identifier = "deny-repair-app"
+description = "Denies the repair_app command without any pre-configured scope."
+commands.deny = ["repair_app"]

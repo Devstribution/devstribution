@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-discard-install"
+description = "Enables the discard_install command without any pre-configured scope."
+commands.allow = ["discard_install"]
+
+[[permission]]
+identifier = "deny-discard-install"
+description = "Denies the discard_install command without any pre-configured scope."
+commands.deny = ["discard_install"]

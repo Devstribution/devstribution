@@ -158,6 +158,7 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
 
     // ---------- run state ----------
     const stateBox = h("div");
+    let live: { title: HTMLElement; elapsed: HTMLElement; pct: HTMLElement; cancel: HTMLElement; bar: HTMLElement } | null = null;
     const logBox = h("div", { class: "log" });
     const runButton = h("button", { class: "btn primary big" });
     runButton.addEventListener("click", async () => {
@@ -186,16 +187,30 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
       if (running) {
         const r = run;
         const pct = r.progress === null ? null : Math.round(r.progress * 100);
-        const elapsed = h("span", null, duration(Date.now() - r.startedAt));
-        timer = window.setInterval(() => { elapsed.textContent = duration(Date.now() - r.startedAt); }, 1000);
-        clear(stateBox, h("div", { class: "state-box" },
-          h("div", { class: "row" },
-            h("div", { class: "grow" }, h("strong", null, r.cancelling ? "Stopping…" : r.message || "Running"),
-              h("div", { class: "sub" }, elapsed, pct === null ? "" : ` · ${pct}%`)),
-            h("button", { class: "btn small", disabled: r.cancelling, onclick: () => ctx.api.cancelRun(r.runId) }, icon(Square, 13), isForm ? "Cancel" : "Stop")),
-          h("div", { class: `progress ${pct === null ? "indeterminate" : ""}` }, h("div", { class: "fill", style: `width:${pct ?? 0}%` }))));
+        // Built once per run and then only updated: a Cancel button replaced between the
+        // press and the release of a click would never receive it.
+        if (stateBox.dataset.run !== r.runId) {
+          stateBox.dataset.run = r.runId;
+          live = {
+            title: h("strong"), elapsed: h("span"), pct: h("span"),
+            cancel: h("button", { class: "btn small", onclick: () => ctx.api.cancelRun(r.runId) }, icon(Square, 13), isForm ? "Cancel" : "Stop"),
+            bar: h("div", { class: "progress" }, h("div", { class: "fill" })),
+          };
+          clear(stateBox, h("div", { class: "state-box" },
+            h("div", { class: "row" }, h("div", { class: "grow" }, live.title, h("div", { class: "sub" }, live.elapsed, live.pct)), live.cancel),
+            live.bar));
+        }
+        const v = live!;
+        v.title.textContent = r.cancelling ? "Stopping…" : r.message || "Running";
+        v.elapsed.textContent = duration(Date.now() - r.startedAt);
+        v.pct.textContent = pct === null ? "" : ` · ${pct}%`;
+        (v.cancel as HTMLButtonElement).disabled = r.cancelling;
+        v.bar.classList.toggle("indeterminate", pct === null);
+        (v.bar.firstElementChild as HTMLElement).style.width = `${pct ?? 0}%`;
+        timer = window.setInterval(() => { v.elapsed.textContent = duration(Date.now() - r.startedAt); }, 1000);
         return;
       }
+      delete stateBox.dataset.run;
       const res = run.result!;
       const outputs = app.outputs.map((o) => {
         const value = res.outputs[o.name];
@@ -311,13 +326,20 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
       h("div", { class: "panel-foot" }, runButton, menuWrap));
 
     draw();
+    // At most one redraw per frame, however many events arrive.
+    let frame = 0;
+    disposers.push(() => cancelAnimationFrame(frame));
     disposers.push(ctx.onLive((r) => {
       if (r.appId !== app.id) return;
       if (!run || r.runId === run.runId || r.startedAt > run.startedAt) {
-        const justFinished = !!r.result && !stateBox.querySelector(".state-box.ok, .state-box.error");
         run = r;
-        draw();
-        if (justFinished) stateBox.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        if (frame) return;
+        frame = requestAnimationFrame(() => {
+          frame = 0;
+          const justFinished = !!run?.result && !stateBox.querySelector(".state-box.ok, .state-box.error");
+          draw();
+          if (justFinished) stateBox.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        });
       }
     }));
     panel.tabIndex = -1;

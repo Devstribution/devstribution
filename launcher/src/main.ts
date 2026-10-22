@@ -76,19 +76,21 @@ async function boot() {
   const live = new Map<string, LiveRun>();
   const liveListeners = new Set<(r: LiveRun) => void>();
   let openPanel: { appId: string; close: () => void } | null = null;
-  await api.onRunEvent((runId, e: RunEvent) => {
+  await api.onRunEvents((runId, events: RunEvent[]) => {
     const r = live.get(runId);
     if (!r) return;
-    if (e.type === "progress") { r.progress = e.value; r.message = e.message; }
-    else if (e.type === "log") r.lines.push({ level: e.level, text: e.message });
-    else if (e.type === "output") r.lines.push({ level: "output", text: e.line });
-    else if (e.type === "cancelling") r.cancelling = true;
-    else if (e.type === "finished") {
-      r.result = e.result;
-      // Its panel shows the result; otherwise say so, wherever the user is.
-      if (openPanel?.appId !== r.appId) {
-        const msg = { ok: `${r.appTitle} finished`, error: `${r.appTitle} didn’t work`, cancelled: `${r.appTitle} was cancelled`, running: "" }[e.result.status];
-        toast(msg, e.result.status === "ok" ? "ok" : e.result.status === "error" ? "error" : "info", { label: "Open", run: () => ctx.openApp(r.appId) });
+    for (const e of events) {
+      if (e.type === "progress") { r.progress = e.value; r.message = e.message; }
+      else if (e.type === "log") r.lines.push({ level: e.level, text: e.message });
+      else if (e.type === "output") r.lines.push({ level: "output", text: e.line });
+      else if (e.type === "cancelling") r.cancelling = true;
+      else if (e.type === "finished") {
+        r.result = e.result;
+        // Its panel shows the result; otherwise say so, wherever the user is.
+        if (openPanel?.appId !== r.appId) {
+          const msg = { ok: `${r.appTitle} finished`, error: `${r.appTitle} didn’t work`, cancelled: `${r.appTitle} was cancelled`, running: "" }[e.result.status];
+          toast(msg, e.result.status === "ok" ? "ok" : e.result.status === "error" ? "error" : "info", { label: "Open", run: () => ctx.openApp(r.appId) });
+        }
       }
     }
     if (r.lines.length > 2000) r.lines.splice(0, r.lines.length - 2000);
