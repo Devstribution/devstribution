@@ -209,10 +209,10 @@ export async function appView(ctx: Ctx, id: string): Promise<Rendered> {
         const rows = value as unknown[];
         const cols = rows.length && typeof rows[0] === "object" && !Array.isArray(rows[0]) ? Object.keys(rows[0] as object) : [];
         return h("div", { class: "output-text" }, h("div", { class: "label" }, o.label ?? o.name),
-          h("table", { class: "table", style: "margin-top:8px" },
+          h("div", { class: "table-scroll" }, h("table", { class: "table" },
             cols.length ? h("thead", null, h("tr", null, cols.map((c) => h("th", null, c)))) : null,
             h("tbody", null, rows.slice(0, 50).map((row) => h("tr", null,
-              (cols.length ? cols.map((c) => (row as Record<string, unknown>)[c]) : (row as unknown[])).map((cell) => h("td", null, String(cell ?? ""))))))));
+              (cols.length ? cols.map((c) => (row as Record<string, unknown>)[c]) : (row as unknown[])).map((cell) => h("td", null, String(cell ?? "")))))))));
       }
       return h("div", { class: "output-text" }, h("div", { class: "label" }, o.label ?? o.name), h("div", null, String(value)));
     });
