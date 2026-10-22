@@ -14,7 +14,7 @@ These decide everything else in this plan; when a choice is unclear, they are th
 **The promise.** Nothing is bulletproof, and like with a bank or a password manager, using it means trusting someone. devstribution guarantees that **what you run is exactly what that publisher published, by a publisher whose identity is verified, and that it cannot damage the platform or other apps**. Whether the publisher deserves trust is the user's (or IT's) choice. So a breach can only come from misplaced trust, never from the platform itself. Like a bank, trust comes with remedies: revocation, audit log, publisher reputation in the catalog.
 
 1. **Built to be used.** Easy to set up, easy to use, no technical knowledge needed (see "User experience").
-2. **Safe itself.** The platform never becomes the weak point: no local server, minimal privileges, signatures checked before anything is extracted, an app can never touch the launcher, other apps, the trust settings or the policy.
+2. **Safe itself.** The platform never becomes the weak point: no local server, minimal privileges, nothing from a package used before its signature and every file's hash are checked (extraction goes to a private staging folder first), an app can never touch the launcher, other apps, the trust settings or the policy.
 3. **Contains badly made apps.** Most failures are bugs, not malice; a broken app must fail cleanly and alone (see "Robustness").
 4. **Light.** Small to download, small on disk, nothing running when no app is in use (see "Lightness").
 5. **Local and serverless.** Data stays on the user's PC and the project runs no server; GitHub is the only outside service, and apps received as files keep working without it.
@@ -155,7 +155,7 @@ Principle: **robust for IT, frictionless for everyone else**. One launcher; beha
 
 **Binding author, namespace and key**
 - The app `id` is `<author>/<app>`. The `<author>` part is the **namespace**, and it is the only author identity: the manifest has no self-declared `author` or `key` field, because anything in the manifest is written by the publisher.
-- On verification, the launcher identifies the signing key from the signature itself (minisign key ID), then looks up which namespace that key owns:
+- On verification, the launcher takes the signing key carried in the package (shown to people as a SHA-256 fingerprint; minisign's 8-byte key ID can be chosen by whoever makes a key, so it is never used for trust), then checks which namespace that key owns:
   - **Managed mode**: from the policy / imported `.trust` files (`.trust` = author namespace + public keys).
   - **Free mode**, in order of strength:
     1. **Catalog**: the catalog countersigns that namespace X belongs to the GitHub user/org that owns the source repo.
@@ -181,7 +181,7 @@ Principle: **robust for IT, frictionless for everyone else**. One launcher; beha
 | Launcher updates | Tauri updater plugin (signed updates), can be disabled by IT (distribution via Intune/winget) |
 | Dependencies | The signature covers the manifest + lockfile with hashes; anything outside the lockfile = refused. **Wheels only**: every package in `uv.lock` must have a wheel for the target platform; `devstribution pack` refuses the package otherwise, and installation uses `--no-build`, so no `setup.py` or build backend ever runs. Allowed only in `devstribution dev`. Optional internal mirror from policy |
 | Support | IT-oriented docs, policy dry-run mode, no feature that requires a server |
-| Threat model | One page: threat → what blocks it → what it does NOT cover. Covered: malicious or compromised author, author impersonating another namespace, downgrade to an old vulnerable version, code running at install time, use of the per-machine service to place untrusted code in a WDAC-trusted folder, files swapped between check and install, `devstribution://` links from malicious sites, tampered packages. Not covered: local admin, pre-existing malware, bugs in the code of signed apps |
+| Threat model | One page ([`security.md`](security.md)): threat → what blocks it → what it does NOT cover. Covered: malicious or compromised author, author impersonating another namespace, downgrade to an old vulnerable version, code running at install time, use of the per-machine service to place untrusted code in a WDAC-trusted folder, files swapped between check and install, `devstribution://` links from malicious sites, tampered packages. Not covered: local admin, pre-existing malware, bugs in the code of signed apps |
 
 **Implementation order**: (1) author signatures + namespace binding + free/managed mode + minimal policy, (2) `.trust` and import, (3) revocation, rotation, anti-downgrade, logs, (4) advanced options (ring, mirror, pin).
 
@@ -344,7 +344,7 @@ Several versions of the same app can coexist; the old one is removed after a suc
 
 ### Local folders
 ```
-%LOCALAPPDATA%\devstribution\
+%LOCALAPPDATA%\dev.devstribution.launcher\data\
   apps\<id>\<version-hash>\   # extracted code
   envs\<id>\<version-hash>\   # venv (per-user mode; per-machine mode uses Program Files)
   runs\<timestamp>\           # output and logs per run

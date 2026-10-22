@@ -314,6 +314,17 @@ impl Manifest {
         }
         validate_inputs(&ds.inputs).map_err(bad)?;
         validate_outputs(&ds.outputs).map_err(bad)?;
+        // Secret names become credential-store entry names: keep them plain.
+        if let Some(name) = ds
+            .permissions
+            .secrets
+            .iter()
+            .find(|n| !is_identifier(n) || n.len() > 64)
+        {
+            return Err(bad(format!(
+                "permissions.secrets: `{name}` must be a name of letters, digits and `_`"
+            )));
+        }
 
         Ok(Manifest {
             name,

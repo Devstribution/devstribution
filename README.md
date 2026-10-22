@@ -8,7 +8,8 @@ platform guarantees that what you run is exactly what that publisher published.
 
 **Status: pre-alpha proof of concept.** Not ready for real users yet. The design is in
 [docs/plan.md](docs/plan.md); the launcher's look (palette, type, components) in
-[docs/design.md](docs/design.md).
+[docs/design.md](docs/design.md); the threat model and the security review in
+[docs/security.md](docs/security.md).
 
 ![The launcher: home with recent and most used apps](docs/images/home.png)
 

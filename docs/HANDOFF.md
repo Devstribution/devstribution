@@ -56,8 +56,9 @@ cargo run -p devstribution-cli -- pack examples/excel-report -o excel-report.dsa
 # then drop excel-report.dsapp on the launcher window, or use "Install app"
 ```
 
-Set `DEVSTRIBUTION_HOME` to a scratch folder to keep test installs out of
-`%LOCALAPPDATA%\devstribution`.
+Set `DEVSTRIBUTION_HOME` to a scratch folder to keep test installs out of the real data folder,
+`%LOCALAPPDATA%\dev.devstribution.launcher\data` (launchers before the security review used
+`%LOCALAPPDATA%\devstribution`; the new launcher moves that data on first start).
 
 ### About the conda environment
 

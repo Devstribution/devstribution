@@ -1,0 +1,22 @@
+# Weekly update proposals for the CI actions (pinned by commit), the Rust crates and the
+# launcher's npm packages.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      tauri:
+        patterns: ["tauri*"]
+  - package-ecosystem: npm
+    directory: /launcher
+    schedule:
+      interval: weekly
+    groups:
+      tauri:
+        patterns: ["@tauri-apps/*"]

@@ -20,6 +20,12 @@ fix, and the frozen test package (below) decides which side is wrong.
    that it still verifies with the same files, manifest and content hash. If that test fails, the
    change is wrong, not the fixture.
 
+**Amended once, before any release (2026-10-22).** The pre-signing security review
+([`security.md`](security.md)) found that format 1 as first written let a package do things that
+broke the platform's own guarantees. Format 1 was tightened (the rules below marked *since the
+amendment*) before the first signed launcher; the frozen package still verifies unchanged. The
+promise above applies from the first released launcher on.
+
 What format 1 does *not* promise: that every launcher implements every app kind or field it
 declares. Parts marked *reserved* below are valid format 1, but current launchers refuse them
 (resources at install, the reserved kinds when run), with a message saying so.
@@ -39,9 +45,17 @@ A `.dsapp` file is a zip archive.
 
 Every entry path is relative, uses `/` as separator and is valid UTF-8. Refused: absolute paths,
 `\`, `:`, `.` or `..` components, empty components, control characters, components ending with a
-dot or a space, Windows device names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`,
+dot or a space, Windows device names (`CON`, `PRN`, `AUX`, `NUL`, `COM0`–`COM9`, `LPT0`–`LPT9`,
 with or without an extension), and two paths that differ only by upper/lower case. These rules make
 a package extract identically on Windows, macOS and Linux.
+
+*Since the amendment*, also refused: the characters `< > " | ? *`; invisible formatting
+characters (right-to-left overrides and isolates, zero-width spaces and joiners, the byte-order
+mark), which make a name display as another; the device names `CONIN$`, `CONOUT$` and `COM`/`LPT`
+followed by a superscript digit (`¹ ² ³`); components containing `~` followed by a digit, which
+Windows may treat as the 8.3 short name of another file; and two folders whose names differ only by
+case (`A/x.py` next to `a/y.py`). A file larger than the size limits plus 64 MiB is refused before
+its zip index is read.
 
 ## Reserved files
 
@@ -53,7 +67,7 @@ At the root of the archive:
 | `FILES.sha256.minisig` | The publisher's [minisign](https://jedisct1.github.io/minisign/) signature over the exact bytes of `FILES.sha256`. |
 | `FILES.sha256.pub` | The publisher's minisign public key: a line `untrusted comment: <text>`, then the base64 key. |
 
-No other file may use these names, anywhere.
+No other file may use these names, in any folder.
 
 ### `FILES.sha256`
 
@@ -63,7 +77,8 @@ except the three reserved files, each exactly once. A list in any other form is 
 set of files has exactly one valid list and so one signature.
 
 The **content hash** of a package is the first 8 bytes of the SHA-256 of `FILES.sha256`, in hex. It
-names the folder the version is installed in.
+names the folder the version is installed in. Launchers compare versions by the full SHA-256
+(*since the amendment*): the short form is only a folder name.
 
 ### Signature
 
@@ -75,19 +90,23 @@ devstribution id=<namespace>/<app> version=<version> schema=<n>
 ```
 
 Single spaces, fields in this order, nothing else. Values are written in their one canonical form
-(`version=1.2.0`, not `01.2.0`). The id, version and schema must equal the manifest's.
+(`version=1.2.0`, not `01.2.0`). The id and schema must equal the manifest's, and the version must
+be the *same text* as the manifest's (*since the amendment*: `1.2` and `1.2.0` are equal versions
+but not the same text).
 
 The signature is always checked against `FILES.sha256.pub`. That key is not trusted by itself: the
 first install of a namespace pins it (trust on first use), and later packages of that namespace must
-carry the same key.
+carry the same key. People see a key as its **fingerprint**: the first 16 bytes of the SHA-256 of the
+whole minisign public key (algorithm, key number and Ed25519 key), as 8 groups of 4 uppercase hex
+digits. Not minisign's 8-byte key number, which whoever makes a key can choose freely.
 
 ## Required app files
 
 | File | Rule |
 |---|---|
 | `pyproject.toml` | The manifest (next section). |
-| `uv.lock` | uv lockfile `version = 1`, with the project itself as `source = { virtual = "." }`. Every package installed at run time on a declared platform must be available as a wheel from a package index (installs use `uv sync --frozen --no-build`). |
-| The entry module | `module` or `module:function`, resolved as `<module path>.py` or `<module path>/__init__.py` (`pkg.main` → `pkg/main.py`). |
+| `uv.lock` | uv lockfile `version = 1`, with the project itself as `source = { virtual = "." }`. Every package installed at run time on a declared platform must be available as a wheel from a package index (installs use `uv sync --frozen --no-build`). *Since the amendment*, checked at install: apart from the project itself, every package comes from `registry = "https://pypi.org/simple"`, and every wheel listed is a `https://files.pythonhosted.org/packages/…` URL with a `sha256:` hash. (A company policy will be able to name its own mirror.) |
+| The entry module | `module` or `module:function`, resolved as `<module path>.py` or `<module path>/__init__.py` (`pkg.main` → `pkg/main.py`). Checked at install *since the amendment*. |
 | The icon | If the manifest names one. |
 
 Everything else is app code and assets, all covered by `FILES.sha256`.
@@ -97,10 +116,18 @@ Everything else is app code and assets, all covered by `FILES.sha256`.
 Standard `[project]` fields, plus `[tool.uv]` and `[tool.devstribution]`. Unknown keys inside
 `[tool.devstribution]` and its sub-tables are refused (a new key needs a new format number).
 
+Secret names in `permissions.secrets` are names of letters, digits and `_` (not starting with a
+digit), at most 64 characters (*since the amendment*).
+
+Launchers prepare an app's environment from `uv.lock` alone: uv runs with `--no-config`, so
+`[tool.uv]` settings and a `uv.toml` in the package are ignored, and with an explicit Python request
+from `requires-python`, so a `.python-version` file is ignored too. These files may be in a package;
+they only matter to the developer's own `uv` commands.
+
 ```toml
 [project]
 name = "query-orders"            # required
-version = "1.2.0"                # required: 1 to 4 numbers separated by dots, no suffixes
+version = "1.2.0"                # required: 1 to 4 numbers (digits only) separated by dots
 requires-python = ">=3.11"       # optional
 dependencies = ["openpyxl>=3.1"] # installed from uv.lock
 # `dynamic` is refused: it needs a build step.
