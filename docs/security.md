@@ -9,7 +9,8 @@ Report vulnerabilities privately, as [`SECURITY.md`](../SECURITY.md) explains.
 ## What is protected, and from whom
 
 **The promise** ([`plan.md`](plan.md), "Principles"): what you run is exactly what its publisher
-published, a publisher cannot pass for another, and an app cannot damage the platform or other apps.
+published, a publisher cannot pass for another, and an app cannot tamper with the platform or other
+apps, within the limits listed below.
 
 | Threat | What stops it |
 |---|---|

@@ -1,21 +1,24 @@
 # devstribution
 
-Code gets written at agent speed; getting it onto other people's computers still means
-installers, IT tickets and "works on my machine". **devstribution** distributes Python apps
-(tools, automations, proofs of concept) as signed data packages that one signed launcher
-verifies, installs and runs. What an app may do is decided by trust in its publisher, and the
-platform guarantees that what you run is exactly what that publisher published.
+Writing code has become much faster, especially with coding agents. Sharing it with colleagues
+is often still the hard part: Python has to be installed, installers have to be built and signed,
+and IT, rightly, wants to know what runs on company PCs. **devstribution** is an attempt to make
+this easier. Python apps (tools, automations, proofs of concept) are shared as signed packages,
+and a single signed launcher checks, installs and runs them. Each app is trusted according to who
+published it, and the launcher checks that what you run is exactly what that publisher signed.
 
-**Status: pre-alpha proof of concept.** Not ready for real users yet. The design is in
-[docs/plan.md](docs/plan.md); the launcher's look (palette, type, components) in
-[docs/design.md](docs/design.md); the threat model and the security review in
+**Status: early proof of concept (pre-alpha).** It isn't ready for everyday use yet: the launcher
+is not code-signed, and some Windows-specific parts still need testing on real PCs. The design is
+in [docs/plan.md](docs/plan.md); the launcher's look (palette, type, components) in
+[docs/design.md](docs/design.md). What the platform protects against, and what it doesn't, is in
 [docs/security.md](docs/security.md).
 
 ![The launcher: home with recent and most used apps](docs/images/home.png)
 
 ## What exists today
 
-A working proof of concept (see [docs/HANDOFF.md](docs/HANDOFF.md) for what is verified):
+A proof of concept that works end to end; what has been verified so far, and on which systems, is
+in [docs/status_quo.md](docs/status_quo.md):
 
 | Part | Where |
 |---|---|
