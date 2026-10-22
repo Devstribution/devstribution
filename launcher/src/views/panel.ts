@@ -4,7 +4,7 @@ import {
 } from "lucide";
 import type { AppView, Input, RunRecord } from "../api";
 import type { Ctx, LiveRun } from "../main";
-import { h, icon, appIcon, appColor, clear, duration, fileName, relTime, statusText, toast, errorText, trustTag, KIND_LABEL } from "../ui";
+import { h, icon, appIcon, clear, duration, fileName, relTime, statusText, toast, errorText, trustTag, KIND_LABEL } from "../ui";
 
 /** Values the form starts with: last run's values, else the manifest defaults. */
 function initialValues(app: AppView): Record<string, unknown> {
@@ -47,9 +47,9 @@ function askSecret(app: AppView, name: string): Promise<string | null> {
     const input = h("input", { class: "input", type: "password", autocomplete: "off", placeholder: "Paste the value", "aria-label": name });
     const done = (v: string | null) => { overlay.remove(); resolve(v); };
     const overlay = h("div", { class: "overlay", onclick: (e: Event) => { if (e.target === overlay) done(null); } },
-      h("div", { class: "modal", role: "dialog", "aria-label": `${app.title} needs ${name}`, style: "width:min(460px,100%)" },
+      h("div", { class: "modal narrow", role: "dialog", "aria-label": `${app.title} needs ${name}` },
         h("div", { class: "modal-head" }, h("div", { class: "perm" }, h("div", { class: "pi" }, icon(KeyRound, 18))),
-          h("div", null, h("h2", null, `${app.title} needs “${name}”`), h("div", { class: "muted", style: "font-size:13px" }, "Asked once. Kept in your system’s credential manager, never in files."))),
+          h("div", null, h("h2", null, `${app.title} needs “${name}”`), h("div", { class: "muted small" }, "Asked once. Kept in your system’s credential manager, never in files."))),
         h("div", { class: "modal-body" }, input),
         h("div", { class: "modal-foot" },
           h("button", { class: "btn", onclick: () => done(null) }, "Cancel"),
@@ -128,7 +128,7 @@ function perms(app: AppView): HTMLElement {
 /** Opens the app's side panel; returns a function that closes it. */
 export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => void {
   const scrim = h("div", { class: "scrim" });
-  const panel = h("aside", { class: "panel", role: "dialog", "aria-label": "App", style: "outline:none" });
+  const panel = h("aside", { class: "panel", role: "dialog", "aria-label": "App" });
   document.body.append(scrim, panel);
   const disposers: (() => void)[] = [];
   let closed = false;
@@ -145,7 +145,7 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
   document.addEventListener("keydown", onKey);
   disposers.push(() => document.removeEventListener("keydown", onKey));
 
-  clear(panel, h("div", { class: "panel-body", style: "align-items:center;justify-content:center" }, icon(Loader, 24, "spin")));
+  clear(panel, h("div", { class: "panel-body loading" }, icon(Loader, 24, "spin")));
   ctx.api.getApp(id).then((app) => { if (!closed) build(app); }).catch((e) => { toast(errorText(e), "error"); close(); });
 
   function build(app: AppView) {
@@ -203,7 +203,7 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
         if (o.type === "file") {
           const path = String(value);
           return h("div", { class: "output-file" },
-            h("div", { style: "flex:1;min-width:0" }, h("div", { class: "name", title: fileName(path) }, fileName(path)), h("div", { class: "label" }, o.label ?? o.name)),
+            h("div", { class: "grow" }, h("div", { class: "name", title: fileName(path) }, fileName(path)), h("div", { class: "label" }, o.label ?? o.name)),
             h("button", { class: "btn small", title: "Show in folder", "aria-label": "Show in folder", onclick: () => ctx.api.openOutput(run!.runId, path, true).catch((e) => toast(errorText(e), "error")) }, icon(FolderOpen, 15)),
             h("button", { class: "btn primary small", onclick: () => ctx.api.openOutput(run!.runId, path, false).catch((e) => toast(errorText(e), "error")) }, icon(ExternalLink, 14), "Open"));
         }
@@ -236,7 +236,7 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
     // ---------- form and details ----------
     const form = isForm && app.inputs.some((i) => i.type !== "secret")
       ? h("div", { class: "form" },
-          Object.keys(app.last_inputs).length ? h("div", { class: "muted", style: "font-size:12.5px;margin-bottom:-4px" }, "Filled in from your last run") : null,
+          Object.keys(app.last_inputs).length ? h("div", { class: "note" }, "Filled in from your last run") : null,
           app.inputs.filter((i) => i.type !== "secret").map((i) => field(ctx, i, values)))
       : h("div", { class: "muted" }, isForm ? "Nothing to set up: just press Run." : "This app opens in its own window.");
 
@@ -244,7 +244,7 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
       ? h("div", { class: "settings-group" }, h("div", { class: "section-label" }, "Secrets"),
           app.secrets.map((s) =>
             h("div", { class: "secret-row" }, icon(KeyRound, 16),
-              h("div", { class: "grow" }, h("div", { style: "font-weight:700" }, s.name), h("div", { class: "s" }, s.set ? "Saved in the credential store" : "Asked at the next run")),
+              h("div", { class: "grow" }, h("div", { class: "strong" }, s.name), h("div", { class: "s" }, s.set ? "Saved in the credential store" : "Asked at the next run")),
               s.set ? h("button", { class: "btn small", onclick: async () => {
                 await ctx.api.clearSecret(app.id, s.name);
                 toast(`“${s.name}” removed`);
@@ -262,14 +262,14 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
             h("span", { class: "grow" }, relTime(r.started_at), h("span", { class: "muted" }, ` · ${duration(r.duration_ms)}`)),
             statusText(r.status),
             r.status === "ok" ? h("button", { class: "btn ghost small", title: "Open result folder", "aria-label": "Open result folder", onclick: () => ctx.api.openOutput(r.id, null, false) }, icon(FolderOpen, 14)) : null))
-        : h("div", { class: "muted", style: "font-size:13px" }, "No runs yet."));
+        : h("div", { class: "muted small" }, "No runs yet."));
     }
     loadHistory();
     ctx.api.onRunsChanged(() => { if (!closed) loadHistory(); }).then((off) => { if (closed) off(); else disposers.push(off); });
 
     const about = h("details", { class: "disclosure" }, h("summary", null, "What it can do"),
       h("div", null, perms(app),
-        h("dl", { class: "kv", style: "margin-top:14px" },
+        h("dl", { class: "kv" },
           h("dt", null, "Publisher"), h("dd", null, app.namespace),
           h("dt", null, "Signing key"), h("dd", { class: "mono" }, app.key_id),
           h("dt", null, "Installed"), h("dd", null, relTime(app.installed_at)),
@@ -294,15 +294,14 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
       } }, icon(Trash2, 16), "Uninstall"));
     drawMenu();
     const menuWrap = h("div", { class: "menu-wrap" },
-      h("button", { class: "btn big", style: "width:52px;padding:0", "aria-label": "More", "aria-haspopup": "menu", onclick: () => { menu.hidden = !menu.hidden; } }, icon(MoreHorizontal, 18)),
+      h("button", { class: "btn big square", "aria-label": "More", "aria-haspopup": "menu", onclick: () => { menu.hidden = !menu.hidden; } }, icon(MoreHorizontal, 18)),
       menu);
     const closeMenu = (e: Event) => { if (!menuWrap.contains(e.target as Node)) menu.hidden = true; };
     document.addEventListener("click", closeMenu);
     disposers.push(() => document.removeEventListener("click", closeMenu));
 
-    const tint = app.icon ? "var(--surface-2)" : `color-mix(in srgb, ${appColor(app.id)} 9%, var(--surface))`;
     clear(panel,
-      h("div", { class: "panel-head", style: `background:${tint}` },
+      h("div", { class: "panel-head" },
         h("div", { class: "top" }, appIcon(app, "lg"),
           h("div", { class: "actions" }, h("button", { class: "icon-btn", "aria-label": "Close", onclick: close }, icon(X, 16)))),
         h("div", null, h("h2", null, app.title),

@@ -56,6 +56,8 @@ The parts that compile on Windows but have never run there. Each gets a result i
 
 - ☑ New design ("Launchpad"): apps first, recent and most used on Home, filters on Apps, an
   Activity dashboard, apps open in a side panel, settings behind the round button; light and dark.
+- ☑ Design language written down ([design.md](design.md)): tokens in one `style.css`, filled
+  status colours instead of tints, accent colour and colour-blind safe status colours in Settings.
 - ◐ Uninstall easy to find (report: Launcher UX 1): now in every app panel's ⋯ menu, next to Pin and
   Repair; check with users whether that is enough.
 - ☐ An output type for "a folder the user chose", so stateful apps get an "Open" button

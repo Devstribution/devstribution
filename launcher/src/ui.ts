@@ -53,8 +53,8 @@ export function clear(el: Element, ...children: Child[]) {
 
 // ---------- app icon tiles ----------
 
-/** Solid tile colours: the apps carry the colour, the launcher's chrome stays neutral. */
-const PALETTE = ["#2563eb", "#7c3aed", "#0e9f6e", "#ea580c", "#db2777", "#0891b2", "#4f46e5", "#ca8a04"];
+/** Solid tile colours (--app-1 to --app-8 in style.css): the apps carry the colour, the launcher's chrome stays neutral. */
+const PALETTE = Array.from({ length: 8 }, (_, i) => `var(--app-${i + 1})`);
 
 function hash(s: string) {
   let x = 0;

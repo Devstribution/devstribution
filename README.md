@@ -7,7 +7,8 @@ verifies, installs and runs. What an app may do is decided by trust in its publi
 platform guarantees that what you run is exactly what that publisher published.
 
 **Status: pre-alpha proof of concept.** Not ready for real users yet. The design is in
-[docs/plan.md](docs/plan.md).
+[docs/plan.md](docs/plan.md); the launcher's look (palette, type, components) in
+[docs/design.md](docs/design.md).
 
 ![The launcher: home with recent and most used apps](docs/images/home.png)
 
@@ -17,7 +18,7 @@ A working proof of concept (see [docs/HANDOFF.md](docs/HANDOFF.md) for what is v
 
 | Part | Where |
 |---|---|
-| Launcher (Tauri): home, apps with filters, activity dashboard, install confirmation, app panel, settings; light and dark | `launcher/` |
+| Launcher (Tauri): home, apps with filters, activity dashboard, install confirmation, app panel, settings; light and dark themes, a choice of accent colours, colour-blind safe status colours | `launcher/` |
 | Install store, uv environments, supervised runs, history, secrets | `crates/devstribution-host` |
 | Package format: manifest, `FILES.sha256`, minisign signatures, safe extraction, wheels-only check | `crates/devstribution-core` |
 | Developer CLI: `init`, `dev`, `pack`, `keygen`, `verify` | `crates/devstribution-cli` |

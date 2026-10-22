@@ -31,12 +31,11 @@ export async function homeView(ctx: Ctx): Promise<Rendered> {
   if (apps.length === 0) {
     return {
       node: h("div", { class: "page welcome" },
-        h("div", { class: "art" }, [FileSpreadsheet, Bot, Workflow].map((ic, i) =>
-          h("div", { style: `background:${["#2563eb", "#0e9f6e", "#7c3aed"][i]}` }, icon(ic, 28)))),
+        h("div", { class: "art" }, [FileSpreadsheet, Bot, Workflow].map((ic) => h("div", null, icon(ic, 28)))),
         h("h1", null, "Run Python apps in one click"),
         h("p", null, "Tools and automations from publishers you trust: checked, set up and started for you. No installers, no terminal."),
         h("button", { class: "btn primary big", onclick: () => ctx.install() }, "Install your first app"),
-        h("p", { style: "font-size:13px" }, "Or drop a .dsapp file anywhere on this window.")),
+        h("p", { class: "small" }, "Or drop a .dsapp file anywhere on this window.")),
     };
   }
 
@@ -65,8 +64,8 @@ export async function homeView(ctx: Ctx): Promise<Rendered> {
 
   const results = recent_runs.filter((r) => r.status !== "running").slice(0, 3);
   const latest = results.length
-    ? h("section", { style: "display:flex;flex-direction:column;gap:12px" },
-        h("div", { class: "card-head", style: "margin:0" }, h("h2", { style: "font-size:16px" }, "Latest results"),
+    ? h("section", { class: "stack" },
+        h("div", { class: "card-head flush" }, h("h2", { class: "section-title" }, "Latest results"),
           h("button", { class: "link", onclick: () => ctx.navigate("#/activity") }, "All activity")),
         h("div", { class: "results" }, results.map((r) => {
           const { what, action } = runOutcome(r);
@@ -81,7 +80,7 @@ export async function homeView(ctx: Ctx): Promise<Rendered> {
               h("div", { class: "who" }, h("div", { class: "t" }, r.app_title), h("div", { class: "s" }, relTime(r.started_at))),
               statusText(r.status)),
             h("div", { class: "what", title: what }, what),
-            app ? h("button", { class: "btn small", onclick: act }, action) : h("span", { class: "muted", style: "font-size:12px" }, "Uninstalled"));
+            app ? h("button", { class: "btn small", onclick: act }, action) : h("span", { class: "muted tiny" }, "Uninstalled"));
         })))
     : null;
 
@@ -96,7 +95,7 @@ export async function homeView(ctx: Ctx): Promise<Rendered> {
     matches.hidden = !q;
     clear(matches, found.length
       ? found.map((a) => tile(ctx, a, a.namespace))
-      : h("div", { class: "empty-box", style: "grid-column:1/-1" }, `No app matches “${query.trim()}”.`));
+      : h("div", { class: "empty-box" }, `No app matches “${query.trim()}”.`));
   };
   input.addEventListener("input", () => { query = input.value; draw(); });
   input.addEventListener("keydown", (e) => {

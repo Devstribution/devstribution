@@ -18,8 +18,8 @@ function details(ctx: Ctx, r: RunRecord) {
   const overlay = h("div", { class: "overlay", onclick: (e: Event) => { if (e.target === overlay) close(); } },
     h("div", { class: "modal", role: "dialog", "aria-label": `${r.app_title} run` },
       h("div", { class: "modal-head" }, appIcon({ id: r.app_id }, "sm"),
-        h("div", { style: "flex:1;min-width:0" }, h("h2", null, r.app_title),
-          h("div", { class: "muted", style: "font-size:13px" }, `${new Date(r.started_at * 1000).toLocaleString()} · ${duration(r.duration_ms)} · v${r.version}`)),
+        h("div", { class: "grow" }, h("h2", null, r.app_title),
+          h("div", { class: "muted small" }, `${new Date(r.started_at * 1000).toLocaleString()} · ${duration(r.duration_ms)} · v${r.version}`)),
         statusText(r.status),
         h("button", { class: "icon-btn", "aria-label": "Close", onclick: close }, icon(X, 16))),
       h("div", { class: "modal-body" },
@@ -52,9 +52,9 @@ export async function activityView(ctx: Ctx): Promise<Rendered> {
     h("section", { class: "card" },
       h("div", { class: "card-head" }, h("h2", null, "Runs, last 14 days"),
         h("div", { class: "legend" },
-          h("span", null, h("i", { style: "background:var(--chart-ok)" }), "done"),
-          h("span", null, h("i", { style: "background:var(--chart-err)" }), "didn’t work"),
-          h("span", null, h("i", { style: "background:var(--chart-cancel)" }), "cancelled"))),
+          h("span", null, h("i", { class: "ok" }), "done"),
+          h("span", null, h("i", { class: "err" }), "didn’t work"),
+          h("span", null, h("i", { class: "cancel" }), "cancelled"))),
       runsChart(stats.per_day.slice(-14))),
     h("section", { class: "card" },
       h("div", { class: "card-head" }, h("h2", null, "Most used this month")),
@@ -65,10 +65,10 @@ export async function activityView(ctx: Ctx): Promise<Rendered> {
               h("div", { class: "col" }, h("div", { class: "t" }, t.title),
                 h("div", { class: "bar-track" }, h("div", { class: "bar-fill", style: `width:${(t.runs / maxRuns) * 100}%` }))),
               h("span", { class: "n" }, String(t.runs)))))
-        : h("div", { class: "muted", style: "font-size:13px" }, "Run an app to see it here.")));
+        : h("div", { class: "muted small" }, "Run an app to see it here.")));
 
   const chips = h("div", { class: "chips", role: "radiogroup", "aria-label": "Show" });
-  const list = h("div", { style: "display:flex;flex-direction:column;gap:8px" });
+  const list = h("div", { class: "run-list" });
   const draw = () => {
     clear(chips, FILTERS.map((f) => {
       const n = f === "all" ? runs.length : runs.filter((r) => r.status === f).length;

@@ -23,17 +23,17 @@ export async function installFlow(ctx: Ctx, path?: string) {
   const modal = h("div", { class: "modal", role: "dialog", "aria-label": "Install app" });
   const overlay = h("div", { class: "overlay" }, modal);
   document.body.appendChild(overlay);
-  clear(modal, h("div", { class: "modal-body", style: "padding:44px;align-items:center" }, icon(Loader, 26, "spin"), h("div", { class: "muted" }, "Checking the package…")));
+  clear(modal, h("div", { class: "modal-body loading" }, icon(Loader, 26, "spin"), h("div", { class: "muted" }, "Checking the package…")));
 
   let p: PendingInstall;
   try {
     p = await ctx.api.inspectPackage(chosen);
   } catch (e) {
     clear(modal,
-      h("div", { class: "modal-head center" }, h("div", { class: "perm" }, h("div", { class: "pi", style: "width:56px;height:56px;border-radius:18px;color:var(--danger);background:var(--danger-soft)" }, icon(ShieldAlert, 26))),
+      h("div", { class: "modal-head center" }, h("div", { class: "modal-icon red" }, icon(ShieldAlert, 26)),
         h("div", null, h("h2", null, "This app can’t be installed"), h("div", { class: "muted" }, chosen.split(/[\\/]/).pop()))),
       h("div", { class: "modal-body" }, h("div", { class: "error-box" }, errorText(e)),
-        h("div", { class: "muted", style: "font-size:13px" }, "Nothing was installed. If you expected this file to work, contact its publisher.")),
+        h("div", { class: "muted small" }, "Nothing was installed. If you expected this file to work, contact its publisher.")),
       h("div", { class: "modal-foot" }, h("button", { class: "btn primary", onclick: () => overlay.remove() }, "Close")));
     return;
   }
@@ -50,7 +50,7 @@ export async function installFlow(ctx: Ctx, path?: string) {
       h("div", null, h("h2", null, `${verb} ${p.title}?`),
         h("div", { class: "muted" }, `from “${p.namespace}” · version ${p.version} · ${KIND_LABEL[p.kind] ?? p.kind}`))),
     h("div", { class: "modal-body" },
-      p.description ? h("div", { style: "color:var(--text-2);text-align:center" }, p.description) : null,
+      p.description ? h("div", { class: "soft-text center" }, p.description) : null,
       newPublisher
         ? h("div", { class: "banner amber" }, h("div", { class: "bi" }, icon(ShieldAlert, 18)),
             h("div", null, h("strong", null, `New publisher: “${p.namespace}”`),
@@ -61,7 +61,7 @@ export async function installFlow(ctx: Ctx, path?: string) {
               `Signed with the key of the “${p.namespace}” apps you already have (`, h("span", { class: "mono" }, p.key_id), ").")),
       internet
         ? h("div", { class: "banner blue" }, h("div", { class: "bi" }, icon(Download, 18)),
-            h("div", { style: "min-width:0;overflow-wrap:anywhere" }, h("strong", null, "Downloaded from the internet"), p.origin?.host_url ?? "Unknown address"))
+            h("div", { class: "grow wrap-anywhere" }, h("strong", null, "Downloaded from the internet"), p.origin?.host_url ?? "Unknown address"))
         : null,
       p.warnings.filter((w) => !w.startsWith("First app") && !w.startsWith("This file was downloaded")).map((w) =>
         h("div", { class: "banner amber" }, h("div", { class: "bi" }, icon(ShieldAlert, 18)), h("div", null, w))),
@@ -91,7 +91,7 @@ export async function installFlow(ctx: Ctx, path?: string) {
         const cls = done ? "done" : i === idx ? "active" : "";
         return h("div", { class: `step ${cls}` },
           h("div", { class: "si" }, done ? icon(Check, 14) : i === idx ? icon(Loader, 14, "spin") : String(i + 1)),
-          h("div", { style: "min-width:0" }, h("div", { class: "st" }, label), i === idx && detail && active !== "ready" ? h("div", { class: "ss" }, detail) : null));
+          h("div", { class: "grow" }, h("div", { class: "st" }, label), i === idx && detail && active !== "ready" ? h("div", { class: "ss" }, detail) : null));
       }));
     };
     draw();

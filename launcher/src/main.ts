@@ -1,5 +1,5 @@
 import "@fontsource-variable/manrope";
-import "./styles.css";
+import "./style.css";
 
 import { House, LayoutGrid, History, Settings as SettingsIcon, Upload, Play } from "lucide";
 import { createApi, type Api, type AppView, type RunEvent, type RunResult } from "./api";
@@ -8,7 +8,8 @@ import { homeView } from "./views/home";
 import { appsView } from "./views/apps";
 import { activityView } from "./views/activity";
 import { openAppPanel } from "./views/panel";
-import { toggleSettings, type Theme } from "./views/settings";
+import { toggleSettings } from "./views/settings";
+import { applyLook, cleanLook, onSystemThemeChange, type Look } from "./look";
 import { installFlow } from "./views/install";
 
 /** Live state of runs started in this session, kept across page changes. */
@@ -37,7 +38,8 @@ export interface Ctx {
   /** Reloads the sidebar and the current page (after installs, uninstalls, finished runs). */
   refresh(): Promise<void>;
   pins: { has(id: string): boolean; toggle(id: string): void };
-  theme: { get(): Theme; set(t: Theme): void };
+  /** Theme, accent and status colours, from Settings. */
+  look: { get(): Look; set(change: Partial<Look>): void; reset(): void };
 }
 
 export interface Rendered {
@@ -62,15 +64,10 @@ async function boot() {
   const api = await createApi();
   const root = document.getElementById("app")!;
 
-  // ---------- theme: light, dark or following the system ----------
-  let theme = stored<Theme>("theme-choice", "system");
-  const media = window.matchMedia?.("(prefers-color-scheme: dark)");
-  const applyTheme = () => {
-    const dark = theme === "dark" || (theme === "system" && !!media?.matches);
-    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
-  };
-  applyTheme();
-  media?.addEventListener?.("change", applyTheme);
+  // ---------- look: theme, accent and status colours (a per-user preference) ----------
+  let look = cleanLook(stored<Partial<Look>>("look", {}));
+  applyLook(look);
+  onSystemThemeChange(() => applyLook(look));
 
   // ---------- pinned apps (a per-user preference, kept in the webview's storage) ----------
   let pinned = stored<string[]>("pinned", []);
@@ -174,9 +171,10 @@ async function boot() {
         drawPins();
       },
     },
-    theme: {
-      get: () => theme,
-      set(t) { theme = t; store("theme-choice", t); applyTheme(); },
+    look: {
+      get: () => look,
+      set(change) { look = cleanLook({ ...look, ...change }); store("look", look); applyLook(look); },
+      reset() { look = cleanLook(null); store("look", look); applyLook(look); },
     },
   };
 

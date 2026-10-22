@@ -24,7 +24,7 @@ export async function appsView(ctx: Ctx): Promise<Rendered> {
   const sortBox = h("div", { class: "seg", role: "radiogroup", "aria-label": "Sort" });
   const chips = h("div", { class: "filters" });
   const countLine = h("div", { class: "count-line" });
-  const list = h("div", { style: "display:flex;flex-direction:column;gap:10px" });
+  const list = h("div", { class: "app-list" });
 
   const chip = (label: string, on: boolean, pick: () => void) =>
     h("button", { class: `chip ${on ? "on" : ""}`, "aria-pressed": String(on), onclick: pick }, label);
@@ -49,7 +49,7 @@ export async function appsView(ctx: Ctx): Promise<Rendered> {
 
     const filtered = state.works !== "All" || state.publisher !== "Anyone" || !!q;
     clear(countLine, shown.length === apps.length ? `All ${plural(apps.length, "app")}` : `${shown.length} of ${plural(apps.length, "app")}`,
-      filtered ? [" · ", h("button", { class: "link", style: "font-size:13px", onclick: () => {
+      filtered ? [" · ", h("button", { class: "link", onclick: () => {
         Object.assign(state, { query: "", works: "All", publisher: "Anyone" });
         input.value = "";
         draw();
@@ -77,6 +77,6 @@ export async function appsView(ctx: Ctx): Promise<Rendered> {
         h("label", { class: "search-box" }, icon(Search, 16), input),
         sortBox),
       chips, countLine, list,
-      h("button", { class: "btn", style: "align-self:flex-start", onclick: () => ctx.install() }, "Install another app…")),
+      h("button", { class: "btn self-start", onclick: () => ctx.install() }, "Install another app…")),
   };
 }
