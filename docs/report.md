@@ -67,6 +67,13 @@ safe choice).
 | Excel safety: the user's own Excel, open before the run, survives that kill | Pass |
 | Secrets: stored in Credential Manager (`devstribution/<id>/<name>`), reused on the next run without asking | Pass |
 | `gui` app: runs as `pythonw.exe`, no console window | Pass |
+| *After the security PR (suspended start in the Job Object, restricted DLL loading), 23 Oct:* | |
+| Launcher starts with `/DEPENDENTLOADFLAG:0x800` and `SetDefaultDllDirectories` (WebView2 loads) | Pass |
+| Update `ricon` 0.1.0 → 0.1.1, repacked with the new CLI; install screen says "Nothing unusual found"; real run | Pass |
+| Code scan: `scan-demo.dsapp` (fake start-with-Windows entry and decode-and-run) shows the red banner, two danger rows and "Install anyway" | Pass |
+| Cancel, app ignores it (`tree-stubborn`): whole tree gone after the grace period, run `cancelled` after 21 s | Pass |
+| Closing the launcher mid-run (`tree-stubborn`): no app process left (KILL_ON_JOB_CLOSE); the run stays `running` until the next start, which records it as "the launcher closed during the run" | Pass (the record's fix-up on the next start not seen yet) |
+| Data folder move: the new folder `%LOCALAPPDATA%\dev.devstribution.launcher\data` is used. The old `%LOCALAPPDATA%\devstribution` holds only empty folders and a runner copy, with no `state.json`, so there was nothing to move and it stays behind | Not exercised (no old data); the leftover folder is harmless |
 
 The checks used a throwaway test app (`wincheck`: `tree-*` / `excel-*` modes, a secret input) and
 `examples/hello-gui`.
@@ -74,4 +81,5 @@ The checks used a throwaway test app (`wincheck`: `tree-*` / `excel-*` modes, a 
 ## Still to check on Windows
 
 Mark-of-the-Web origin, and the file association and single instance: these need the installer
-(`npx tauri build`). Also untested: the launcher exiting mid-run (KILL_ON_JOB_CLOSE).
+(`npx tauri build`), as does the uninstaller removing the data folder and the apps' secrets.
+Also: the data folder move with real old data, and uv behind a company proxy.
