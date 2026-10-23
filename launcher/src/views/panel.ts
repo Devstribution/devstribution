@@ -1,6 +1,6 @@
 import {
   X, Square, MoreHorizontal, Wrench, Trash2, FolderOpen, ExternalLink, Pin, PinOff,
-  Loader, Globe, Folder, KeyRound, Database, Puzzle, Sparkles,
+  Loader, Globe, Folder, KeyRound, Database, Puzzle, Sparkles, ShieldX,
 } from "lucide";
 import type { AppView, Input, RunRecord } from "../api";
 import type { Ctx, LiveRun } from "../main";
@@ -179,7 +179,7 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
     function draw() {
       window.clearInterval(timer);
       const running = !!run && !run.result;
-      runButton.disabled = running;
+      runButton.disabled = running || !!app.quarantine;
       runButton.textContent = running ? (isForm ? "Running…" : "Open") : run?.result ? (isForm ? "Run again" : "Open again") : (isForm ? "Run" : "Open");
       if (!run) { clear(stateBox); logCard.hidden = true; return; }
       logCard.hidden = false;
@@ -233,7 +233,8 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
         }
         return h("div", { class: "output-text" }, h("div", { class: "label" }, o.label ?? o.name), h("div", null, String(value)));
       });
-      const head = {
+      const stopped = res.guard?.some((g) => g.action === "stop");
+      const head = stopped ? ["error", "Stopped by devstribution", "The app did something apps should not do."] : {
         ok: ["ok", isForm ? `Done in ${duration(res.duration_ms)}` : "Closed", isForm ? "Your results are below." : ""],
         error: ["error", "It didn’t work", "The app stopped with an error."],
         cancelled: ["", "Cancelled", "Stopped before the end; cleanup ran."],
@@ -246,6 +247,34 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
             : null),
         res.status === "error" && res.error ? h("div", { class: "error-box" }, res.error) : null,
         outputs.some(Boolean) ? h("div", { class: "outputs" }, outputs) : null));
+    }
+
+    // ---------- quarantine ----------
+    // The runtime guard stopped a run: nothing runs until the user allows it or uninstalls.
+    const q = app.quarantine;
+    const quarantine = q
+      ? h("div", { class: "banner red quarantine", role: "alert" }, h("div", { class: "bi" }, icon(ShieldX, 18)),
+          h("div", { class: "grow" },
+            h("strong", null, "Blocked by devstribution"),
+            h("div", null, `${relTime(q.at)} the app ${q.hit.message}, so devstribution stopped it. It won’t run again until you decide.`),
+            q.hit.detail ? h("div", { class: "mono detail" }, q.hit.detail) : null,
+            h("div", { class: "banner-actions" },
+              h("button", { class: "btn small", onclick: () => uninstall() }, icon(Trash2, 14), "Uninstall"),
+              h("button", { class: "btn small", onclick: async () => {
+                const ok = await ctx.api.ask(
+                  `Let ${app.title} run even though it ${q.hit.message}? Only do this if you trust ${app.namespace} and know why the app needs to. devstribution still reports it every time.`,
+                  "Allow and run again", "Allow");
+                if (!ok) return;
+                try { await ctx.api.releaseQuarantine(app.id, true); toast(`${app.title} can run again`, "ok"); close(); ctx.openApp(app.id); }
+                catch (e) { toast(errorText(e), "error"); }
+              } }, "Allow and run again"))))
+      : null;
+
+    async function uninstall() {
+      menu.hidden = true;
+      const ok = await ctx.api.ask(`Uninstall ${app.title}? Its environment and saved secrets are removed; past results stay in Activity.`, "Uninstall", "Uninstall");
+      if (!ok) return;
+      try { await ctx.api.uninstall(app.id); toast(`${app.title} uninstalled`, "ok"); close(); await ctx.refresh(); } catch (e) { toast(errorText(e), "error"); }
     }
 
     // ---------- form and details ----------
@@ -301,12 +330,7 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
         toast("Rebuilding the environment…");
         try { await ctx.api.repair(app.id); toast("Repaired: the environment was rebuilt", "ok"); } catch (e) { toast(errorText(e), "error"); }
       } }, icon(Wrench, 16), "Repair"),
-      h("button", { role: "menuitem", class: "danger", onclick: async () => {
-        menu.hidden = true;
-        const ok = await ctx.api.ask(`Uninstall ${app.title}? Its environment and saved secrets are removed; past results stay in Activity.`, "Uninstall", "Uninstall");
-        if (!ok) return;
-        try { await ctx.api.uninstall(app.id); toast(`${app.title} uninstalled`, "ok"); close(); await ctx.refresh(); } catch (e) { toast(errorText(e), "error"); }
-      } }, icon(Trash2, 16), "Uninstall"));
+      h("button", { role: "menuitem", class: "danger", onclick: () => uninstall() }, icon(Trash2, 16), "Uninstall"));
     drawMenu();
     const menuWrap = h("div", { class: "menu-wrap" },
       h("button", { class: "btn big square", "aria-label": "More", "aria-haspopup": "menu", onclick: () => { menu.hidden = !menu.hidden; } }, icon(MoreHorizontal, 18)),
@@ -322,7 +346,7 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
         h("div", null, h("h2", null, app.title),
           h("div", { class: "by" }, `by ${app.namespace} · v${app.version} · ${KIND_LABEL[app.kind] ?? app.kind}`, trustTag(app.trust))),
         app.description ? h("div", { class: "desc" }, app.description) : null),
-      h("div", { class: "panel-body" }, form, secrets, stateBox, logCard, history, about),
+      h("div", { class: "panel-body" }, quarantine, form, secrets, stateBox, logCard, history, about),
       h("div", { class: "panel-foot" }, runButton, menuWrap));
 
     draw();
@@ -337,6 +361,12 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
         frame = requestAnimationFrame(() => {
           frame = 0;
           const justFinished = !!run?.result && !stateBox.querySelector(".state-box.ok, .state-box.error");
+          // A stop quarantines the app: show the panel again, with the decision on top.
+          if (justFinished && run?.result?.guard?.some((g) => g.action === "stop")) {
+            close();
+            ctx.openApp(app.id);
+            return;
+          }
           draw();
           if (justFinished) stateBox.scrollIntoView({ behavior: "smooth", block: "nearest" });
         });

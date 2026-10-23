@@ -12,6 +12,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use devstribution_core::manifest::{InputType, Kind, Manifest, OutputType};
+
+use crate::guard::{self, GuardHit, MAX_HITS};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
@@ -43,6 +45,8 @@ pub enum RunEvent {
         line: String,
     },
     Cancelling,
+    /// The runtime guard stopped the run, blocked a call, or reports what the app did.
+    Guard(GuardHit),
     Finished {
         result: RunResult,
     },
@@ -65,6 +69,16 @@ pub struct RunResult {
     pub error: Option<String>,
     pub traceback: Option<String>,
     pub duration_ms: u64,
+    /// What the runtime guard did; a `stop` among them ended the run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub guard: Vec<GuardHit>,
+}
+
+impl RunResult {
+    /// The guard report that ended the run, if one did.
+    pub fn guard_stop(&self) -> Option<&GuardHit> {
+        self.guard.iter().find(|h| h.is_stop())
+    }
 }
 
 /// Everything needed to start one run.
@@ -81,6 +95,8 @@ pub struct RunSpec {
     pub inputs: Map<String, Value>,
     pub secrets: Map<String, Value>,
     pub args: Vec<String>,
+    /// Guard rules the user allowed for this app after a stop ("Allow and run again").
+    pub guard_allow: Vec<String>,
 }
 
 /// Fills defaults and checks that every required input has a value. Secret inputs are left
@@ -155,6 +171,11 @@ fn start_message(spec: &RunSpec) -> Value {
         "allowed_secrets": secret_names(m),
         "args": spec.args,
         "pycache_dir": spec.pycache_dir,
+        "guard": {
+            "network": m.permissions.network,
+            "sap": m.permissions.sap,
+            "allow": spec.guard_allow,
+        },
     })
 }
 
@@ -191,6 +212,7 @@ impl RunHandle {
             error: Some("the run supervisor crashed".into()),
             traceback: None,
             duration_ms: 0,
+            guard: Vec::new(),
         })
     }
 }
@@ -236,7 +258,7 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
     // The process starts suspended (Windows): it joins the Job Object before it can start
     // anything, so every process it creates is stopped with the run.
     let job = match platform::Job::assign(&child) {
-        Ok(job) => job,
+        Ok(job) => Arc::new(job),
         Err(e) => {
             let _ = child.kill();
             let _ = child.wait();
@@ -251,11 +273,61 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
 
     let result_msg: Arc<Mutex<Option<Value>>> = Arc::default();
     let com_processes: Arc<Mutex<Vec<ComProcess>>> = Arc::default();
+    let guard_hits: Arc<Mutex<Vec<GuardHit>>> = Arc::default();
+    // Reports the guard's work; a stop also ends the whole process tree at once.
+    let report: Arc<dyn Fn(GuardHit) + Send + Sync> = {
+        let (on_event, guard_hits, job) = (on_event.clone(), guard_hits.clone(), job.clone());
+        Arc::new(move |hit: GuardHit| {
+            if hit.is_stop() {
+                job.terminate();
+            }
+            {
+                let mut hits = guard_hits.lock().unwrap();
+                if hits.len() >= MAX_HITS && !hit.is_stop() {
+                    return;
+                }
+                hits.push(hit.clone());
+            }
+            on_event(RunEvent::Guard(hit));
+        })
+    };
+    // Every process the run starts, whatever started it (the app cannot hide it from the Job
+    // Object): one that malware would start ends the run.
+    {
+        let report = report.clone();
+        let allowed = spec.guard_allow.clone();
+        job.watch(child.id(), move |event| match event {
+            JobEvent::NewProcess { command } => {
+                if let Some(rule) = guard::match_process(&command, guard::process_rules()) {
+                    let allowed = allowed.contains(&rule.id);
+                    report(GuardHit {
+                        action: if allowed { "observe" } else { "stop" }.into(),
+                        rule: rule.id.clone(),
+                        message: rule.message.clone(),
+                        detail: command.chars().take(500).collect(),
+                    });
+                }
+            }
+            JobEvent::ProcessLimit => report(GuardHit {
+                action: "block".into(),
+                rule: "process-limit".into(),
+                message: format!(
+                    "tried to run more than {} programs at once",
+                    platform::MAX_PROCESSES
+                ),
+                detail: String::new(),
+            }),
+        });
+    }
 
     let stdout = child.stdout.take().expect("piped");
     let stdout_thread = {
-        let (on_event, result_msg, com) =
-            (on_event.clone(), result_msg.clone(), com_processes.clone());
+        let (on_event, result_msg, com, report) = (
+            on_event.clone(),
+            result_msg.clone(),
+            com_processes.clone(),
+            report.clone(),
+        );
         let run_start = platform::filetime(started_at);
         std::thread::spawn(move || {
             for_each_line(stdout, |line| {
@@ -283,6 +355,11 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
                             && c + 20_000_000 >= run_start
                         {
                             com.lock().unwrap().push((pid as u32, created));
+                        }
+                    }
+                    Some("guard") => {
+                        if let Ok(hit) = serde_json::from_value::<GuardHit>(msg) {
+                            report(hit);
                         }
                     }
                     Some("result") => *result_msg.lock().unwrap() = Some(msg),
@@ -321,7 +398,7 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
         .iter()
         .map(|o| (o.name.clone(), o.kind))
         .collect();
-    let output_dir = spec.output_dir.clone();
+    let result_folders = result_folders(&spec.manifest, &spec.inputs, &spec.output_dir);
     let join = std::thread::spawn(move || {
         let started = Instant::now();
         let mut stdin = Some(stdin);
@@ -344,6 +421,10 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
                 Err(RecvTimeoutError::Timeout) => None,
                 Err(RecvTimeoutError::Disconnected) => None,
             };
+            if !killed && guard_hits.lock().unwrap().iter().any(GuardHit::is_stop) {
+                kill(&mut child, &mut stdin);
+                killed = true;
+            }
             let timed_out = timeout.is_some_and(|t| started.elapsed() > t);
             let wants_cancel = matches!(request, Some(Control::Cancel)) || timed_out;
             if matches!(request, Some(Control::Kill)) {
@@ -385,6 +466,7 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
                 error: m["error"].as_str().map(String::from),
                 traceback: m["traceback"].as_str().map(String::from),
                 duration_ms,
+                guard: Vec::new(),
             },
             None if killed || cancel_at.is_some() => RunResult {
                 status: RunStatus::Cancelled,
@@ -392,6 +474,7 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
                 error: Some("the app was stopped".into()),
                 traceback: None,
                 duration_ms,
+                guard: Vec::new(),
             },
             None => RunResult {
                 status: RunStatus::Error,
@@ -402,11 +485,22 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
                 }),
                 traceback: None,
                 duration_ms,
+                guard: Vec::new(),
             },
         };
+        result.guard = std::mem::take(&mut *guard_hits.lock().unwrap());
+        if let Some(stop) = result.guard_stop().cloned() {
+            result.status = RunStatus::Error;
+            result.error = Some(stop.stop_error());
+            result.traceback = None;
+            result.outputs.clear();
+        }
         // The result comes from the app's own process, so it is checked here like any other
-        // input: only declared outputs, and files only from the run's output folder.
-        for problem in keep_declared_outputs(&outputs_declared, &output_dir, &mut result.outputs) {
+        // input: only declared outputs, and files only from the run's output folder or a
+        // folder the user chose for this run.
+        for problem in
+            keep_declared_outputs(&outputs_declared, &result_folders, &mut result.outputs)
+        {
             on_event(RunEvent::Log {
                 level: "warning".into(),
                 message: problem,
@@ -473,11 +567,31 @@ fn emit_line(line: &mut Vec<u8>, overflow: &mut bool, f: &mut impl FnMut(String)
     *overflow = false;
 }
 
+/// Where a run's `file` outputs may be: its output folder, and the folders the user chose for
+/// its `folder` inputs (apps that keep their work between runs write there, not in a new
+/// folder per run).
+pub fn result_folders(
+    manifest: &Manifest,
+    inputs: &Map<String, Value>,
+    output_dir: &Path,
+) -> Vec<PathBuf> {
+    let mut folders = vec![output_dir.to_path_buf()];
+    for input in &manifest.inputs {
+        if input.kind == InputType::Folder
+            && let Some(path) = inputs.get(&input.name).and_then(Value::as_str)
+            && !path.is_empty()
+        {
+            folders.push(PathBuf::from(path));
+        }
+    }
+    folders
+}
+
 /// Keeps only outputs the manifest declares, and `file` outputs only when they name a file
-/// inside the run's output folder. Returns what was dropped, for the run log.
+/// inside one of `folders` (see [`result_folders`]). Returns what was dropped, for the run log.
 fn keep_declared_outputs(
     declared: &[(String, OutputType)],
-    output_dir: &Path,
+    folders: &[PathBuf],
     outputs: &mut Map<String, Value>,
 ) -> Vec<String> {
     let mut problems = Vec::new();
@@ -489,12 +603,12 @@ fn keep_declared_outputs(
             return false;
         };
         if *kind == OutputType::File && !value.is_null() {
-            let inside = value
-                .as_str()
-                .is_some_and(|p| is_inside(Path::new(p), output_dir));
+            let inside = value.as_str().is_some_and(|p| {
+                folders.iter().any(|dir| is_inside(Path::new(p), dir)) && Path::new(p).is_file()
+            });
             if !inside {
                 problems.push(format!(
-                    "the file output `{name}` is not in the run's output folder: ignored"
+                    "the file output `{name}` is not a file in the run's output folder or in a                      folder chosen for the run: ignored"
                 ));
                 return false;
             }
@@ -522,28 +636,60 @@ pub fn is_inside(path: &Path, dir: &Path) -> bool {
     }
 }
 
+/// What the run's Job Object reports.
+pub enum JobEvent {
+    /// A process joined the run (not the app's own): its command line, or its program when the
+    /// command line cannot be read.
+    NewProcess { command: String },
+    /// The app tried to have more than `MAX_PROCESSES` processes at once.
+    ProcessLimit,
+}
+
 #[cfg(windows)]
 mod platform {
     use std::os::windows::io::AsRawHandle;
     use std::os::windows::process::CommandExt;
     use std::process::{Child, Command};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use anyhow::{Result, bail};
-    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME, HANDLE, INVALID_HANDLE_VALUE};
+    use windows_sys::Wdk::System::Threading::{
+        NtQueryInformationProcess, ProcessCommandLineInformation,
+    };
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, FILETIME, HANDLE, INVALID_HANDLE_VALUE, UNICODE_STRING,
+    };
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
     };
+    use windows_sys::Win32::System::IO::{
+        CreateIoCompletionPort, GetQueuedCompletionStatus, OVERLAPPED,
+    };
     use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-        SetInformationJobObject, TerminateJobObject,
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_ACTIVE_PROCESS,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_UILIMIT_DESKTOP,
+        JOB_OBJECT_UILIMIT_DISPLAYSETTINGS, JOB_OBJECT_UILIMIT_EXITWINDOWS,
+        JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS, JOBOBJECT_ASSOCIATE_COMPLETION_PORT,
+        JOBOBJECT_BASIC_UI_RESTRICTIONS, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JobObjectAssociateCompletionPortInformation, JobObjectBasicUIRestrictions,
+        JobObjectExtendedLimitInformation, SetInformationJobObject, TerminateJobObject,
+    };
+    use windows_sys::Win32::System::SystemServices::{
+        JOB_OBJECT_MSG_ACTIVE_PROCESS_LIMIT, JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO,
+        JOB_OBJECT_MSG_NEW_PROCESS,
     };
     use windows_sys::Win32::System::Threading::{
         CREATE_NO_WINDOW, CREATE_SUSPENDED, GetProcessTimes, OpenProcess, OpenThread,
-        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE, ResumeThread, THREAD_SUSPEND_RESUME,
-        TerminateProcess,
+        PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
+        QueryFullProcessImageNameW, ResumeThread, THREAD_SUSPEND_RESUME, TerminateProcess,
     };
+
+    use super::JobEvent;
+
+    /// Most processes a run may have at once: a pool of workers fits, a fork bomb does not.
+    pub const MAX_PROCESSES: u32 = 128;
 
     /// No console window, and suspended until [`Job::assign`] has put it in its Job Object.
     pub fn prepare(cmd: &mut Command) {
@@ -558,10 +704,16 @@ mod platform {
 
     /// The run's Job Object: the app and every process it starts. Closing the launcher closes
     /// the handle, which kills them (KILL_ON_JOB_CLOSE).
-    pub struct Job(HANDLE);
+    pub struct Job {
+        job: HANDLE,
+        /// Where the job reports new processes; read by [`Job::watch`]'s thread.
+        port: HANDLE,
+        closed: Arc<AtomicBool>,
+    }
 
-    // The handle is only used through thread-safe kernel calls.
+    // The handles are only used through thread-safe kernel calls.
     unsafe impl Send for Job {}
+    unsafe impl Sync for Job {}
 
     impl Job {
         /// Puts the suspended `child` in a new Job Object, then lets it run. A run that cannot
@@ -569,21 +721,52 @@ mod platform {
         /// what it starts.
         pub fn assign(child: &Child) -> Result<Job> {
             unsafe {
-                let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-                if job.is_null() {
+                let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+                if handle.is_null() {
                     bail!("cannot create a Job Object for the run");
                 }
-                let job = Job(job);
+                let port = CreateIoCompletionPort(INVALID_HANDLE_VALUE, std::ptr::null_mut(), 0, 1);
+                let job = Job {
+                    job: handle,
+                    port,
+                    closed: Arc::default(),
+                };
+                if port.is_null() {
+                    bail!("cannot watch the app's processes (no completion port)");
+                }
                 let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-                info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-                let set = SetInformationJobObject(
-                    job.0,
+                info.BasicLimitInformation.LimitFlags =
+                    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
+                info.BasicLimitInformation.ActiveProcessLimit = MAX_PROCESSES;
+                // No switching desktops, changing display or system settings, or logging off.
+                // Not the clipboard: apps that paste (tkinter, SAP scripts) need it.
+                let ui = JOBOBJECT_BASIC_UI_RESTRICTIONS {
+                    UIRestrictionsClass: JOB_OBJECT_UILIMIT_DESKTOP
+                        | JOB_OBJECT_UILIMIT_DISPLAYSETTINGS
+                        | JOB_OBJECT_UILIMIT_EXITWINDOWS
+                        | JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS,
+                };
+                let port_info = JOBOBJECT_ASSOCIATE_COMPLETION_PORT {
+                    CompletionKey: std::ptr::null_mut(),
+                    CompletionPort: port,
+                };
+                let set = |class, data: *const std::ffi::c_void, size: usize| {
+                    SetInformationJobObject(job.job, class, data, size as u32) != 0
+                };
+                let ok = set(
                     JobObjectExtendedLimitInformation,
-                    &info as *const _ as *const _,
-                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                    (&raw const info).cast(),
+                    std::mem::size_of_val(&info),
+                ) && set(
+                    JobObjectBasicUIRestrictions,
+                    (&raw const ui).cast(),
+                    std::mem::size_of_val(&ui),
+                ) && set(
+                    JobObjectAssociateCompletionPortInformation,
+                    (&raw const port_info).cast(),
+                    std::mem::size_of_val(&port_info),
                 );
-                if set == 0 || AssignProcessToJobObject(job.0, child.as_raw_handle() as HANDLE) == 0
-                {
+                if !ok || AssignProcessToJobObject(job.job, child.as_raw_handle() as HANDLE) == 0 {
                     bail!("cannot put the app in its Job Object");
                 }
                 resume(child.id())?;
@@ -592,17 +775,91 @@ mod platform {
         }
 
         pub fn terminate(&self) {
-            if !self.0.is_null() {
-                unsafe { TerminateJobObject(self.0, 1) };
+            if !self.job.is_null() {
+                unsafe { TerminateJobObject(self.job, 1) };
             }
+        }
+
+        /// Calls `on_event`, from a thread of its own, for every process that joins the job
+        /// apart from the app's own (`app_pid`), until the job is empty or dropped.
+        pub fn watch(&self, app_pid: u32, on_event: impl Fn(JobEvent) + Send + 'static) {
+            let port = self.port as usize;
+            let closed = self.closed.clone();
+            std::thread::spawn(move || {
+                let port = port as HANDLE;
+                while !closed.load(Ordering::Relaxed) {
+                    let (mut code, mut key) = (0u32, 0usize);
+                    let mut overlapped: *mut OVERLAPPED = std::ptr::null_mut();
+                    let got = unsafe {
+                        GetQueuedCompletionStatus(port, &mut code, &mut key, &mut overlapped, 250)
+                    };
+                    if got == 0 {
+                        continue; // nothing within 250 ms
+                    }
+                    // For job messages, the "overlapped" pointer carries the process id.
+                    let pid = overlapped as usize as u32;
+                    match code {
+                        JOB_OBJECT_MSG_NEW_PROCESS if pid != app_pid => {
+                            if let Some(command) = command_line(pid) {
+                                on_event(JobEvent::NewProcess { command });
+                            }
+                        }
+                        JOB_OBJECT_MSG_ACTIVE_PROCESS_LIMIT => on_event(JobEvent::ProcessLimit),
+                        JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO => break,
+                        _ => {}
+                    }
+                }
+                unsafe { CloseHandle(port) };
+            });
         }
     }
 
     impl Drop for Job {
         fn drop(&mut self) {
-            if !self.0.is_null() {
-                unsafe { CloseHandle(self.0) };
+            self.closed.store(true, Ordering::Relaxed);
+            if !self.job.is_null() {
+                unsafe { CloseHandle(self.job) };
             }
+            // The watching thread owns the port: it stops within 250 ms and closes it.
+        }
+    }
+
+    /// The command line of `pid`, or its program when the command line cannot be read.
+    fn command_line(pid: u32) -> Option<String> {
+        unsafe {
+            let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if h.is_null() {
+                return None; // already gone
+            }
+            // A UNICODE_STRING followed by its text.
+            let mut buffer = vec![0u64; 4096];
+            let mut len = 0u32;
+            let status = NtQueryInformationProcess(
+                h,
+                ProcessCommandLineInformation,
+                buffer.as_mut_ptr().cast(),
+                (buffer.len() * 8) as u32,
+                &mut len,
+            );
+            let mut text = None;
+            if status >= 0 {
+                let us = &*(buffer.as_ptr() as *const UNICODE_STRING);
+                if !us.Buffer.is_null() && us.Length > 0 {
+                    let chars = std::slice::from_raw_parts(us.Buffer, us.Length as usize / 2);
+                    text = Some(String::from_utf16_lossy(chars));
+                }
+            }
+            if text.is_none() {
+                let mut name = vec![0u16; 32768];
+                let mut size = name.len() as u32;
+                if QueryFullProcessImageNameW(h, PROCESS_NAME_WIN32, name.as_mut_ptr(), &mut size)
+                    != 0
+                {
+                    text = Some(String::from_utf16_lossy(&name[..size as usize]));
+                }
+            }
+            CloseHandle(h);
+            text
         }
     }
 
@@ -678,6 +935,8 @@ mod platform {
         0
     }
 
+    pub const MAX_PROCESSES: u32 = 0;
+
     /// Outside Windows the app is killed directly; Job Objects do not exist.
     pub struct Job;
 
@@ -687,6 +946,8 @@ mod platform {
         }
 
         pub fn terminate(&self) {}
+
+        pub fn watch(&self, _app_pid: u32, _on_event: impl Fn(super::JobEvent) + Send + 'static) {}
     }
 
     pub fn terminate_if_same(_pid: u32, _created: Option<u64>) {}
@@ -704,21 +965,28 @@ mod tests {
         fs::write(out.join("ok.txt"), "x").unwrap();
         let elsewhere = dir.path().join("elsewhere.exe");
         fs::write(&elsewhere, "x").unwrap();
+        let chosen = dir.path().join("chosen");
+        fs::create_dir_all(&chosen).unwrap();
+        fs::write(chosen.join("work.xlsx"), "x").unwrap();
         let declared = vec![
             ("report".to_string(), OutputType::File),
             ("other".to_string(), OutputType::File),
+            ("work".to_string(), OutputType::File),
+            ("gone".to_string(), OutputType::File),
             ("summary".to_string(), OutputType::Text),
         ];
         let mut outputs = Map::new();
         outputs.insert("report".into(), json!(out.join("ok.txt")));
         outputs.insert("other".into(), json!(elsewhere));
+        outputs.insert("work".into(), json!(chosen.join("work.xlsx")));
+        outputs.insert("gone".into(), json!(chosen.join("missing.xlsx")));
         outputs.insert("summary".into(), json!("fine"));
         outputs.insert("extra".into(), json!("C:/Windows/System32/calc.exe"));
-        let problems = keep_declared_outputs(&declared, &out, &mut outputs);
-        assert_eq!(problems.len(), 2, "{problems:?}");
+        let problems = keep_declared_outputs(&declared, &[out, chosen], &mut outputs);
+        assert_eq!(problems.len(), 3, "{problems:?}");
         let mut kept: Vec<&str> = outputs.keys().map(String::as_str).collect();
         kept.sort_unstable();
-        assert_eq!(kept, ["report", "summary"]);
+        assert_eq!(kept, ["report", "summary", "work"]);
     }
 
     #[test]

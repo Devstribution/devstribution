@@ -51,6 +51,24 @@ export interface AppView {
   origin?: Origin | null;
   last_inputs: Record<string, unknown>;
   secrets: { name: string; set: boolean }[];
+  /** Set when the runtime guard stopped a run: the app does not run until the user decides. */
+  quarantine?: Quarantine | null;
+  /** Guard rules the user allowed for this app after a stop. */
+  guard_allow: string[];
+}
+
+/** What the runtime guard did: `stop` ended the run, `block` made one call fail, `observe` only reports. */
+export interface GuardHit {
+  action: "stop" | "block" | "observe";
+  rule: string;
+  message: string;
+  detail: string;
+}
+
+export interface Quarantine {
+  run_id: string;
+  at: number;
+  hit: GuardHit;
 }
 
 export type RunStatus = "running" | "ok" | "error" | "cancelled";
@@ -67,6 +85,7 @@ export interface RunRecord {
   duration_ms: number;
   outputs: Record<string, unknown>;
   error?: string | null;
+  guard?: GuardHit[];
   output_dir: string;
 }
 
@@ -76,6 +95,7 @@ export interface RunResult {
   error?: string | null;
   traceback?: string | null;
   duration_ms: number;
+  guard?: GuardHit[];
 }
 
 export type RunEvent =
@@ -83,6 +103,7 @@ export type RunEvent =
   | { type: "log"; level: string; message: string }
   | { type: "output"; line: string }
   | { type: "cancelling" }
+  | ({ type: "guard" } & GuardHit)
   | { type: "finished"; result: RunResult };
 
 export interface Stats {
@@ -179,6 +200,8 @@ export interface Api {
   discardInstall(token: string): Promise<void>;
   uninstall(id: string): Promise<void>;
   repair(id: string): Promise<void>;
+  /** Ends a quarantine; `allow` lets the rule that stopped the app pass from now on. */
+  releaseQuarantine(id: string, allow: boolean): Promise<AppView>;
   startRun(id: string, inputs: Record<string, unknown>): Promise<RunRecord>;
   cancelRun(runId: string): Promise<void>;
   listRuns(appId?: string, limit?: number): Promise<RunRecord[]>;
@@ -232,6 +255,7 @@ async function tauriApi(): Promise<Api> {
     discardInstall: (token) => invoke("discard_install", { token }),
     uninstall: (id) => invoke("uninstall_app", { id }),
     repair: (id) => invoke("repair_app", { id }),
+    releaseQuarantine: (id, allow) => invoke("release_quarantine", { id, allow }),
     startRun: (id, inputs) => invoke("start_run", { id, inputs }),
     cancelRun: (runId) => invoke("cancel_run", { runId }),
     listRuns: (appId, limit) => invoke("list_runs", { appId: appId ?? null, limit: limit ?? null }),

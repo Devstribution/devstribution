@@ -655,6 +655,11 @@ kbd { font: inherit; font-size: var(--fs-xs); border: 1px solid var(--border-str
 .banner.green { background: var(--success); color: var(--on-success); }
 .banner.blue { background: var(--info); color: var(--on-info); }
 .banner.red { background: var(--danger); color: var(--on-danger); }
+.banner .grow { min-width: 0; }
+.banner .detail { margin-top: var(--sp-2); opacity: 0.85; overflow-wrap: anywhere; }
+.banner-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-3); }
+.panel-body > .quarantine { margin-bottom: var(--sp-2); }
+.log .lvl-guard { color: var(--danger); font-weight: var(--fw-semibold); }
 
 .facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .fact { background: var(--surface-2); border-radius: var(--r-md); padding: 10px var(--sp-3); }

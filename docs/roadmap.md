@@ -7,7 +7,27 @@ between that and a launcher we can sign and hand to people who will never read t
 Order matters: each step makes the next one meaningful. Signing an installer that ships an unpinned
 uv, or packages that can carry client data, would put our signature on the wrong thing.
 
+*Revised 23 October 2026.* Package integrity, the Windows checks and the installer are done. What
+changed: making the platform **safe enough for IT to allow** moves before 1.0. The declared
+permissions become enforced while an app runs (section 4), and the scan reads deeper (section 5).
+Before, these were planned only for managed mode after 1.0. Signing and Phase 0 wait on people
+outside the project, so they run alongside.
+
 Status: ☐ to do · ◐ in progress · ☑ done
+
+## Next, in order
+
+1. ◐ **The open findings from real use** (from [`report.md`](report.md)): the data guard
+   missing `.json` results ☑, results in a folder the user chose ☑; uninstall easy to find is
+   waiting on what users say.
+2. ◐ **Runtime guard** (section 4): declared network and SAP use enforced, malware-like behaviour
+   stops the run and quarantines the app. Built and tested; to check in the real launcher.
+3. **Deeper scan** (section 5): AMSI, dependencies, what changed in an update.
+4. **Results shown in the launcher** (section 7): tables and images without opening Excel.
+5. **IT-facing evidence** (section 8): Windows Event Log, SBOM, `SECURITY.md`, fuzzing.
+
+At the same time, waiting on others: code signing (the SignPath application, Certum as the
+fallback) and Phase 0 on a locked-down company PC (section 3).
 
 ## 1. Package integrity
 
@@ -18,6 +38,10 @@ What goes into a `.dsapp`, and what the launcher runs it with, must be exactly w
   (spreadsheets, databases, archives, logs) are refused unless a `!pattern` lists them on purpose,
   so client data cannot end up signed by accident. `pack --list` shows what would be packed.
   (From the first real packaging: `app_1/output/` nearly went into `ricon.dsapp`.)
+- ☑ **The data guard also catches what sits next to data** (report: packaging 5). Repacking ricon,
+  `output/ultimo_esito.json` (client figures) passed because JSON is too common as configuration
+  to refuse everywhere. Now a folder that holds refused data files has its other files refused
+  too, apart from Python code and files listed on purpose.
 - ☑ **Pinned uv.** The launcher ships a fixed uv release, downloaded and checked against its sha256,
   instead of whatever uv is on the build machine's PATH.
 - ☑ **Package format 1 is frozen.** A written specification ([`format.md`](format.md)) and a promise:
@@ -28,75 +52,178 @@ What goes into a `.dsapp`, and what the launcher runs it with, must be exactly w
 
 The parts that compile on Windows but have never run there. Each gets a result in `report.md`.
 
-- ☐ Cancel, timeout and closing the launcher kill the whole process tree (Job Object).
-- ☐ Excel started through COM is closed after a run, also after Cancel.
-- ☐ Secrets are saved to and read from Credential Manager.
-- ☐ `gui` apps start with `pythonw.exe`, without a console window.
-- ☐ The new UI fixes (menu, uninstall dialog, no sideways scrolling) in the real launcher.
-- ☐ The pre-signing security fixes that only Windows can run (list in
-  [`security.md`](security.md), "Still to verify on a real Windows PC"): suspended start in the
-  Job Object, restricted DLL loading, the data folder move, the uninstaller removing secrets,
-  uv behind a company proxy.
+- ☑ Cancel, timeout and closing the launcher kill the whole process tree (Job Object).
+- ☑ Excel started through COM is closed after a run, also after Cancel.
+- ☑ Secrets are saved to and read from Credential Manager.
+- ☑ `gui` apps start with `pythonw.exe`, without a console window.
+- ◐ The new UI fixes in the real launcher: menu and uninstall dialog ☑; no sideways scrolling not
+  checked on purpose yet.
+- ◐ The pre-signing security fixes that only Windows can run (list in
+  [`security.md`](security.md)): suspended start in the Job Object ☑, restricted DLL loading ☑,
+  the uninstaller removing secrets ☑. Still open: the data folder move with real old data, and uv
+  behind a company proxy (needs the company network).
 
 ## 3. Installer and signing
 
-- ☐ `npx tauri build`: per-user NSIS installer, no admin rights needed.
-- ☐ File association (double-click a `.dsapp`) and single instance, from the installed launcher.
-- ☐ Mark-of-the-Web: a `.dsapp` downloaded with a browser shows "Downloaded from the internet".
-- ☐ Code signing in CI (SignPath for open-source projects), so SmartScreen and AppLocker/WDAC see a
-  known publisher.
-- ☐ Phase 0 of [`plan.md`](plan.md): install and run on a locked-down company PC.
+- ☑ `npx tauri build`: per-user NSIS installer, no admin rights needed; the uninstaller removes the
+  data folder and the apps' secrets.
+- ☑ File association (double-click a `.dsapp`) and single instance, from the installed launcher.
+- ☑ Mark-of-the-Web: a `.dsapp` downloaded with a browser shows "Downloaded from the internet".
+- ☐ Code signing in CI (SignPath Foundation for open-source projects; Certum's open-source
+  certificate as the fallback), so SmartScreen and AppLocker/WDAC see a known publisher. Then
+  the Windows checks again with the signed installer.
+- ☐ Phase 0 of [`plan.md`](plan.md): install and run on a locked-down company PC (AppLocker or
+  WDAC, a proxy with TLS inspection, no admin rights). If uv or the runner fails there, it comes
+  before everything else.
 
-## 4. Updates and key lifecycle
+## 4. Runtime guard: enforce what an app declared
+
+The permissions on the install screen were only what the publisher *declares*
+([`security.md`](security.md), limit 2). The guard now watches every run from two places and acts
+on what it sees. Neither needs admin rights. The process rules live in one file,
+`runner/devstribution_runner/_process_rules.json`, read by both.
+
+- ☑ **Audit hook in the runner** (`_guard.py`, `sys.addaudithook`, PEP 578), installed before any
+  app code is imported; a hook cannot be removed. It checks what Python reports against the
+  manifest:
+  - **Undeclared use is blocked**: without `permissions.network`, any connection or name lookup
+    other than this PC fails with a `PermissionError` that names the missing permission; with a
+    list of hosts, only those (and the system's proxy) resolve, and connections go only to the
+    addresses they resolved to. SAP's RFC library (`pyrfc`) without `permissions.sap` the same.
+  - **Tripwires stop the run** before the call happens: start-with-Windows entries (Run and
+    Winlogon keys, services, the Startup folder, `schtasks /create`), the antivirus's keys and
+    settings, browser password and cookie stores, the Windows tools malware uses (`powershell -enc`,
+    download-and-run, `certutil -decode`, `mshta`, …), deleting backups, switching off the
+    firewall, process injection and keyboard hooks (native functions looked up through `ctypes`),
+    listing every saved Windows password, and loading compiled code outside imports (`marshal`).
+  - **Observed**: programs started and hosts contacted, once each, in the run log.
+  - The hook runs inside the app's process: malware patching memory through `ctypes` can get
+    past it. The next item does not depend on the app.
+- ☑ **Watching from the launcher** through the run's Job Object, which the app cannot hide from:
+  - every new process (`JOB_OBJECT_MSG_NEW_PROCESS`): its command line is read and checked
+    against the same rules, so a program started straight through the Windows API is still
+    caught (it has started by then; it is ended at once with the rest of the tree);
+  - at most 128 processes at once (no fork bombs), and UI restrictions: no switching desktops,
+    changing display or system settings, or logging off. Not the clipboard (apps that paste
+    need it) and no memory limit (pandas apps legitimately use a lot): both would break real
+    apps for little gain.
+- ☑ **What happens when a rule fires.** The whole tree is ended, the run is recorded as
+  "Stopped by devstribution: the app …", and the app is **quarantined**: it does not run until
+  the user decides, also after an update. The app panel shows a red "Blocked by devstribution"
+  banner with what it tried, "Uninstall" and "Allow and run again" (which lets that one rule pass
+  for this app and still reports it); the Apps list shows "Blocked".
+- ◐ **Modes per rule**: fixed for now. Malware tripwires stop the run, undeclared network and SAP
+  block the call, programs and hosts are observed. Still to do: rules set by the policy in
+  managed mode, and who may release a quarantine there.
+- ☑ **Tests**: one test app per rule in `runner/tests/test_guard.py` (CI, Windows / Linux / macOS),
+  the shared command-line cases in `runner/tests/process_rule_cases.json` (runner and launcher),
+  and `devstribution-host/tests/flow.rs`: stop → quarantine → allow, and on Windows a program
+  started through `WinExec`, behind the hook's back, caught by the Job Object. ricon runs clean
+  under the guard (only its `cmd /c ver` is observed).
+- ☐ **Check in the real launcher on Windows**: the banner, "Allow and run again", and a stop
+  while the app panel is open.
+
+## 5. A deeper scan before install
+
+The scan reads only the package's own Python files today. Extend it where attackers actually hide.
+
+- ☐ **AMSI**: send the package's scripts to Windows' antimalware interface before the install
+  button, so Defender or the company's antivirus reviews them too ("Checked by your antivirus").
+  The runtime hook sends `exec` / `compile` strings to AMSI as well.
+- ☐ **Dependencies**: check `uv.lock` against OSV, which lists PyPI's known *malicious* packages
+  (`MAL-` entries) as well as vulnerable ones; flag names one typo away from popular packages;
+  flag wheels with `.pth` files (they run code when Python starts) and with unexpected binaries.
+  Done offline from a bundled snapshot where possible, so `pack` and the launcher send nothing.
+- ☐ **What changed in an update**: the update screen shows the scan and permissions compared with
+  the installed version ("New: network use in `sync.py`, starts programs"). A quiet malicious
+  update is the realistic attack, and the diff is what a reviewer reads.
+- ☐ **Reading more cleverly**: names built from strings (`getattr(mod, "sy" + "stem")`), download
+  then run (`exec(requests.get(…).text)`), imports of computed names.
+- ☐ **False positives measured**: run the scan over a corpus of ordinary open-source scripts and
+  keep warnings rare, so a warning still means something.
+
+## 6. Updates and key lifecycle
 
 - ☐ The launcher updates itself (Tauri updater, signed update feed).
-- ☐ App updates: a newer `.dsapp` already updates in place; add a clear "update available" path.
+- ☐ App updates: a newer `.dsapp` already updates in place; add a clear "update available" path,
+  with the scan diff from section 5.
 - ☐ Publisher key rotation: a signed statement from the old key that names the new one, so a
   publisher can move keys without every user reinstalling.
 - ☐ Lost or compromised key: a documented way out (forget a pinned publisher in Settings, with a
   strong warning), and revocation in the catalog later.
 
-## 5. User experience
+## 7. User experience
 
 - ☑ New design ("Launchpad"): apps first, recent and most used on Home, filters on Apps, an
   Activity dashboard, apps open in a side panel, settings behind the round button; light and dark.
 - ☑ Design language written down ([design.md](design.md)): tokens in one `style.css`, filled
   status colours instead of tints, accent colour and colour-blind safe status colours in Settings.
-- ◐ Uninstall easy to find (report: Launcher UX 1): now in every app panel's ⋯ menu, next to Pin and
-  Repair; check with users whether that is enough.
-- ☐ An output type for "a folder the user chose", so stateful apps get an "Open" button
-  (report: packaging 2).
 - ☑ Code scan before install: the install screen lists what the code does (network, programs,
   native code, code built at run time) and flags what looks like malware (hidden code, starting
   with Windows, reading browser passwords, switching off the antivirus, injecting into
   processes). Undeclared network or SAP use is a warning. The same scan warns in `pack` and runs
-  as `devstribution scan` (exit code 1 on danger, `--json` for CI). First piece of the IT review
-  kit below.
+  as `devstribution scan` (exit code 1 on danger, `--json` for CI).
+- ◐ Uninstall easy to find (report: Launcher UX 1): now in every app panel's ⋯ menu, next to Pin and
+  Repair; check with users whether that is enough.
+- ☑ Results in "a folder the user chose", so stateful apps get an "Open" button (report:
+  packaging 2): a `file` output may be inside a folder picked for one of the run's `folder`
+  inputs. No format change: older launchers only drop such a result with a warning.
+- ☐ **Results shown in the launcher**: preview Excel and CSV outputs as a table, show images and
+  charts, without opening another program. With more input types (dates, choices, several
+  files), most `form` apps need no window of their own.
 - ☐ Error messages reviewed end to end: every failure says what happened and what to do.
 - ☐ About page with version, licences of bundled software, and where the data folder is.
 
-## 6. Release engineering
+## 8. Release engineering and evidence for IT
 
 - ☑ Security review of install and run (extraction, signature checks, process supervision, the
   launcher's IPC surface and CSP, dependencies, CI): done before signing, findings and fixes in
   [`security.md`](security.md). Repeat before each release that changes these parts.
+- ☐ **Windows Event Log**: installs, runs, blocked calls, stopped runs and quarantines, as events
+  IT's monitoring already collects. The platform still sends nothing anywhere.
+- ☐ **SBOM**: `pack` writes a CycloneDX list of the app's dependencies into the package.
+- ☐ **`SECURITY.md`**: how to report a vulnerability, and what we answer.
+- ☐ **Fuzzing** (`cargo-fuzz`) of extraction, the manifest and lockfile parsers, and the scan's
+  tokenizer: the parts that read untrusted bytes.
 - ☐ Logs a user can find and send (a "Copy diagnostics" button), without secrets in them.
 - ☐ Versioning, changelog, release notes; `docs/HANDOFF.md` and `status_quo.md` folded into a
   contributor guide.
 - ☐ Docs for app authors: from `devstribution init` to a delivered `.dsapp`.
 
+## 9. Performance: measure first
+
+No complaint so far: repeat runs are fast, and uv's shared cache keeps environments cheap. The one
+slow moment is the first install of an app with heavy dependencies (pandas).
+
+- ☐ Time install, first run and later runs for ricon and the examples, and note them in
+  `report.md`. Optimise only what the numbers point at (for example, sharing an environment
+  between versions with the same lockfile, or starting the runner sooner).
+
 ## After 1.0
 
 Phase 2 of the plan: managed mode (company policy in HKLM), catalog with GitHub namespace
-verification, `devstribution://` links, revocation; the `web` and `background` app kinds; `resources`
+verification, `devstribution://` links, revocation; the `background` app kind; `resources`
 downloads (refused at install today).
 
-Part of managed mode, and what IT will ask for first: the **IT review kit** ([plan](plan.md),
-"IT review before approval").
-- A review report for each package, nothing executed: signature, permissions, files, dependencies,
-  flagged code. For updates, a diff against the approved version.
-- A one-click trial in Windows Sandbox (a throwaway virtual machine) that records what the app
-  actually did.
-- Approval by IT countersignature.
+- **`web` apps** ([plan](plan.md), "kinds"): Streamlit, Gradio or NiceGUI apps shown in their own
+  launcher window, with a one-time token. This is how an app gets a full custom UI *inside*
+  devstribution. Native windows (tkinter, Qt) stay separate: placing them inside the launcher's
+  window would be fragile (focus, scaling, crashes).
+- **A real sandbox**: apps that declare no network and no files outside their output folder start
+  in an AppContainer (or at Low integrity), so the kernel itself blocks the network and writes to
+  the user's files. The strongest guarantee, and the most work: environments, Excel COM and the
+  output folder all need access granted. The runtime guard (section 4) comes first and tells us
+  which apps would fit.
+- **The IT review kit** ([plan](plan.md), "IT review before approval"), part of managed mode and
+  what IT will ask for first:
+  - a review report for each package, nothing executed: signature, permissions, files,
+    dependencies, SBOM, flagged code; for updates, the diff against the approved version;
+  - a one-click trial in Windows Sandbox (a throwaway virtual machine) whose review mode records
+    what the app actually did, using the runtime guard in observe mode;
+  - approval by IT countersignature.
 
-The report needs nothing from managed mode, so it can come earlier if a company asks for it.
+  The report needs nothing from managed mode, so it can come earlier if a company asks for it.
+- **Other languages: not planned.** The environments, the runner, `ctx`, the scan and the runtime
+  guard are all Python-specific; a second language would need each of them again. If needed, a
+  "signed executable" kind (no environment, no scan, only the signature and the Job Object) is
+  the cheap option, clearly labelled as reviewed less.

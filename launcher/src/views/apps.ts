@@ -63,7 +63,9 @@ export async function appsView(ctx: Ctx): Promise<Rendered> {
             h("div", { class: "main-col" }, h("div", { class: "t" }, a.title), h("div", { class: "d", title: a.description ?? "" }, a.description ?? "No description.")),
             h("div", { class: "meta" },
               h("span", null, `by ${a.namespace}${w.length ? ` · ${w.join(", ")}` : ""}`),
-              h("span", null, last(a) ? `Used ${relTime(last(a))} · ${plural(runs(a), "run")} this month` : "Not used yet")),
+              a.quarantine
+                ? h("span", { class: "tag red", title: `Stopped by devstribution: the app ${a.quarantine.hit.message}` }, "Blocked")
+                : h("span", null, last(a) ? `Used ${relTime(last(a))} · ${plural(runs(a), "run")} this month` : "Not used yet")),
             h("button", { class: "btn primary", onclick: () => ctx.openApp(a.id) }, "Open"));
         })
       : h("div", { class: "empty-box" }, "No app matches these filters."));

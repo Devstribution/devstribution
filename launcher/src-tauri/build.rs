@@ -6,6 +6,7 @@ const COMMANDS: &[&str] = &[
     "discard_install",
     "uninstall_app",
     "repair_app",
+    "release_quarantine",
     "start_run",
     "cancel_run",
     "list_runs",

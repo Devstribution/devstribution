@@ -5,6 +5,14 @@ in [`status_quo.md`](status_quo.md); the long-term order of work is in [`roadmap
 
 ## The next session, in order
 
+> **Update, 23 October:**
+> - Steps 1 to 4 are done. Results are in [`report.md`](report.md) and the roadmap is ticked.
+> - Two checks remain open: the data folder move with real old data, and uv behind a company
+>   proxy.
+> - The code scan was added before install (PR "Code scan before install").
+>
+> Next: step 5 (signing), then step 6.
+
 1. **Merge the security PR** ("Security review before signing") once CI is green on all three
    platforms.
 2. **Rebuild on Windows** from `main` (commands below) and run the checks that only Windows can

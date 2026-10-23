@@ -1,6 +1,7 @@
 //! Installs, prepares and runs devstribution apps. Shared by the launcher and the CLI, so that
 //! `devstribution dev` runs apps exactly as the launcher does.
 
+pub mod guard;
 pub mod paths;
 pub mod run;
 pub mod runner;

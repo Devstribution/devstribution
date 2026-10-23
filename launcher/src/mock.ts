@@ -5,7 +5,7 @@ import type { Api, AppView, PendingInstall, RunEvent, RunRecord, Settings, StepE
 const now = () => Math.floor(Date.now() / 1000);
 const DAY = 86_400;
 
-const base = { trust: "first_use" as const, requires: [], origin: null, last_inputs: {}, secrets: [] };
+const base = { trust: "first_use" as const, requires: [], origin: null, last_inputs: {}, secrets: [], quarantine: null, guard_allow: [] as string[] };
 const noPerms = { network: [], folders: [], sap: false, secrets: [] };
 
 const apps: AppView[] = [
@@ -105,6 +105,15 @@ const apps: AppView[] = [
     outputs: [{ name: "summary", type: "text", label: "Summary" }],
     permissions: { network: ["bank.example.com"], folders: [], sap: false, secrets: [] },
     installed_at: now() - 12 * DAY,
+    // Shows the runtime guard's quarantine in the browser demo.
+    quarantine: {
+      run_id: "demo-stopped",
+      at: now() - 2 * 3600,
+      hit: {
+        action: "stop", rule: "start-with-windows", message: "tried to make a program start with Windows",
+        detail: "created hkcu\\software\\microsoft\\windows\\currentversion\\run",
+      },
+    },
   },
   {
     ...base,
@@ -292,6 +301,12 @@ export function mockApi(): Api {
       return structuredClone(app);
     },
     async discardInstall() {},
+    async releaseQuarantine(id, allow) {
+      const app = apps.find((a) => a.id === id)!;
+      if (app.quarantine && allow) app.guard_allow = [...app.guard_allow, app.quarantine.hit.rule];
+      app.quarantine = null;
+      return structuredClone(app);
+    },
     async uninstall(id) { const i = apps.findIndex((a) => a.id === id); if (i >= 0) apps.splice(i, 1); },
     async repair() {
       for (const m of ["Rebuilding the Python environment", "Installed 3 packages in 31ms", "Ready"]) {

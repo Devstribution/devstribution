@@ -14,7 +14,9 @@ from pathlib import Path
 BOOTSTRAP = Path(__file__).resolve().parents[1] / "bootstrap.py"
 
 
-class RunnerTest(unittest.TestCase):
+class RunnerBase(unittest.TestCase):
+    """Runs apps through `bootstrap.py`; the tests are in the subclasses."""
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
@@ -63,6 +65,8 @@ class RunnerTest(unittest.TestCase):
         _, stderr = proc.communicate(timeout=30)
         return proc.returncode, messages, stderr.decode()
 
+
+class RunnerTest(RunnerBase):
     def test_form_run_with_typed_inputs_and_file_output(self):
         self.write_app(
             """
@@ -113,6 +117,25 @@ class RunnerTest(unittest.TestCase):
         code, messages, _ = self.run_app(outputs=[{"name": "report", "type": "file"}])
         self.assertEqual(code, 1)
         self.assertIn("inside ctx.output_dir", messages[-1]["error"])
+
+    def test_output_in_a_chosen_folder_is_allowed(self):
+        work = self.root / "work"
+        work.mkdir()
+        self.write_app(
+            """
+            def run(work, ctx):
+                p = work / "lavoro.xlsx"
+                p.write_text("x")
+                return {"report": p}
+            """
+        )
+        code, messages, _ = self.run_app(
+            inputs={"work": str(work)},
+            input_types={"work": "folder"},
+            outputs=[{"name": "report", "type": "file"}],
+        )
+        self.assertEqual(code, 0, messages[-1])
+        self.assertEqual(Path(messages[-1]["outputs"]["report"]), (work / "lavoro.xlsx").resolve())
 
     def test_undeclared_secret_is_refused(self):
         self.write_app("def run(ctx):\n    return {'v': ctx.secrets.get('other')}\n")

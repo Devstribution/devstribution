@@ -10,6 +10,11 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 
+/// Programs an app must not start: read by the runner's guard, and by the launcher for every
+/// process in a run's Job Object ([`crate::guard`]).
+pub const PROCESS_RULES: &str =
+    include_str!("../../../runner/devstribution_runner/_process_rules.json");
+
 const FILES: &[(&str, &str)] = &[
     ("bootstrap.py", include_str!("../../../runner/bootstrap.py")),
     (
@@ -24,6 +29,11 @@ const FILES: &[(&str, &str)] = &[
         "devstribution_runner/_context.py",
         include_str!("../../../runner/devstribution_runner/_context.py"),
     ),
+    (
+        "devstribution_runner/_guard.py",
+        include_str!("../../../runner/devstribution_runner/_guard.py"),
+    ),
+    ("devstribution_runner/_process_rules.json", PROCESS_RULES),
     (
         "devstribution_runner/_runner.py",
         include_str!("../../../runner/devstribution_runner/_runner.py"),
