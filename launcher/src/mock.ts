@@ -390,6 +390,7 @@ export function mockApi(): Api {
         ],
       };
     },
+    async uninstallLauncher() { throw new Error("The browser demo has no uninstaller: in the launcher, this opens devstribution's own uninstaller."); },
     async takePendingFiles() { return []; },
     async onRunEvents(cb) { const l: Listener<[string, RunEvent]> = ([id, e]) => cb(id, [e]); runListeners.push(l); return off(runListeners, l); },
     async onInstallStep(cb) { stepListeners.push(cb); return off(stepListeners, cb); },

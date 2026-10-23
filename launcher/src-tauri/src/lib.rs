@@ -520,6 +520,28 @@ async fn settings(app: AppHandle) -> CmdResult<SettingsView> {
     .await
 }
 
+/// Starts the installer's own uninstaller (`uninstall.exe` next to the launcher), which asks
+/// whether to delete app data, then closes the launcher so its files can be removed. Running
+/// apps end with it. A launcher that was not installed by the setup program has no uninstaller.
+#[tauri::command]
+fn uninstall_launcher(app: AppHandle) -> CmdResult<()> {
+    let uninstaller = std::env::current_exe()
+        .map_err(|e| e.to_string())?
+        .with_file_name("uninstall.exe");
+    if !cfg!(windows) || !uninstaller.is_file() {
+        return Err(
+            "This copy of devstribution was not installed with the setup program, so \
+                    there is no uninstaller: delete its folder instead."
+                .into(),
+        );
+    }
+    std::process::Command::new(&uninstaller)
+        .spawn()
+        .map_err(|e| format!("Could not start the uninstaller: {e}"))?;
+    app.exit(0);
+    Ok(())
+}
+
 #[tauri::command]
 fn take_pending_files(app: AppHandle) -> Vec<String> {
     std::mem::take(&mut *lock(&state(&app).pending_files))
@@ -654,6 +676,7 @@ pub fn run() {
             set_secret,
             clear_secret,
             settings,
+            uninstall_launcher,
             take_pending_files,
         ])
         .run(tauri::generate_context!());

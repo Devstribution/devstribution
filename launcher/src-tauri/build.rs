@@ -15,6 +15,7 @@ const COMMANDS: &[&str] = &[
     "set_secret",
     "clear_secret",
     "settings",
+    "uninstall_launcher",
     "take_pending_files",
 ];
 

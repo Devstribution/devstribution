@@ -13,6 +13,7 @@ Findings from running the proof of concept on Windows by hand (Windows 11, toolc
 
 | # | Finding | Where | State |
 |---|---|---|---|
+| 4 | **The launcher can't uninstall itself.** Nothing in the launcher removes devstribution; only Windows' "Installed apps" list (or `uninstall.exe` in the install folder) does. A user who installed it to a folder of their choice has to know where that is. Fixed: Settings → "Uninstall devstribution…" asks, starts `uninstall.exe` next to the launcher (which still asks whether to delete app data) and closes the launcher; a copy not installed by the setup program says so. Checked in the installed launcher (installed to a folder of the user's choice). | `launcher/src/views/settings.ts`, `src-tauri/src/lib.rs` (`uninstall_launcher`) | Fixed |
 | 3 | **Uninstall's confirmation failed**: `window.confirm` is routed to the dialog plugin, which wasn't allowed (`dialog.confirm not allowed` in the log). Fixed: `api.ask()` uses the plugin's `ask()`, and the capability now grants `dialog:allow-ask`. | `launcher/src/views/app.ts`, `api.ts`, `capabilities/default.json` | Fixed |
 | 2 | **The "⋯" menu was cut off**: only "Repair" showed, "Uninstall" was hidden. The app page's top card had `overflow: hidden` (to clip its decorative glow), which also clipped the menu opening below it. Fixed: the glow is now a background layer and the card no longer clips. Checked in the browser demo; check in the real launcher. | `launcher/src/styles.css` (`.hero`) | Fixed |
 | 1 | **Uninstall is hard to find.** It exists, but only in the "⋯" menu on the app page, next to Repair; nothing on the home screen, the app tiles or the Apps list offers it. A user looking for "delete this app" doesn't find it. | `launcher/src/views/app.ts:275` | Open |
@@ -88,6 +89,7 @@ safe choice).
 | Started through `subprocess`, panel open: the run ends as "Stopped by devstribution", the panel shows the red "Blocked by devstribution" banner, the Apps list shows "Blocked" | Pass |
 | Run refused while quarantined; "Allow and run again" runs to the end, the command only reported in the log | Pass |
 | Started through `WinExec` (behind the hook), on a fresh install: stopped by the Job Object watch, same banner | Pass |
+| `examples/hello-gui` (tkinter, `pythonw.exe`) under the guard: runs as before, nothing reported | Pass |
 
 The checks used a throwaway test app (`wincheck`: `tree-*` / `excel-*` modes, a secret input) and
 `examples/hello-gui`.

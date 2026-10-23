@@ -174,6 +174,9 @@ The scan reads only the package's own Python files today. Extend it where attack
   charts, without opening another program. With more input types (dates, choices, several
   files), most `form` apps need no window of their own.
 - ☐ Error messages reviewed end to end: every failure says what happened and what to do.
+- ☑ "Uninstall devstribution" in Settings (report: Launcher UX 4): starts the installer's own
+  uninstaller, with its "delete app data" choice, and closes the launcher. Checked in the
+  installed launcher.
 - ☐ About page with version, licences of bundled software, and where the data folder is.
 
 ## 8. Release engineering and evidence for IT

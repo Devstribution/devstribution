@@ -210,6 +210,8 @@ export interface Api {
   setSecret(id: string, name: string, value: string): Promise<void>;
   clearSecret(id: string, name: string): Promise<void>;
   settings(): Promise<Settings>;
+  /** Starts devstribution's own uninstaller and closes the launcher. */
+  uninstallLauncher(): Promise<void>;
   takePendingFiles(): Promise<string[]>;
   /** Run events arrive in batches (at most about ten a second), so a chatty app cannot flood the window. */
   onRunEvents(cb: (runId: string, events: RunEvent[]) => void): Promise<Unlisten>;
@@ -264,6 +266,7 @@ async function tauriApi(): Promise<Api> {
     setSecret: (id, name, value) => invoke("set_secret", { id, name, value }),
     clearSecret: (id, name) => invoke("clear_secret", { id, name }),
     settings: () => invoke("settings"),
+    uninstallLauncher: () => invoke("uninstall_launcher"),
     takePendingFiles: () => invoke("take_pending_files"),
     onRunEvents: (cb) =>
       listen<{ run_id: string; events: RunEvent[] }>("run-events", (e) => cb(e.payload.run_id, e.payload.events)),
