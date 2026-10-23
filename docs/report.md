@@ -28,6 +28,8 @@ safe choice).
 |---|---|---|---|
 | 1 | **`pack` has no way to leave out a folder.** `app_1/output/` holds client data (Excel, SQLite, diagnostic zips) and would have been packed and signed. Worked around by packing a clean copy; a `[tool.devstribution] exclude = [...]` list (or honouring `.gitignore`) is needed. | `crates/devstribution-core/src/package.rs` (`EXCLUDED_DIRS`) | Fixed |
 | 2 | **Stateful apps don't fit the per-run output folder.** The app keeps its Excel di lavoro, archive and database between runs, so it writes to a folder the user picks; `file` outputs must be inside `ctx.output_dir`, so the result can only be shown as text, without an "Open result" button. An output type for "a folder the user chose" would fix it. | `runner/devstribution_runner/_runner.py:277` | Open |
+| 5 | **The data guard missed `output/ultimo_esito.json`.** Repacking with the new CLI: the spreadsheets and the database in `output/` were refused as data, but the app's last result (a `.json` with client figures) would have been signed into the package. JSON is too common as configuration to treat as data everywhere. Fixed for ricon with a `.dsappignore` (`output/`, `tests/`, `*.bat`); for `pack`, a folder that holds refused data files could have its other files refused too. | `crates/devstribution-core/src/package.rs` (`DATA_EXTENSIONS`) | Open |
+| 4 | **The code scan's first real run flagged `socket` in three files** without declared network access. They only call `socket.gethostname()` for the diagnostics. The scanner now counts `socket` only when another member is used. | `crates/devstribution-core/src/scan.rs` (`SOFT_MODULES`) | Fixed; test `harmless_socket_use_is_not_network` |
 | 3 | No cooperative cancellation: the app never calls `ctx.progress()`, so Cancel relies on the 3 s `KeyboardInterrupt` fallback. Fine to test the fallback with. | `app_1/main.py` | Note |
 
 ## Setup and docs
@@ -57,9 +59,27 @@ safe choice).
 | `keygen`, `pack examples/excel-report`, `verify` | Pass |
 | Install `excel-report.dsapp` in the launcher | Pass |
 | Install and run `ricon.dsapp` (pandas, pdfplumber) | Pass, after runner fix 1 |
+| Cancel, cooperative: app → child → grandchild all gone, run `cancelled` | Pass |
+| Cancel, app ignores it: Job Object killed after the grace period, whole tree gone | Pass |
+| Excel via `DispatchEx` + `track_com`: closed after a normal run (`Quit()`) | Pass |
+| Excel, cooperative Cancel: closed by cleanup | Pass |
+| Excel, app ignores Cancel: the app's Excel killed by PID + creation time | Pass |
+| Excel safety: the user's own Excel, open before the run, survives that kill | Pass |
+| Secrets: stored in Credential Manager (`devstribution/<id>/<name>`), reused on the next run without asking | Pass |
+| `gui` app: runs as `pythonw.exe`, no console window | Pass |
+| *After the security PR (suspended start in the Job Object, restricted DLL loading), 23 Oct:* | |
+| Launcher starts with `/DEPENDENTLOADFLAG:0x800` and `SetDefaultDllDirectories` (WebView2 loads) | Pass |
+| Update `ricon` 0.1.0 → 0.1.1, repacked with the new CLI; install screen says "Nothing unusual found"; real run | Pass |
+| Code scan: `scan-demo.dsapp` (fake start-with-Windows entry and decode-and-run) shows the red banner, two danger rows and "Install anyway" | Pass |
+| Cancel, app ignores it (`tree-stubborn`): whole tree gone after the grace period, run `cancelled` after 21 s | Pass |
+| Closing the launcher mid-run (`tree-stubborn`): no app process left (KILL_ON_JOB_CLOSE); the run stays `running` until the next start, which records it as "the launcher closed during the run" | Pass (the record's fix-up on the next start not seen yet) |
+| Data folder move: the new folder `%LOCALAPPDATA%\dev.devstribution.launcher\data` is used. The old `%LOCALAPPDATA%\devstribution` holds only empty folders and a runner copy, with no `state.json`, so there was nothing to move and it stays behind | Not exercised (no old data); the leftover folder is harmless |
+
+The checks used a throwaway test app (`wincheck`: `tree-*` / `excel-*` modes, a secret input) and
+`examples/hello-gui`.
 
 ## Still to check on Windows
 
-From `status_quo.md`: Cancel kills the whole process tree (Job Object), Excel cleanup via COM,
-Mark-of-the-Web origin, file association and single instance (installer), `pythonw.exe` for `gui`
-apps, secrets in Credential Manager.
+Mark-of-the-Web origin, and the file association and single instance: these need the installer
+(`npx tauri build`), as does the uninstaller removing the data folder and the apps' secrets.
+Also: the data folder move with real old data, and uv behind a company proxy.

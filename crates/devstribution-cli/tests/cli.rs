@@ -77,6 +77,14 @@ fn init_dev_pack_verify() {
         .assert()
         .success();
 
+    let scanned = cli(&home).arg("scan").arg(&pkg).output().unwrap();
+    assert!(scanned.status.success());
+    assert!(
+        stdout(&scanned).contains("nothing flagged"),
+        "{}",
+        stdout(&scanned)
+    );
+
     let verified = cli(&home)
         .arg("verify")
         .arg(&pkg)
@@ -121,4 +129,61 @@ fn dev_reports_signature_mismatch_before_running() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("missing the parameter `name`"), "{err}");
     assert!(err.contains("`nme`, which is not declared"), "{err}");
+}
+
+#[test]
+fn scan_flags_malware_like_code_and_pack_warns() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    let app = tmp.path().join("hello");
+    cli(&home)
+        .args(["init", "--id", "alice/hello"])
+        .arg(&app)
+        .assert()
+        .success();
+    let main = app.join("main.py");
+    let code = fs::read_to_string(&main).unwrap()
+        + "
+import base64
+
+def _later():
+    exec(base64.b64decode(\"cHJpbnQoMSk=\"))
+";
+    fs::write(&main, code).unwrap();
+
+    let scanned = cli(&home)
+        .arg("scan")
+        .arg(&app)
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert_eq!(
+        scanned.status.code(),
+        Some(1),
+        "danger findings fail the scan"
+    );
+    let report: serde_json::Value = serde_json::from_str(&stdout(&scanned)).unwrap();
+    let rules: Vec<&str> = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["rule"].as_str().unwrap())
+        .collect();
+    assert_eq!(rules, ["decode-and-run", "dynamic-code"]);
+
+    // The publisher sees the same findings when packing; signing still works.
+    cli(&home)
+        .args(["keygen", "--namespace", "alice", "--no-password"])
+        .assert()
+        .success();
+    let packed = cli(&home)
+        .arg("pack")
+        .arg(&app)
+        .arg("-o")
+        .arg(tmp.path().join("hello.dsapp"))
+        .output()
+        .unwrap();
+    assert!(packed.status.success());
+    let stderr = String::from_utf8_lossy(&packed.stderr);
+    assert!(stderr.contains("code scan (danger): main.py:"), "{stderr}");
 }

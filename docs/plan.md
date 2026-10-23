@@ -194,7 +194,7 @@ In managed mode IT approves authors and apps. To do that with confidence, IT nee
    - Declared permissions and kind.
    - Every file with its hash.
    - Every dependency from `uv.lock`, with version, hash and licence.
-   - A scan of the code for calls that should match a declared permission: network (`socket`, `requests`, `urllib`), processes (`subprocess`, `os.system`), native code (`ctypes`, `.pyd`), dynamic code (`exec`, `eval`, `importlib` of computed names). An undeclared match is flagged.
+   - A scan of the code for calls that should match a declared permission: network (`socket`, `requests`, `urllib`), processes (`subprocess`, `os.system`), native code (`ctypes`, `.pyd`), dynamic code (`exec`, `eval`, `importlib` of computed names). An undeclared match is flagged. *Done early:* `devstribution scan` and the launcher's install screen (`devstribution_core::scan`), which also flag what is typical of malware: hidden code, starting with Windows, reading browser passwords, switching off the antivirus, injecting into processes.
    - **For updates, a diff against the version already approved**: changed files, added or upgraded dependencies, changed permissions. IT then reviews only what changed.
 2. **Try it in a disposable machine.** "Open in Windows Sandbox" writes a `.wsb` configuration with:
    - the launcher (portable) and the package mapped in read-only;

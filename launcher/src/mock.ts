@@ -226,6 +226,14 @@ const pending: PendingInstall = {
     "First app from `acme-ops` on this computer. Its name is not verified: install it only if you trust where you got it. Future versions must come from the same key.",
     "This file was downloaded from the internet.",
   ],
+  scan: {
+    files_scanned: 4,
+    findings: [
+      { rule: "dynamic-code", category: "dynamic_code", severity: "warning", message: "Runs code that is built while the app runs, which cannot be reviewed in advance", path: "kpi/rules.py", line: 41, evidence: "eval(...)", occurrences: 1 },
+      { rule: "network", category: "network", severity: "info", message: "Connects to other computers", path: "kpi/sharepoint.py", line: 3, evidence: "import requests", occurrences: 4 },
+      { rule: "processes", category: "processes", severity: "info", message: "Starts other programs", path: "main.py", line: 12, evidence: "subprocess.run(...)", occurrences: 1 },
+    ],
+  },
 };
 
 type Listener<T> = (v: T) => void;
