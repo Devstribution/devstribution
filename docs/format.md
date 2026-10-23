@@ -32,7 +32,9 @@ declares. Parts marked *reserved* below are valid format 1, but current launcher
 
 ## The container
 
-A `.dsapp` file is a zip archive.
+A `.dsapp` file is a zip archive. The name does not matter to the launcher, only the content: a
+`.dsapp` that a download renamed to `.zip` installs the same way, and a zip without
+`FILES.sha256` is refused as "not a devstribution app" before anything is extracted.
 
 | Rule | Value |
 |---|---|

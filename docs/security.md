@@ -31,7 +31,8 @@ apps, within the limits listed below.
 | The launcher window being used to do more than the launcher needs | The window may call only the launcher's own commands, event listening, the file picker and yes/no questions (no `core:default`). The backend checks every argument (ids, run ids, secret names, paths). |
 | A DLL planted next to the signed launcher (Windows) | Imported DLLs load from System32 only (`/DEPENDENTLOADFLAG`), others never from the current folder or PATH (`SetDefaultDllDirectories`). The launcher's data is kept out of its install folder. |
 | An app whose code does more than it declares, or hides what it does | Before the install button, the code scan lists what the code uses and flags undeclared network or SAP use, programs and compiled files that cannot be reviewed, code built at run time, and what is typical of malware (decode-and-run, start-with-Windows entries, browser password stores, antivirus switches, process injection, hidden text-direction characters). A red banner and "Install anyway" when something looks like malware. The scan reads, never runs, the code; see limit 2. |
-| An app doing more than it declared, or what malware does, while it runs | The runtime guard: an audit hook in the runner, installed before app code, blocks network use the app does not declare (and hosts it does not list) and SAP's RFC library without `sap`; it stops the run before the call on start-with-Windows entries, the antivirus's settings, browser password stores, the Windows tools malware uses, process injection, keyboard hooks and hidden compiled code. The launcher checks every process in the run's Job Object against the same rules. A stop ends the whole tree and quarantines the app until the user decides. See limit 2 for what it does not see. |
+| A dependency that is known malware, or named like a popular package to be installed by mistake | The dependency check reads `uv.lock` at install, in `pack` and in `devstribution scan`: a package (or the locked version of one) reported as malicious on PyPI is a danger finding, with the red banner and "Install anyway"; a name one edit away from one of the 1,000 most downloaded packages is a warning. The lists are bundled (OSV's `MAL-` entries and the top 15,000 packages), so nothing is sent anywhere; the screen says up to which date the reports are known. |
+| An app doing more than it declared, or what malware does, while it runs | The runtime guard: an audit hook in the runner, installed before app code and before the environment's `site-packages` (so the code a dependency's `.pth` file runs at start-up is checked too, and reported), blocks network use the app does not declare (and hosts it does not list) and SAP's RFC library without `sap`; it stops the run before the call on start-with-Windows entries, the antivirus's settings, browser password stores, the Windows tools malware uses, process injection, keyboard hooks and hidden compiled code. The launcher checks every process in the run's Job Object against the same rules. A stop ends the whole tree and quarantines the app until the user decides. See limit 2 for what it does not see. |
 | A downloaded package without a warning | Mark-of-the-Web is read (also UTF-16); a mark that cannot be understood counts as "from the internet". |
 | A tampered CI pipeline (once it signs releases) | Actions pinned to commit SHAs, read-only token, `cargo audit` and `npm audit` on every change, Dependabot updates. |
 
@@ -55,8 +56,10 @@ These are deliberate limits of the current design. Each one says why, and what w
    protection, which is why the confirmation screen is explicit about new publishers. Two layers
    narrow what a dishonest app can do without being noticed, and neither is a wall:
    - The **code scan** at install is a static reading of the package's own Python files: it does
-     not read dependencies, and code that builds names or downloads code at run time can get past
-     it. It is a prompt to ask questions, not a verdict.
+     not read the code of dependencies (only their names and versions, against reports of
+     malicious packages up to the bundled list's date, and look-alike names), and code that
+     builds names or downloads code at run time can get past it. It is a prompt to ask
+     questions, not a verdict.
    - The **runtime guard** ([`roadmap.md`](roadmap.md), section 4) sees what goes through
      Python's audit events, inside the app's own process. It does not see network use, files or
      programs reached through native code (`ctypes` calls to WinHTTP, COM objects such as
@@ -113,9 +116,6 @@ Results in [`report.md`](report.md):
 
 ### Still to verify on a real Windows PC
 
-- **Runtime guard in the launcher:** a stop quarantines the app, the panel shows the banner,
-  "Allow and run again" lets that rule pass (the automated tests already run on Windows,
-  including the Job Object catching a program started behind the hook).
 - **Job Object:** Excel is closed after a crash (closed after Cancel and after a killed run: verified).
 - **Data migration:** an existing `%LOCALAPPDATA%\devstribution` data folder moves to the new
   location on first start of the new launcher.

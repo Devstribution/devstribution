@@ -218,11 +218,12 @@ async function boot() {
     h("div", null, icon(Upload, 40), "Drop to install"));
   document.body.appendChild(dropOverlay);
   await api.onDragDrop((e) => {
-    const dsapps = e.paths.filter((p) => p.toLowerCase().endsWith(".dsapp"));
+    // .zip too: a downloaded .dsapp often arrives renamed. Its content is checked all the same.
+    const dsapps = e.paths.filter((p) => /\.(dsapp|zip)$/i.test(p));
     dropOverlay.hidden = !(e.type === "over" && (dsapps.length > 0 || e.paths.length === 0));
     if (e.type === "drop") {
       if (dsapps.length) ctx.install(dsapps[0]);
-      else if (e.paths.length) toast("Only .dsapp files can be installed", "error");
+      else if (e.paths.length) toast("Only .dsapp files (or a .dsapp renamed to .zip) can be installed", "error");
     }
   });
   await api.onOpenFiles((paths) => { if (paths[0]) ctx.install(paths[0]); });

@@ -15,7 +15,11 @@ BOOTSTRAP = Path(__file__).resolve().parents[1] / "bootstrap.py"
 
 
 class RunnerBase(unittest.TestCase):
-    """Runs apps through `bootstrap.py`; the tests are in the subclasses."""
+    """Runs apps through `bootstrap.py`, started like the launcher does; the tests are in the
+    subclasses."""
+
+    # The Python that runs the app; a test may point it at an environment it made.
+    python = sys.executable
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -43,7 +47,7 @@ class RunnerBase(unittest.TestCase):
         }
         msg.update(overrides)
         proc = subprocess.Popen(
-            [sys.executable, "-I", str(BOOTSTRAP)],
+            [self.python, "-I", "-S", str(BOOTSTRAP)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -250,7 +254,7 @@ class RunnerTest(RunnerBase):
         (evil / "json.py").write_text("raise SystemExit('shadowed')")
         self.write_app("def run(ctx):\n    return {}\n")
         proc = subprocess.run(
-            [sys.executable, "-I", str(BOOTSTRAP)],
+            [self.python, "-I", "-S", str(BOOTSTRAP)],
             input=json.dumps({"protocol": 1, "kind": "form", "app_dir": str(self.app), "entry": "main:run",
                               "output_dir": str(self.out)}).encode() + b"\n",
             capture_output=True,

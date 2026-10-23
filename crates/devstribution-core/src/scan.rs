@@ -19,6 +19,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::deps::{self, DepHitKind};
 use crate::manifest::Permissions;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -57,6 +58,8 @@ pub enum Category {
     RuntimeInstall,
     Sap,
     Binary,
+    /// The packages the app installs (`uv.lock`), checked by `crate::deps`.
+    Dependencies,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,6 +85,18 @@ pub struct ScanReport {
     pub files_scanned: usize,
     /// Most severe first, then by file and line.
     pub findings: Vec<Finding>,
+    /// The dependency check, when the files include `uv.lock`.
+    #[serde(default)]
+    pub dependencies: Option<DependencyCheck>,
+}
+
+/// What the dependency check looked at, so a clean result can say how much it means.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DependencyCheck {
+    /// Packages in `uv.lock`, besides the app itself.
+    pub packages: usize,
+    /// Date of the bundled list of malicious packages: newer reports are not known.
+    pub list_date: String,
 }
 
 impl ScanReport {
@@ -120,6 +135,25 @@ const fn rule(
 
 use Category as C;
 use Severity as S;
+
+const MALICIOUS_PACKAGE: Rule = rule(
+    "malicious-package",
+    C::Dependencies,
+    S::Danger,
+    "Installs a package reported as malicious on PyPI",
+);
+const HIJACKED_PACKAGE: Rule = rule(
+    "hijacked-package",
+    C::Dependencies,
+    S::Info,
+    "Installs a package of which other versions were reported as malicious (this one was not)",
+);
+const TYPOSQUAT: Rule = rule(
+    "typosquat",
+    C::Dependencies,
+    S::Warning,
+    "Installs a package named almost like a popular one, a common trick to get malware installed",
+);
 
 // Rules whose severity depends on the manifest are written as `Info` and raised in `finish`.
 const NETWORK: Rule = rule(
@@ -440,6 +474,7 @@ pub fn scan<'a>(
 pub struct Scan {
     files_scanned: usize,
     findings: BTreeMap<(&'static str, String), Finding>,
+    dependencies: Option<DependencyCheck>,
 }
 
 impl Scan {
@@ -450,7 +485,11 @@ impl Scan {
             .map(|(_, e)| e.to_ascii_lowercase())
             .unwrap_or_default();
         let ext = ext.as_str();
-        if BINARY_EXTENSIONS.contains(&ext) {
+        if rel == "uv.lock" {
+            if let Some(bytes) = read() {
+                self.lockfile(&String::from_utf8_lossy(&bytes));
+            }
+        } else if BINARY_EXTENSIONS.contains(&ext) {
             self.add(&BINARY, rel, None, rel);
         } else if SCRIPT_EXTENSIONS.contains(&ext) {
             self.add(&SCRIPT_FILE, rel, None, rel);
@@ -640,6 +679,42 @@ impl Scan {
         }
     }
 
+    /// Checks the packages in `uv.lock` (`crate::deps`): one finding per flagged package.
+    pub fn lockfile(&mut self, lock: &str) {
+        let check = deps::check(lock);
+        for hit in check.hits {
+            let (rule, evidence) = match &hit.kind {
+                DepHitKind::Malicious => {
+                    (&MALICIOUS_PACKAGE, format!("{} {}", hit.name, hit.version))
+                }
+                DepHitKind::OtherVersionMalicious => {
+                    (&HIJACKED_PACKAGE, format!("{} {}", hit.name, hit.version))
+                }
+                DepHitKind::LooksLike(target) => (
+                    &TYPOSQUAT,
+                    format!("{} {} (looks like `{target}`)", hit.name, hit.version),
+                ),
+            };
+            self.findings.insert(
+                (rule.id, format!("uv.lock {}", hit.name)),
+                Finding {
+                    rule: rule.id.to_string(),
+                    category: rule.category,
+                    severity: rule.severity,
+                    message: rule.message.to_string(),
+                    path: "uv.lock".to_string(),
+                    line: hit.line,
+                    evidence,
+                    occurrences: 1,
+                },
+            );
+        }
+        self.dependencies = Some(DependencyCheck {
+            packages: check.packages,
+            list_date: deps::list_date().to_string(),
+        });
+    }
+
     fn add(&mut self, rule: &'static Rule, rel: &str, line: Option<u32>, evidence: &str) {
         self.findings
             .entry((rule.id, rel.to_string()))
@@ -682,6 +757,7 @@ impl Scan {
         ScanReport {
             files_scanned: self.files_scanned,
             findings,
+            dependencies: self.dependencies,
         }
     }
 }

@@ -24,6 +24,7 @@
     "allow-set-secret",
     "allow-clear-secret",
     "allow-settings",
+    "allow-uninstall-launcher",
     "allow-take-pending-files"
   ]
 }

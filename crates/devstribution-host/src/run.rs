@@ -243,7 +243,9 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
 
     let mut cmd = Command::new(&spec.python);
     // `-X utf8`: the app's output reaches the launcher as UTF-8 whatever the Windows code page.
-    cmd.args(["-I", "-X", "utf8"])
+    // `-S`: the runner loads `site` itself, after the runtime guard, so the code dependencies
+    // run from `.pth` files when Python starts is checked too.
+    cmd.args(["-I", "-S", "-X", "utf8"])
         .arg(spec.runner_dir.join("bootstrap.py"))
         .current_dir(&spec.run_dir)
         .stdin(Stdio::piped())

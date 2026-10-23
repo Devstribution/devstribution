@@ -10,42 +10,48 @@ in [`status_quo.md`](status_quo.md); the long-term order of work is in [`roadmap
 > - Two checks remain open: the data folder move with real old data, and uv behind a company
 >   proxy.
 > - The code scan was added before install (PR "Code scan before install").
+> - Since then: the runtime guard, the dependency check, "Uninstall devstribution" in Settings
+>   and `.zip` downloads, all checked in the installed launcher (PR #19).
 >
-> Next: step 5 (signing), then step 6.
+> Next: managed mode (step 1), then signing and Phase 0.
 
-1. **Merge the security PR** ("Security review before signing") once CI is green on all three
-   platforms.
-2. **Rebuild on Windows** from `main` (commands below) and run the checks that only Windows can
-   run. Each check is listed in [`security.md`](security.md), "Still to verify on a real Windows
-   PC". Write the results in [`report.md`](report.md) and tick them in the roadmap (step 2):
-   - **Cancel and closing the launcher** stop the app and everything it started. The app now
-     starts suspended and joins its Job Object first. Try an app that starts a child process,
-     and Excel through COM.
-   - **The launcher starts normally** with the restricted DLL loading
-     (`/DEPENDENTLOADFLAG:0x800`, `SetDefaultDllDirectories`).
-   - **The old data moves** from `%LOCALAPPDATA%\devstribution` to
-     `%LOCALAPPDATA%\dev.devstribution.launcher\data` on first start, and the installed apps
-     still run.
-   - **App environments still build behind your company network**: uv now runs with
-     `--no-config`, a cleaned environment and `--system-certs`.
-   - **A real run through the app panel**, Excel file and all, plus the colours and Settings.
-3. **Repack your real app** (`ricon.dsapp`) with the new CLI. `pack` now applies the same checks
-   as the launcher:
-   - wheels from PyPI only, with hashes;
-   - stricter file names;
-   - version numbers made of digits only.
-
-   Fix what it reports and give it a new version number, then reinstall it. The same version with
-   different content is refused, so bump the version or uninstall the old one first.
-4. **Build the installer:** `npx tauri build` in `launcher/`. Then check:
-   - the per-user NSIS installer, which no longer builds an MSI;
-   - double-clicking a `.dsapp`, and a second double-click while the launcher is open;
-   - a `.dsapp` downloaded with a browser shows "Downloaded from the internet";
-   - uninstalling with "delete app data" removes the data folder and the apps' secrets in
-     Credential Manager (`devstribution.exe --forget-secrets`, run by `windows/hooks.nsh`).
-5. **Apply for signing:** SignPath Foundation (free for open source), with Certum's open-source
+1. **Managed mode, first version: no server needed.** This is what a company's IT will ask
+   for before allowing devstribution on its PCs. Today trust is per user, on first use. The
+   design is in [`plan.md`](plan.md), "Trust model and policy"; the checklist is
+   [`roadmap.md`](roadmap.md), section 10. Everything below works with what IT already has: the
+   registry pushed through GPO or Intune, and files on a network share. No server of ours is
+   involved.
+   - **Read the policy.** If `HKLM\SOFTWARE\Policies\devstribution` exists, the launcher is in
+     managed mode; otherwise it stays in free mode exactly as today. A user can't write under
+     HKLM, so an app or the user can't switch the mode off. The policy holds the allowed
+     authors, either inline or as a path to a TOML policy file. That file must sit somewhere
+     only admins can write, and the launcher should refuse it otherwise.
+   - **Allowed authors from `.trust` files.** A `.trust` file holds an author's namespace and
+     public keys (fingerprints). `devstribution trust export` writes one from a publisher key,
+     and IT lists it in the policy. In managed mode, `admit` (`devstribution-host/src/store.rs`)
+     accepts only packages whose namespace and key are in the policy. There is no trust on first
+     use, and no "Install anyway" for an unknown author.
+   - **The block message helps.** A refused package says who to ask, and offers to save a
+     ready-to-forward `.trust` file ("ask your IT to trust X").
+   - **Policy options, all optional:**
+     - what happens to a danger finding in the code scan or dependency check (refuse, or let
+       the user decide);
+     - the runtime guard's rules per rule, and whether a user may release a quarantine
+       (roadmap, section 4, "Modes per rule");
+     - the minimum launcher version.
+   - **The launcher shows it.** The mode line says "Managed by your organisation · N approved
+     authors", Settings lists the policy, and the install screen marks approved authors.
+   - **Dry run.** A policy value that only logs what would have been refused, so IT can roll the
+     policy out without breaking anyone.
+   - **Tests** in `flow.rs` with a policy given through a test hook instead of the real
+     registry. Then on Windows: set the registry value by hand and check that an unapproved
+     package is refused while an approved one installs.
+   - **Later, not in this step:** the per-machine service and installs in Program Files (the
+     WDAC part of the plan), an ADMX template, IT countersignatures, and a revocation list.
+     Like the policy, the revocation list can live on a network share.
+2. **Apply for signing:** SignPath Foundation (free for open source), with Certum's open-source
    certificate as the fallback. Then sign in CI ([`roadmap.md`](roadmap.md), step 3).
-6. **Phase 0 of [`plan.md`](plan.md):** install and run on a locked-down company PC
+3. **Phase 0 of [`plan.md`](plan.md):** install and run on a locked-down company PC
    (AppLocker/WDAC).
 
 GitHub settings only you can change: turn on private vulnerability reporting
@@ -95,7 +101,7 @@ Set `DEVSTRIBUTION_HOME` to a scratch folder to keep test installs out of the re
 
 **The conda environment** is fine for tooling. It doesn't leak into apps: installed apps get uv's
 own Python (`--managed-python`), with conda's variables removed from the environment, and the
-runner starts Python with `-I`. Run `cargo test` from a shell where `uv` is on PATH.
+runner starts Python with `-I -S`. Run `cargo test` from a shell where `uv` is on PATH.
 
 ## Layout
 

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-uninstall-launcher"
+description = "Enables the uninstall_launcher command without any pre-configured scope."
+commands.allow = ["uninstall_launcher"]
+
+[[permission]]
+identifier = "deny-uninstall-launcher"
+description = "Denies the uninstall_launcher command without any pre-configured scope."
+commands.deny = ["uninstall_launcher"]
