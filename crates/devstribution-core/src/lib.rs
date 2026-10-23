@@ -13,6 +13,7 @@ pub mod package;
 pub mod paths;
 pub mod scan;
 pub mod signing;
+pub mod trust;
 
 pub use error::{Error, Result};
 

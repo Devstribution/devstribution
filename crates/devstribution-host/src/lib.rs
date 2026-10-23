@@ -3,6 +3,7 @@
 
 pub mod guard;
 pub mod paths;
+pub mod policy;
 pub mod run;
 pub mod runner;
 pub mod secrets;

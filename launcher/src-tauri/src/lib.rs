@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use devstribution_core::manifest::{Input, Output, Permissions};
+use devstribution_host::policy::{self, Policy, ScanDanger};
 use devstribution_host::run::{self, RunEvent};
 use devstribution_host::store::{
     InstallStep, InstalledApp, PendingInstall, Quarantine, RunRecord, Stats, Store,
@@ -107,10 +108,13 @@ struct AppView {
     secrets: Vec<SecretView>,
     quarantine: Option<Quarantine>,
     guard_allow: Vec<String>,
+    /// Whether the user may let the app run past a guard rule that stopped it (managed mode
+    /// can keep that decision for IT).
+    may_allow_guard_rules: bool,
 }
 
-impl From<InstalledApp> for AppView {
-    fn from(app: InstalledApp) -> AppView {
+impl AppView {
+    fn new(app: InstalledApp, store: &Store) -> AppView {
         let m = app.manifest;
         let id = m.id.to_string();
         let secrets = run::secret_names(&m)
@@ -138,6 +142,7 @@ impl From<InstalledApp> for AppView {
             last_inputs: app.record.last_inputs,
             secrets,
             quarantine: app.record.quarantine,
+            may_allow_guard_rules: store.users_may_allow_guard_rules(),
             guard_allow: app.record.guard_allow,
             id,
         }
@@ -173,7 +178,7 @@ async fn overview(app: AppHandle) -> CmdResult<Overview> {
                 .store
                 .installed()?
                 .into_iter()
-                .map(AppView::from)
+                .map(|a| AppView::new(a, &s.store))
                 .collect(),
             // A month: the dashboard shows its last 14 days, "often" uses all of it.
             stats: s.store.stats(30)?,
@@ -185,7 +190,11 @@ async fn overview(app: AppHandle) -> CmdResult<Overview> {
 
 #[tauri::command]
 async fn get_app(app: AppHandle, id: String) -> CmdResult<AppView> {
-    blocking(move || Ok(state(&app).store.app(&id)?.into())).await
+    blocking(move || {
+        let store = &state(&app).store;
+        Ok(AppView::new(store.app(&id)?, store))
+    })
+    .await
 }
 
 #[tauri::command]
@@ -220,7 +229,7 @@ async fn confirm_install(app: AppHandle, token: String) -> CmdResult<AppView> {
         let s = state(&app);
         let _guard = lock(&s.write_lock);
         let mut sink = step_sink(&app, &token);
-        Ok(s.store.install(&token, &mut sink)?.into())
+        Ok(AppView::new(s.store.install(&token, &mut sink)?, &s.store))
     })
     .await
 }
@@ -258,7 +267,10 @@ async fn release_quarantine(app: AppHandle, id: String, allow: bool) -> CmdResul
     blocking(move || {
         let s = state(&app);
         let _guard = lock(&s.write_lock);
-        Ok(s.store.release_quarantine(&id, allow)?.into())
+        Ok(AppView::new(
+            s.store.release_quarantine(&id, allow)?,
+            &s.store,
+        ))
     })
     .await
 }
@@ -499,11 +511,59 @@ struct PinView {
 }
 
 #[derive(Serialize)]
+struct AuthorView {
+    namespace: String,
+    name: Option<String>,
+    fingerprints: Vec<String>,
+}
+
+/// Managed mode's policy, as Settings shows it.
+#[derive(Serialize)]
+struct PolicyView {
+    source: String,
+    authors: Vec<AuthorView>,
+    contact: Option<String>,
+    dry_run: bool,
+    scan_danger: ScanDanger,
+    users_may_allow_guard_rules: bool,
+    guard_report_only: Vec<String>,
+    min_launcher_version: Option<String>,
+    problems: Vec<String>,
+    log_file: String,
+}
+
+impl PolicyView {
+    fn new(p: &Policy, store: &Store) -> PolicyView {
+        PolicyView {
+            source: p.source.clone(),
+            authors: p
+                .authors
+                .iter()
+                .map(|a| AuthorView {
+                    namespace: a.namespace.clone(),
+                    name: a.name.clone(),
+                    fingerprints: a.fingerprints(),
+                })
+                .collect(),
+            contact: p.contact.clone(),
+            dry_run: p.dry_run,
+            scan_danger: p.scan_danger,
+            users_may_allow_guard_rules: p.users_may_allow_guard_rules,
+            guard_report_only: p.guard_report_only.clone(),
+            min_launcher_version: p.min_launcher_version.clone(),
+            problems: p.problems.clone(),
+            log_file: store.policy_log().display().to_string(),
+        }
+    }
+}
+
+#[derive(Serialize)]
 struct SettingsView {
     version: &'static str,
     data_dir: String,
     platform: &'static str,
     mode: &'static str,
+    policy: Option<PolicyView>,
     uv_version: Option<String>,
     publishers: Vec<PinView>,
 }
@@ -516,7 +576,12 @@ async fn settings(app: AppHandle) -> CmdResult<SettingsView> {
             version: env!("CARGO_PKG_VERSION"),
             data_dir: s.store.paths.root.display().to_string(),
             platform: devstribution_host::store::current_platform(),
-            mode: "free",
+            mode: if s.store.policy().is_some() {
+                "managed"
+            } else {
+                "free"
+            },
+            policy: s.store.policy().map(|p| PolicyView::new(p, &s.store)),
             uv_version: uv::version(),
             publishers: s
                 .store
@@ -530,6 +595,39 @@ async fn settings(app: AppHandle) -> CmdResult<SettingsView> {
                 })
                 .collect(),
         })
+    })
+    .await
+}
+
+/// Saves a `.trust` file for the author of a package the policy refused, for the user to send
+/// to IT ("ask your IT to trust X"). The backend asks where to save it, so the page cannot
+/// choose a path; returns whether a file was written.
+#[tauri::command]
+async fn save_trust_request(app: AppHandle, token: String) -> CmdResult<bool> {
+    blocking(move || {
+        use tauri_plugin_dialog::DialogExt;
+        let pending = state(&app).store.pending(&token)?;
+        let text = policy::trust_request(&pending.namespace, &pending.publisher_key)?;
+        let Some(path) = app
+            .dialog()
+            .file()
+            .set_title("Save a request for your IT department")
+            .set_file_name(format!("{}.trust", pending.namespace))
+            .add_filter("Trust file", &["trust"])
+            .blocking_save_file()
+        else {
+            return Ok(false);
+        };
+        let mut path = path.into_path()?;
+        if path
+            .extension()
+            .is_none_or(|e| !e.eq_ignore_ascii_case("trust"))
+        {
+            path.set_extension("trust");
+        }
+        std::fs::write(&path, text)?;
+        app.opener().reveal_item_in_dir(&path)?;
+        Ok(true)
     })
     .await
 }
@@ -697,6 +795,7 @@ pub fn run() {
             settings,
             uninstall_launcher,
             take_pending_files,
+            save_trust_request,
         ])
         .run(tauri::generate_context!());
     if let Err(e) = result {

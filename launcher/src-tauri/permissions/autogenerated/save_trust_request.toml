@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-save-trust-request"
+description = "Enables the save_trust_request command without any pre-configured scope."
+commands.allow = ["save_trust_request"]
+
+[[permission]]
+identifier = "deny-save-trust-request"
+description = "Denies the save_trust_request command without any pre-configured scope."
+commands.deny = ["save_trust_request"]

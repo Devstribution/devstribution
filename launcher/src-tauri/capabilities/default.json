@@ -25,6 +25,7 @@
     "allow-clear-secret",
     "allow-settings",
     "allow-uninstall-launcher",
-    "allow-take-pending-files"
+    "allow-take-pending-files",
+    "allow-save-trust-request"
   ]
 }

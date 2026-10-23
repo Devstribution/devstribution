@@ -19,6 +19,7 @@ use serde_json::{Map, Value};
 
 use crate::guard::GuardHit;
 use crate::paths::Paths;
+use crate::policy::{self, Policy, ScanDanger};
 use crate::run::{self, RunResult, RunSpec, RunStatus};
 use crate::time::{date, now_secs, random_hex, stamp};
 use crate::uv::{self, LockMode};
@@ -55,6 +56,13 @@ pub struct AppRecord {
     /// Guard rules the user allowed for this app after a stop.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub guard_allow: Vec<String>,
+    /// The publisher's full key, base64 (empty in records from before it was kept).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub publisher_key: String,
+    /// Installed in managed mode, by an author the policy approved. Lets it run while the
+    /// approved authors cannot be read (a laptop away from the network share).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub policy_approved: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +104,30 @@ pub enum Trust {
     FirstUse,
     /// First time this publisher's key is seen.
     NewPublisher,
+    /// Managed mode: the policy approves this author and key.
+    Approved,
+    /// Managed mode: the policy does not approve this author and key.
+    NotApproved,
+}
+
+impl Trust {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Trust::FirstUse => "first_use",
+            Trust::NewPublisher => "new_publisher",
+            Trust::Approved => "approved",
+            Trust::NotApproved => "not_approved",
+        }
+    }
+}
+
+/// Why the policy refuses a package, for the confirmation screen.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Blocked {
+    pub reasons: Vec<String>,
+    pub contact: Option<String>,
+    /// The author or its key is not approved: a `.trust` request for IT can help.
+    pub author_not_approved: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -133,6 +165,9 @@ pub struct PendingInstall {
     /// What the code scan found in the verified files (`devstribution_core::scan`).
     #[serde(default)]
     pub scan: ScanReport,
+    /// Set when the organisation's policy refuses the package: it cannot be installed.
+    #[serde(default)]
+    pub blocked: Option<Blocked>,
     // Kept for the install step, not shown.
     pub publisher_key: String,
     pub content_hash: String,
@@ -225,7 +260,12 @@ pub struct Store {
     /// Held for every read-modify-write of `state.json`, so that an install confirmed while
     /// a run starts (or two installs) cannot overwrite each other's changes.
     state_lock: Mutex<()>,
+    /// Managed mode's policy, read when the store opens; `None` in free mode.
+    policy: Option<Policy>,
 }
+
+/// This launcher's version, compared with the policy's minimum.
+pub const LAUNCHER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 impl Store {
     pub fn open(paths: Paths) -> Result<Store> {
@@ -247,6 +287,7 @@ impl Store {
         let store = Store {
             paths,
             state_lock: Mutex::new(()),
+            policy: Policy::from_system(),
         };
         store.close_interrupted_runs();
         Ok(store)
@@ -264,6 +305,100 @@ impl Store {
             r.finished_at = Some(now_secs());
             let _ = self.save_run(&r);
         }
+    }
+
+    /// The policy of managed mode, `None` in free mode.
+    pub fn policy(&self) -> Option<&Policy> {
+        self.policy.as_ref()
+    }
+
+    /// Replaces the policy read from the system: for tests, and to check a policy file
+    /// before rolling it out.
+    pub fn set_policy(&mut self, policy: Option<Policy>) {
+        self.policy = policy;
+    }
+
+    /// Why the policy refuses `app` signed by `key`; empty when it does not (or in free mode).
+    /// `scan` is given for installs, where malware-like findings count.
+    fn policy_reasons(
+        &self,
+        namespace: &str,
+        key: &str,
+        scan: Option<&ScanReport>,
+        approved_before: bool,
+    ) -> Vec<String> {
+        let Some(p) = &self.policy else {
+            return Vec::new();
+        };
+        let mut reasons = Vec::new();
+        if let Some(r) = p.launcher_refusal(LAUNCHER_VERSION) {
+            reasons.push(r);
+        }
+        if !p.approves(namespace, key) {
+            // The approved authors could not all be read (a network share out of reach): an
+            // app installed under the policy keeps running, nothing new installs.
+            let tolerated = approved_before && !p.problems.is_empty() && scan.is_none();
+            if !tolerated {
+                reasons.push(if p.knows(namespace) {
+                    format!(
+                        "your organisation approves `{namespace}`, but not the key this was signed                          with ({})",
+                        fingerprint_of(key).unwrap_or_default()
+                    )
+                } else {
+                    format!("your organisation has not approved the author `{namespace}`")
+                });
+            }
+        }
+        if let Some(scan) = scan
+            && p.scan_danger == ScanDanger::Refuse
+            && scan
+                .findings
+                .iter()
+                .any(|f| f.severity == scan::Severity::Danger)
+        {
+            reasons.push(
+                "the code does things malware does, and your organisation does not install such \
+                 packages"
+                    .into(),
+            );
+        }
+        reasons
+    }
+
+    /// Applies the policy's verdict: logs it, and in a dry run turns a refusal into a warning.
+    /// Returns the reasons when the action is refused.
+    fn policy_verdict(
+        &self,
+        action: &str,
+        app: &str,
+        version: &str,
+        key: &str,
+        reasons: Vec<String>,
+        warnings: &mut Vec<String>,
+    ) -> Option<Vec<String>> {
+        let p = self.policy.as_ref()?;
+        if reasons.is_empty() {
+            return None;
+        }
+        let fp = fingerprint_of(key).unwrap_or_default();
+        let decision = if p.dry_run { "would_refuse" } else { "refused" };
+        policy::log(
+            &self.policy_log(),
+            &policy::log_now(decision, action, app, version, &fp, &reasons),
+        );
+        if p.dry_run {
+            warnings.push(format!(
+                "Your organisation is trying out a policy that would refuse this: {}.",
+                reasons.join("; ")
+            ));
+            return None;
+        }
+        Some(reasons)
+    }
+
+    /// What the policy refused, or would have refused in a dry run (JSON lines).
+    pub fn policy_log(&self) -> PathBuf {
+        self.paths.state().join("policy.log")
     }
 
     fn state_file(&self) -> PathBuf {
@@ -343,10 +478,13 @@ impl Store {
         let app_dir = self.paths.app_dir(&id, &record.content_hash);
         let manifest = Manifest::parse(&fs::read_to_string(app_dir.join(PYPROJECT))?)?;
         let pin = state.pins.get(&id.namespace);
-        let trust = if pin.is_some() {
-            Trust::FirstUse
-        } else {
-            Trust::NewPublisher
+        let trust = match &self.policy {
+            Some(p) if p.approves(&id.namespace, &self.publisher_key(record, &app_dir)) => {
+                Trust::Approved
+            }
+            Some(_) => Trust::NotApproved,
+            None if pin.is_some() => Trust::FirstUse,
+            None => Trust::NewPublisher,
         };
         let mut record = record.clone();
         // Records and pins from older versions hold minisign's key number; show the fingerprint.
@@ -361,6 +499,19 @@ impl Store {
             trust,
             app_dir,
         })
+    }
+
+    /// The full key that signed an installed app: from its record, or for records from before
+    /// it was kept, from the key file in the app's folder.
+    fn publisher_key(&self, record: &AppRecord, app_dir: &Path) -> String {
+        if !record.publisher_key.is_empty() {
+            return record.publisher_key.clone();
+        }
+        fs::read_to_string(app_dir.join(devstribution_core::FILES_PUBLIC_KEY))
+            .ok()
+            .and_then(|t| parse_public_key(&t).ok())
+            .map(|k| public_key_base64(&k))
+            .unwrap_or_default()
     }
 
     // -- install flow ------------------------------------------------------------------------
@@ -408,6 +559,7 @@ impl Store {
         }
         let (action, trust) = admit(
             state,
+            self.policy.as_ref(),
             &m.id,
             &m.version,
             &verified.publisher_key,
@@ -420,10 +572,7 @@ impl Store {
                 key_id.clone()
             }
         };
-        let trust = match trust {
-            Trust::FirstUse => "first_use",
-            Trust::NewPublisher => "new_publisher",
-        };
+        let trust = trust.as_str();
         let mut warnings = Vec::new();
         if trust == "new_publisher" {
             warnings.push(format!(
@@ -445,6 +594,22 @@ impl Store {
         }
 
         let scan = scan::scan(&stage.join("app"), verified.files.paths(), &m.permissions);
+        let reasons =
+            self.policy_reasons(&m.id.namespace, &verified.publisher_key, Some(&scan), false);
+        let blocked = self
+            .policy_verdict(
+                "install",
+                &id,
+                &m.version.to_string(),
+                &verified.publisher_key,
+                reasons,
+                &mut warnings,
+            )
+            .map(|reasons| Blocked {
+                reasons,
+                contact: self.policy.as_ref().and_then(|p| p.contact.clone()),
+                author_not_approved: trust == "not_approved",
+            });
 
         let pending = PendingInstall {
             token: token.to_string(),
@@ -472,12 +637,23 @@ impl Store {
                 .to_string(),
             warnings,
             scan,
+            blocked,
             publisher_key: verified.publisher_key.clone(),
             content_hash: verified.content_hash.clone(),
             content_sha256: verified.content_sha256.clone(),
         };
         fs::write(stage.join("pending.json"), serde_json::to_vec(&pending)?)?;
         Ok(pending)
+    }
+
+    /// A package waiting on the confirmation screen, as `inspect` described it.
+    pub fn pending(&self, token: &str) -> Result<PendingInstall> {
+        if !is_token(token) {
+            bail!("invalid install token");
+        }
+        let data = fs::read(self.paths.staging().join(token).join("pending.json"))
+            .context("this install is no longer pending")?;
+        Ok(serde_json::from_slice(&data)?)
     }
 
     pub fn discard(&self, token: &str) {
@@ -504,8 +680,12 @@ impl Store {
         // The checks of the confirmation screen again, against the state as it is now: another
         // install confirmed in the meantime may have pinned a different key for this publisher
         // or installed a newer version.
+        if pending.blocked.is_some() {
+            bail!("your organisation's policy does not allow this app");
+        }
         admit(
             &self.load()?,
+            self.policy.as_ref(),
             &id,
             &version,
             &pending.publisher_key,
@@ -513,6 +693,26 @@ impl Store {
             &pending.content_hash,
         )
         .context("this install is no longer valid")?;
+        if let Some(p) = &self.policy
+            && !p.dry_run
+        {
+            let reasons = self.policy_reasons(
+                &id.namespace,
+                &pending.publisher_key,
+                Some(&pending.scan),
+                false,
+            );
+            if !reasons.is_empty() {
+                bail!(
+                    "your organisation's policy does not allow this app: {}",
+                    reasons.join("; ")
+                );
+            }
+        }
+        let policy_approved = self
+            .policy
+            .as_ref()
+            .is_some_and(|p| p.approves(&id.namespace, &pending.publisher_key));
         self.refuse_if_running(&pending.id, "update")?;
         let app_dir = self.paths.app_dir(&id, &pending.content_hash);
         let env_dir = self.paths.env_dir(&id, &pending.content_hash);
@@ -553,6 +753,7 @@ impl Store {
             .update_state(|state| {
                 admit(
                     state,
+                    self.policy.as_ref(),
                     &id,
                     &version,
                     &pending.publisher_key,
@@ -564,15 +765,30 @@ impl Store {
                 let last_inputs = previous.map(|r| r.last_inputs.clone()).unwrap_or_default();
                 let quarantine = previous.and_then(|r| r.quarantine.clone());
                 let guard_allow = previous.map(|r| r.guard_allow.clone()).unwrap_or_default();
-                state
-                    .pins
-                    .entry(id.namespace.clone())
-                    .or_insert_with(|| Pin {
-                        key: pending.publisher_key.clone(),
-                        key_id: pending.key_id.clone(),
-                        pinned_at: now_secs(),
-                        source: "first-use".into(),
-                    });
+                let pin = Pin {
+                    key: pending.publisher_key.clone(),
+                    key_id: pending.key_id.clone(),
+                    pinned_at: now_secs(),
+                    source: if policy_approved {
+                        "policy"
+                    } else {
+                        "first-use"
+                    }
+                    .into(),
+                };
+                if policy_approved {
+                    // The policy decides in managed mode; the pin follows it, so that the
+                    // namespace keeps the approved key if the policy is ever removed.
+                    let same = state
+                        .pins
+                        .get(&id.namespace)
+                        .is_some_and(|p| same_key(&p.key, &pin.key));
+                    if !same {
+                        state.pins.insert(id.namespace.clone(), pin);
+                    }
+                } else {
+                    state.pins.entry(id.namespace.clone()).or_insert(pin);
+                }
                 let replaced = state.apps.insert(
                     pending.id.clone(),
                     AppRecord {
@@ -586,6 +802,8 @@ impl Store {
                         last_inputs,
                         quarantine,
                         guard_allow,
+                        publisher_key: pending.publisher_key.clone(),
+                        policy_approved,
                     },
                 );
                 let newer = state
@@ -683,6 +901,31 @@ impl Store {
         runner_dir: &Path,
     ) -> Result<(RunSpec, RunRecord)> {
         let app = self.app(id)?;
+        let key = self.publisher_key(&app.record, &app.app_dir);
+        let reasons = self.policy_reasons(
+            &app.manifest.id.namespace,
+            &key,
+            None,
+            app.record.policy_approved,
+        );
+        if let Some(reasons) = self.policy_verdict(
+            "run",
+            id,
+            &app.record.version,
+            &key,
+            reasons,
+            &mut Vec::new(),
+        ) {
+            bail!(
+                "{} cannot run: {}. {}",
+                app.manifest.title,
+                reasons.join("; "),
+                self.policy
+                    .as_ref()
+                    .map(Policy::ask_whom)
+                    .unwrap_or_default()
+            );
+        }
         if let Some(q) = &app.record.quarantine {
             bail!(
                 "{} is blocked: in an earlier run it {}. Allow it or uninstall it first.",
@@ -755,7 +998,7 @@ impl Store {
             inputs: resolved,
             secrets,
             args: Vec::new(),
-            guard_allow: app.record.guard_allow.clone(),
+            guard_allow: self.guard_allow(&app.record),
         };
         Ok((spec, record))
     }
@@ -783,9 +1026,42 @@ impl Store {
         self.save_run(record)
     }
 
+    /// The guard rules that only report for this app: the ones the user allowed after a stop,
+    /// unless the policy keeps that decision for IT, and the ones the policy makes report-only.
+    fn guard_allow(&self, record: &AppRecord) -> Vec<String> {
+        match &self.policy {
+            None => record.guard_allow.clone(),
+            Some(p) => {
+                let mut rules = p.guard_report_only.clone();
+                if p.users_may_allow_guard_rules {
+                    rules.extend(record.guard_allow.iter().cloned());
+                }
+                rules.sort();
+                rules.dedup();
+                rules
+            }
+        }
+    }
+
+    /// Whether the user may let an app run past the guard rule that stopped it.
+    pub fn users_may_allow_guard_rules(&self) -> bool {
+        self.policy
+            .as_ref()
+            .is_none_or(|p| p.users_may_allow_guard_rules)
+    }
+
     /// Ends an app's quarantine. With `allow`, the rule that stopped it no longer stops this
     /// app (it is still reported); without, the next run is checked as before.
     pub fn release_quarantine(&self, id: &str, allow: bool) -> Result<InstalledApp> {
+        if allow && !self.users_may_allow_guard_rules() {
+            bail!(
+                "your organisation does not let users allow what devstribution stopped. {}",
+                self.policy
+                    .as_ref()
+                    .map(Policy::ask_whom)
+                    .unwrap_or_default()
+            );
+        }
         self.update_state(|state| {
             let app = state
                 .apps
@@ -937,24 +1213,22 @@ fn build_env(app_dir: &Path, env_dir: &Path, on_line: &mut dyn FnMut(&str)) -> R
 /// Whether a verified package may be installed given what is installed and pinned: the
 /// publisher's key must be the pinned one, and the version must not go back (nor stay the same
 /// with different content). Run when the package is inspected and again when it is installed.
+///
+/// In managed mode the policy, not the pins, says which key a namespace uses: the trust is
+/// `Approved` or `NotApproved` (what the policy then does is decided by the caller).
 fn admit(
     state: &State,
+    policy: Option<&Policy>,
     id: &AppId,
     version: &Version,
     publisher_key: &str,
     content_sha256: &str,
     content_hash: &str,
 ) -> Result<(InstallAction, Trust)> {
-    let trust = match state.pins.get(&id.namespace) {
-        Some(pin) if same_key(&pin.key, publisher_key) => Trust::FirstUse,
-        Some(pin) => bail!(
-            "this package is signed with key {}, but the apps from `{}` you installed before were \
-             signed with key {}: it may not come from the same publisher, so it was refused",
-            fingerprint_of(publisher_key).unwrap_or_default(),
-            id.namespace,
-            fingerprint_of(&pin.key).unwrap_or_else(|| pin.key_id.clone()),
-        ),
-        None => Trust::NewPublisher,
+    let trust = match (policy, state.pins.get(&id.namespace)) {
+        (Some(p), _) if p.approves(&id.namespace, publisher_key) => Trust::Approved,
+        (Some(_), _) => Trust::NotApproved,
+        (None, pin) => trust_on_first_use(pin, id, publisher_key)?,
     };
     let key = id.to_string();
     let action = match state.apps.get(&key) {
@@ -983,6 +1257,21 @@ fn admit(
         }
     }
     Ok((action, trust))
+}
+
+/// Free mode: the publisher's key must be the one pinned for the namespace, if any.
+fn trust_on_first_use(pin: Option<&Pin>, id: &AppId, publisher_key: &str) -> Result<Trust> {
+    match pin {
+        Some(pin) if same_key(&pin.key, publisher_key) => Ok(Trust::FirstUse),
+        Some(pin) => bail!(
+            "this package is signed with key {}, but the apps from `{}` you installed before were \
+             signed with key {}: it may not come from the same publisher, so it was refused",
+            fingerprint_of(publisher_key).unwrap_or_default(),
+            id.namespace,
+            fingerprint_of(&pin.key).unwrap_or_else(|| pin.key_id.clone()),
+        ),
+        None => Ok(Trust::NewPublisher),
+    }
 }
 
 fn same_key(a: &str, b: &str) -> bool {

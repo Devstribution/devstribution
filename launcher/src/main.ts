@@ -115,6 +115,7 @@ async function boot() {
       icon(ic, 18), label, label === "Apps" ? appCount : label === "Activity" ? liveDot : null));
   const pinLabel = h("div", { class: "nav-label" }, "Pinned");
   const pinList = h("div");
+  const modeLine = h("div", { class: "mode-line" }, h("span", { class: "dot" }), "Free mode · signatures checked");
   const sidebar = h("nav", { class: "sidebar", "aria-label": "Main" },
     h("div", { class: "brand" }, h("div", { class: "brand-mark" }, icon(Play, 12)), "devstribution",
       api.preview ? h("span", { class: "preview-badge", title: "Demo data: this is the browser preview, not the launcher" }, "Preview") : null),
@@ -125,7 +126,7 @@ async function boot() {
       h("strong", null, "Got an app?"),
       h("p", null, "Open a .dsapp file, or drop it anywhere on this window."),
       h("button", { class: "btn primary small", onclick: () => ctx.install() }, "Install app")),
-    h("div", { class: "mode-line" }, h("span", { class: "dot" }), "Free mode · signatures checked"),
+    modeLine,
   );
   const main = h("main", { class: "main" });
   const fab = h("button", { class: "fab", "aria-label": "Settings", title: "Settings", onclick: () => toggleSettings(ctx) }, icon(SettingsIcon, 22));
@@ -238,6 +239,13 @@ async function boot() {
   });
 
   await ctx.refresh();
+  api.settings().then((s) => {
+    const p = s.policy;
+    if (!p) return;
+    const n = p.authors.length;
+    clear(modeLine, h("span", { class: `dot ${p.problems.length ? "warn" : ""}` }),
+      `Managed by your organisation · ${n} approved author${n === 1 ? "" : "s"}${p.dry_run ? " · on trial" : ""}`);
+  }).catch(() => { /* the line keeps its default */ });
   const pending = await api.takePendingFiles();
   if (pending[0]) ctx.install(pending[0]);
 }

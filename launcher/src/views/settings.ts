@@ -1,5 +1,6 @@
 import { X, Check, Pipette } from "lucide";
 import type { Ctx } from "../main";
+import type { Policy } from "../api";
 import { h, icon, clear, relTime, toast, errorText } from "../ui";
 import { ACCENTS, DEFAULT_LOOK, textOn, type Look, type Theme, type StatusColours } from "../look";
 
@@ -68,7 +69,7 @@ export function toggleSettings(ctx: Ctx) {
 
   ctx.api.settings().then((s) => {
     if (open !== close) return;
-    pop.append(
+    const free = [
       h("div", { class: "settings-group" },
         h("span", { class: "section-label" }, "Publishers you trust"),
         s.publishers.length
@@ -80,6 +81,9 @@ export function toggleSettings(ctx: Ctx) {
         h("span", { class: "section-label" }, "Mode"),
         h("div", { class: "small soft-text" },
           "Free mode: you decide what to install. Every package is checked, and later versions must come from the same publisher key. If your IT department manages devstribution, its rules show here.")),
+    ];
+    pop.append(
+      ...(s.policy ? managedGroups(s.policy) : free),
       h("div", { class: "settings-group" },
         h("span", { class: "section-label" }, "Storage"),
         h("div", { class: "mono soft-text wrap-anywhere" }, s.data_dir),
@@ -89,6 +93,36 @@ export function toggleSettings(ctx: Ctx) {
         h("button", { class: "btn small danger self-start", onclick: () => uninstallLauncher(ctx) }, "Uninstall devstribution…")),
       h("div", { class: "about" }, `devstribution ${s.version} · ${s.uv_version ?? "uv not found"} · ${s.platform} · MIT or Apache-2.0`));
   }).catch((e) => toast(errorText(e), "error"));
+}
+
+/** Managed mode: the policy IT set, and the authors it approves. */
+function managedGroups(p: Policy): HTMLElement[] {
+  const rules = [
+    p.scan_danger === "refuse" ? "Packages whose code does things malware does are not installed." : "You decide about packages whose code does things malware does.",
+    p.users_may_allow_guard_rules ? "You may let an app run past what devstribution stopped." : "Only IT can let an app run past what devstribution stopped.",
+    p.guard_report_only.length ? `Only reported, never stopped: ${p.guard_report_only.join(", ")}.` : null,
+    p.min_launcher_version ? `devstribution ${p.min_launcher_version} or newer is required.` : null,
+  ].filter((r): r is string => !!r);
+  return [
+    h("div", { class: "settings-group" },
+      h("span", { class: "section-label" }, "Mode"),
+      h("div", { class: "small soft-text" },
+        p.dry_run
+          ? "Managed by your organisation, on trial: its policy is being tried out, so nothing is refused yet. What it would refuse is logged."
+          : "Managed by your organisation: only apps from the authors it approves install and run."),
+      p.contact ? h("div", { class: "small soft-text" }, `Questions: ${p.contact}`) : null,
+      p.problems.map((pr) => h("div", { class: "banner amber small" }, h("div", null, pr))),
+      h("ul", { class: "small soft-text policy-rules" }, rules.map((r) => h("li", null, r))),
+      h("div", { class: "muted tiny wrap-anywhere" }, `Policy: ${p.source}`),
+      h("div", { class: "muted tiny wrap-anywhere" }, `Log: ${p.log_file}`)),
+    h("div", { class: "settings-group" },
+      h("span", { class: "section-label" }, "Approved authors"),
+      p.authors.length
+        ? p.authors.map((a) => h("div", { class: "publisher" },
+            h("div", { class: "grow" }, h("div", { class: "name" }, a.name ? `${a.namespace} · ${a.name}` : a.namespace),
+              a.fingerprints.map((f) => h("div", { class: "mono muted" }, f)))))
+        : h("div", { class: "muted small" }, "None: no app can be installed until IT approves an author.")),
+  ];
 }
 
 /** Hands over to the setup program's uninstaller, which asks whether to delete app data too. */

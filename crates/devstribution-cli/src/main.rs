@@ -6,6 +6,7 @@ mod env;
 mod init;
 mod keys;
 mod scan;
+mod trust;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -91,6 +92,11 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Make or read the `.trust` files IT approves authors with (managed mode)
+    Trust {
+        #[command(subcommand)]
+        command: TrustCommand,
+    },
     /// Check a .dsapp file: structure, hashes and (with --key) the publisher's signature
     Verify {
         file: PathBuf,
@@ -98,6 +104,33 @@ enum Command {
         #[arg(long)]
         key: Option<PathBuf>,
     },
+}
+
+#[derive(Subcommand)]
+enum TrustCommand {
+    /// Write the .trust file for your namespace, to give to the IT departments of your users
+    Export {
+        /// Your namespace (the part before `/` in app ids)
+        #[arg(long)]
+        namespace: Option<String>,
+        /// Public key (default: the key created by `keygen` for the namespace)
+        #[arg(long)]
+        key: Option<PathBuf>,
+        /// Take the namespace and key from a .dsapp instead
+        #[arg(long, value_name = "DSAPP")]
+        from_package: Option<PathBuf>,
+        /// Name shown to people, e.g. your team
+        #[arg(long)]
+        name: Option<String>,
+        /// How IT can reach you
+        #[arg(long)]
+        contact: Option<String>,
+        /// Output file (default: `<namespace>.trust`)
+        #[arg(long, short)]
+        out: Option<PathBuf>,
+    },
+    /// Show what a .trust file approves: namespace and key fingerprints
+    Show { file: PathBuf },
 }
 
 fn main() -> ExitCode {
@@ -129,6 +162,20 @@ fn main() -> ExitCode {
         } => keys::keygen(&namespace, dir, no_password).map(|_| 0),
         Command::Scan { target, json } => scan::scan(&target, json),
         Command::Verify { file, key } => keys::verify(&file, key).map(|_| 0),
+        Command::Trust {
+            command:
+                TrustCommand::Export {
+                    namespace,
+                    key,
+                    from_package,
+                    name,
+                    contact,
+                    out,
+                },
+        } => trust::export(namespace, key, from_package, name, contact, out).map(|_| 0),
+        Command::Trust {
+            command: TrustCommand::Show { file },
+        } => trust::show(&file).map(|_| 0),
     };
     match result {
         Ok(code) => ExitCode::from(code),

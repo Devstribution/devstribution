@@ -33,6 +33,10 @@ export interface Origin {
   referrer_url?: string | null;
 }
 
+/** Free mode: `first_use` (key pinned before) or `new_publisher`. Managed mode: whether the
+ * organisation's policy approves the author and key. */
+export type Trust = "first_use" | "new_publisher" | "approved" | "not_approved";
+
 export interface AppView {
   id: string;
   title: string;
@@ -41,7 +45,7 @@ export interface AppView {
   kind: string;
   namespace: string;
   key_id: string;
-  trust: "first_use" | "new_publisher";
+  trust: Trust;
   icon?: string | null;
   inputs: Input[];
   outputs: Output[];
@@ -55,6 +59,8 @@ export interface AppView {
   quarantine?: Quarantine | null;
   /** Guard rules the user allowed for this app after a stop. */
   guard_allow: string[];
+  /** False when the organisation keeps "Allow and run again" for IT. */
+  may_allow_guard_rules: boolean;
 }
 
 /** What the runtime guard did: `stop` ended the run, `block` made one call fail, `observe` only reports. */
@@ -156,7 +162,7 @@ export interface PendingInstall {
   kind: string;
   namespace: string;
   key_id: string;
-  trust: "first_use" | "new_publisher";
+  trust: Trust;
   icon?: string | null;
   permissions: Permissions;
   requires: string[];
@@ -170,6 +176,8 @@ export interface PendingInstall {
   action: "install" | "update" | "reinstall";
   warnings: string[];
   scan: ScanReport;
+  /** Set when the organisation's policy refuses the package: it cannot be installed. */
+  blocked?: { reasons: string[]; contact?: string | null; author_not_approved: boolean } | null;
 }
 
 export interface StepEvent {
@@ -178,11 +186,26 @@ export interface StepEvent {
   message: string;
 }
 
+/** Managed mode's policy, set by IT through the registry. */
+export interface Policy {
+  source: string;
+  authors: { namespace: string; name?: string | null; fingerprints: string[] }[];
+  contact?: string | null;
+  dry_run: boolean;
+  scan_danger: "refuse" | "ask";
+  users_may_allow_guard_rules: boolean;
+  guard_report_only: string[];
+  min_launcher_version?: string | null;
+  problems: string[];
+  log_file: string;
+}
+
 export interface Settings {
   version: string;
   data_dir: string;
   platform: string;
-  mode: string;
+  mode: "free" | "managed";
+  policy?: Policy | null;
   uv_version?: string | null;
   publishers: { namespace: string; key_id: string; pinned_at: number; source: string }[];
 }
@@ -215,6 +238,8 @@ export interface Api {
   /** Starts devstribution's own uninstaller and closes the launcher. */
   uninstallLauncher(): Promise<void>;
   takePendingFiles(): Promise<string[]>;
+  /** Saves a .trust file for a refused package's author, to send to IT. False if cancelled. */
+  saveTrustRequest(token: string): Promise<boolean>;
   /** Run events arrive in batches (at most about ten a second), so a chatty app cannot flood the window. */
   onRunEvents(cb: (runId: string, events: RunEvent[]) => void): Promise<Unlisten>;
   onInstallStep(cb: (e: StepEvent) => void): Promise<Unlisten>;
@@ -271,6 +296,7 @@ async function tauriApi(): Promise<Api> {
     settings: () => invoke("settings"),
     uninstallLauncher: () => invoke("uninstall_launcher"),
     takePendingFiles: () => invoke("take_pending_files"),
+    saveTrustRequest: (token) => invoke("save_trust_request", { token }),
     onRunEvents: (cb) =>
       listen<{ run_id: string; events: RunEvent[] }>("run-events", (e) => cb(e.payload.run_id, e.payload.events)),
     onInstallStep: (cb) => listen<StepEvent>("install-step", (e) => cb(e.payload)),
