@@ -10,8 +10,9 @@ uv, or packages that can carry client data, would put our signature on the wrong
 *Revised 23 October 2026.* Package integrity, the Windows checks and the installer are done. What
 changed: making the platform **safe enough for IT to allow** moves before 1.0. The declared
 permissions become enforced while an app runs (section 4), and the scan reads deeper (section 5).
-Before, these were planned only for managed mode after 1.0. Signing and Phase 0 wait on people
-outside the project, so they run alongside.
+Before, these were planned only for managed mode after 1.0, and a first version of managed mode
+itself now comes before 1.0 too (section 10). Signing and Phase 0 wait on people outside the
+project, so they run alongside.
 
 Status: ☐ to do · ◐ in progress · ☑ done
 
@@ -20,11 +21,15 @@ Status: ☐ to do · ◐ in progress · ☑ done
 1. ◐ **The open findings from real use** (from [`report.md`](report.md)): the data guard
    missing `.json` results ☑, results in a folder the user chose ☑; uninstall easy to find is
    waiting on what users say.
-2. ◐ **Runtime guard** (section 4): declared network and SAP use enforced, malware-like behaviour
-   stops the run and quarantines the app. Built and tested; to check in the real launcher.
-3. **Deeper scan** (section 5): AMSI, dependencies, what changed in an update.
-4. **Results shown in the launcher** (section 7): tables and images without opening Excel.
-5. **IT-facing evidence** (section 8): Windows Event Log, SBOM, `SECURITY.md`, fuzzing.
+2. ☑ **Runtime guard** (section 4): declared network and SAP use enforced, malware-like behaviour
+   stops the run and quarantines the app. Checked in the installed launcher; rule modes set by
+   policy come with managed mode.
+3. ◐ **Deeper scan** (section 5): dependencies ☑ (malicious packages, look-alike names, start-up
+   code under the guard); AMSI and what changed in an update next.
+4. ☐ **Managed mode, first version** (section 10): a company policy in HKLM decides which authors
+   may be installed. No server needed. Next to tackle (see [`HANDOFF.md`](HANDOFF.md)).
+5. **Results shown in the launcher** (section 7): tables and images without opening Excel.
+6. **IT-facing evidence** (section 8): Windows Event Log, SBOM, `SECURITY.md`, fuzzing.
 
 At the same time, waiting on others: code signing (the SignPath application, Certum as the
 fallback) and Phase 0 on a locked-down company PC (section 3).
@@ -120,8 +125,9 @@ on what it sees. Neither needs admin rights. The process rules live in one file,
   and `devstribution-host/tests/flow.rs`: stop → quarantine → allow, and on Windows a program
   started through `WinExec`, behind the hook's back, caught by the Job Object. ricon runs clean
   under the guard (only its `cmd /c ver` is observed).
-- ☐ **Check in the real launcher on Windows**: the banner, "Allow and run again", and a stop
-  while the app panel is open.
+- ☑ **Checked in the installed launcher on Windows** (`report.md`): a stop through the hook with the
+  app panel open, and one through the Job Object; the banner, the run refused while
+  blocked, and "Allow and run again".
 
 ## 5. A deeper scan before install
 
@@ -130,10 +136,18 @@ The scan reads only the package's own Python files today. Extend it where attack
 - ☐ **AMSI**: send the package's scripts to Windows' antimalware interface before the install
   button, so Defender or the company's antivirus reviews them too ("Checked by your antivirus").
   The runtime hook sends `exec` / `compile` strings to AMSI as well.
-- ☐ **Dependencies**: check `uv.lock` against OSV, which lists PyPI's known *malicious* packages
-  (`MAL-` entries) as well as vulnerable ones; flag names one typo away from popular packages;
-  flag wheels with `.pth` files (they run code when Python starts) and with unexpected binaries.
-  Done offline from a bundled snapshot where possible, so `pack` and the launcher send nothing.
+- ☑ **Dependencies** (`devstribution-core/src/deps.rs`), offline from bundled lists refreshed by
+  `scripts/update_dep_data.py` before each release, so `pack` and the launcher send nothing:
+  - packages reported as malicious on PyPI (OSV `MAL-` entries, about 11,900): the whole package,
+    or only the hijacked versions (`num2words` 0.5.15); a danger finding, so the red banner;
+  - names one edit away from the 1,000 most downloaded packages (`requezts`): a warning. The top
+    15,000 count as known, and adding or dropping a digit (`elasticsearch8`) does not count.
+    Measured: about 1% of the packages ranked 5,000 to 15,000 would have matched;
+  - code a dependency runs when Python starts (`.pth` files): the runner now starts with `-S` and
+    loads `site` after installing the guard, so that code is checked like the app's, and each
+    such file is reported in the run log.
+  - Still to do: vulnerable (not malicious) versions, which need a fresher source than a bundled
+    list (an opt-in online check for IT); wheels with unexpected binaries.
 - ☐ **What changed in an update**: the update screen shows the scan and permissions compared with
   the installed version ("New: network use in `sync.py`, starts programs"). A quiet malicious
   update is the realistic attack, and the diff is what a reviewer reads.
@@ -172,6 +186,11 @@ The scan reads only the package's own Python files today. Extend it where attack
   charts, without opening another program. With more input types (dates, choices, several
   files), most `form` apps need no window of their own.
 - ☐ Error messages reviewed end to end: every failure says what happened and what to do.
+- ☑ "Uninstall devstribution" in Settings (report: Launcher UX 4): starts the installer's own
+  uninstaller, with its "delete app data" choice, and closes the launcher. Checked in the
+  installed launcher.
+- ☑ A `.dsapp` renamed to `.zip` by a download installs too (report: Launcher UX 5): picker, drag and
+  drop and "Open with". `devstribution://` links (after 1.0) would avoid the renaming.
 - ☐ About page with version, licences of bundled software, and where the data folder is.
 
 ## 8. Release engineering and evidence for IT
@@ -199,11 +218,34 @@ slow moment is the first install of an app with heavy dependencies (pandas).
   `report.md`. Optimise only what the numbers point at (for example, sharing an environment
   between versions with the same lockfile, or starting the runner sooner).
 
+## 10. Managed mode, first version
+
+Moved here from "After 1.0" on 23 October 2026. It is what a company's IT asks for before
+allowing devstribution on its PCs, and it needs no server: the policy comes through the registry
+(GPO or Intune), and the approved authors are files IT can keep on a network share. The design is
+in [`plan.md`](plan.md), "Trust model and policy".
+
+- ☐ **Policy from HKLM.** Managed mode when `HKLM\SOFTWARE\Policies\devstribution` exists,
+  free mode as today otherwise. The allowed authors are listed inline or in a TOML policy file
+  that only admins can write.
+- ☐ **`.trust` files** (an author's namespace and key fingerprints): `devstribution trust export`
+  writes one. In managed mode, only approved authors install: no trust on first use and no
+  "Install anyway".
+- ☐ **A helpful block message**, with a ready-to-forward `.trust` ("ask your IT to trust X").
+- ☐ **Policy options**: scan and dependency danger findings (refuse or let the user decide), the
+  guard's mode per rule and who may release a quarantine (section 4), and the minimum launcher
+  version.
+- ☐ **Shown in the launcher**: the mode line, the policy in Settings, approved authors on the
+  install screen.
+- ☐ **Dry run**: log what would have been refused, without refusing it.
+- ☐ **Tests** in `flow.rs`, then checked on Windows with the registry value set by hand.
+
 ## After 1.0
 
-Phase 2 of the plan: managed mode (company policy in HKLM), catalog with GitHub namespace
-verification, `devstribution://` links, revocation; the `background` app kind; `resources`
-downloads (refused at install today).
+Phase 2 of the plan: the rest of managed mode (the per-machine service and installs in Program
+Files, an ADMX template, IT countersignatures), catalog with GitHub namespace verification,
+`devstribution://` links, revocation (a signed list, which can also live on a network share); the
+`background` app kind; `resources` downloads (refused at install today).
 
 - **`web` apps** ([plan](plan.md), "kinds"): Streamlit, Gradio or NiceGUI apps shown in their own
   launcher window, with a one-time token. This is how an app gets a full custom UI *inside*

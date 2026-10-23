@@ -1,5 +1,5 @@
 import { ShieldAlert, ShieldCheck, ShieldX, ShieldOff, Globe, Folder, KeyRound, Database, Puzzle, Sparkles, Check, Loader, Download,
-  SquareTerminal, Cpu, Code, EyeOff, Eye, CalendarClock, PackagePlus, Binary, ScanSearch } from "lucide";
+  SquareTerminal, Cpu, Code, EyeOff, Eye, CalendarClock, PackagePlus, PackageCheck, Package, Binary, ScanSearch } from "lucide";
 import type { Finding, PendingInstall, StepEvent } from "../api";
 import type { Ctx } from "../main";
 import { h, icon, appIcon, bytes, clear, toast, errorText, KIND_LABEL } from "../ui";
@@ -19,7 +19,7 @@ function permissionRows(p: PendingInstall): HTMLElement {
 const CATEGORY_ICON: Record<string, typeof Globe> = {
   network: Globe, processes: SquareTerminal, native_code: Cpu, dynamic_code: Code, obfuscation: EyeOff,
   persistence: CalendarClock, credentials: KeyRound, surveillance: Eye, evasion: ShieldOff,
-  runtime_install: PackagePlus, sap: Database, binary: Binary,
+  runtime_install: PackagePlus, sap: Database, binary: Binary, dependencies: Package,
 };
 
 /** What the code scan found, one row per kind of finding, with the files it was found in. */
@@ -33,7 +33,7 @@ ${f.message}`;
   const where = (f: Finding) => (f.line ? `${f.path}:${f.line} ${f.evidence}` : f.path) + (f.occurrences > 1 ? ` (+${f.occurrences - 1})` : "");
   const rows = [...groups.values()].map((fs) => {
     const f = fs[0];
-    const shown = fs.slice(0, 3).map(where).join(" · ") + (fs.length > 3 ? ` · ${fs.length - 3} more files` : "");
+    const shown = fs.slice(0, 3).map(where).join(" · ") + (fs.length > 3 ? ` · ${fs.length - 3} more` : "");
     return h("div", { class: "perm" },
       h("div", { class: `pi ${f.severity === "info" ? "" : f.severity}`, title: f.severity }, icon(CATEGORY_ICON[f.category] ?? ScanSearch, 16)),
       h("div", null, h("div", { class: "pt" }, f.message), h("div", { class: "ps mono" }, shown)));
@@ -42,6 +42,12 @@ ${f.message}`;
     rows.push(h("div", { class: "perm" }, h("div", { class: "pi" }, icon(ScanSearch, 16)),
       h("div", null, h("div", { class: "pt" }, "Nothing unusual found"),
         h("div", { class: "ps" }, `${p.scan.files_scanned} Python file${p.scan.files_scanned === 1 ? "" : "s"} checked`))));
+  }
+  const deps = p.scan.dependencies;
+  if (deps && deps.packages && !p.scan.findings.some((f) => f.rule === "malicious-package")) {
+    rows.push(h("div", { class: "perm" }, h("div", { class: "pi" }, icon(PackageCheck, 16)),
+      h("div", null, h("div", { class: "pt" }, "No package reported as malicious"),
+        h("div", { class: "ps" }, `${deps.packages} package${deps.packages === 1 ? "" : "s"} checked against PyPI's malicious-package reports up to ${new Date(`${deps.list_date}T00:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`))));
   }
   return h("div", { class: "perm-list" }, rows);
 }

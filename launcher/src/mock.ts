@@ -242,6 +242,7 @@ const pending: PendingInstall = {
       { rule: "network", category: "network", severity: "info", message: "Connects to other computers", path: "kpi/sharepoint.py", line: 3, evidence: "import requests", occurrences: 4 },
       { rule: "processes", category: "processes", severity: "info", message: "Starts other programs", path: "main.py", line: 12, evidence: "subprocess.run(...)", occurrences: 1 },
     ],
+    dependencies: { packages: 14, list_date: "2026-10-23" },
   },
 };
 
@@ -390,6 +391,7 @@ export function mockApi(): Api {
         ],
       };
     },
+    async uninstallLauncher() { throw new Error("The browser demo has no uninstaller: in the launcher, this opens devstribution's own uninstaller."); },
     async takePendingFiles() { return []; },
     async onRunEvents(cb) { const l: Listener<[string, RunEvent]> = ([id, e]) => cb(id, [e]); runListeners.push(l); return off(runListeners, l); },
     async onInstallStep(cb) { stepListeners.push(cb); return off(stepListeners, cb); },

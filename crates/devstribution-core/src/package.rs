@@ -456,6 +456,13 @@ fn extract_inner(package: &Path, dest: &Path, opts: &VerifyOptions) -> Result<Ve
     if archive.len() > limits.max_files + 3 {
         return Err(refuse(format!("more than {} files", limits.max_files)));
     }
+    // Any zip can be offered (a downloaded .dsapp often arrives renamed to .zip): one without
+    // the signed file list is said to be no app before anything is extracted.
+    if archive.index_for_name(FILES_LIST).is_none() {
+        return Err(refuse(format!(
+            "this is not a devstribution app: a zip file without {FILES_LIST}"
+        )));
+    }
 
     let mut seen = HashSet::new();
     // Every folder prefix as first spelled: `A/x.py` next to `a/y.py` would end up in one
@@ -959,6 +966,41 @@ source = { virtual = "." }
         pack(&f.app(), &f.signer, &second_path).unwrap();
         let v2 = f.verify(&second_path, None).unwrap();
         assert_eq!(v1.content_hash, v2.content_hash);
+    }
+
+    #[test]
+    fn a_package_renamed_to_zip_still_installs_and_other_zips_are_no_app() {
+        let f = fixture();
+        let pkg = f.pack();
+        // How browsers and mail often deliver a .dsapp: same bytes, another name.
+        let renamed = f.dir.path().join("hello.zip");
+        fs::copy(&pkg, &renamed).unwrap();
+        f.verify(&renamed, Some(&f.public_key)).unwrap();
+
+        // An ordinary zip (here: the package without its signed list) is refused before
+        // anything is extracted, with a message that says what it is.
+        let other = f.dir.path().join("photos.zip");
+        rewrite(&pkg, &other, |n, d| {
+            if n == FILES_LIST {
+                vec![]
+            } else {
+                vec![(n.into(), d)]
+            }
+        });
+        let dest = f.dir.path().join("never");
+        let err = extract_and_verify(
+            &other,
+            &dest,
+            &VerifyOptions {
+                trusted_key: None,
+                limits: Limits::default(),
+            },
+        )
+        .err()
+        .expect("refused")
+        .to_string();
+        assert!(err.contains("not a devstribution app"), "{err}");
+        assert!(!dest.exists());
     }
 
     #[test]

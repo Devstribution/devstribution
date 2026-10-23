@@ -84,6 +84,18 @@ export function toggleSettings(ctx: Ctx) {
         h("span", { class: "section-label" }, "Storage"),
         h("div", { class: "mono soft-text wrap-anywhere" }, s.data_dir),
         h("div", { class: "muted tiny" }, "Apps, their Python environments, run results and logs.")),
+      h("div", { class: "settings-group" },
+        h("span", { class: "section-label" }, "Uninstall"),
+        h("button", { class: "btn small danger self-start", onclick: () => uninstallLauncher(ctx) }, "Uninstall devstribution…")),
       h("div", { class: "about" }, `devstribution ${s.version} · ${s.uv_version ?? "uv not found"} · ${s.platform} · MIT or Apache-2.0`));
   }).catch((e) => toast(errorText(e), "error"));
+}
+
+/** Hands over to the setup program's uninstaller, which asks whether to delete app data too. */
+async function uninstallLauncher(ctx: Ctx) {
+  const ok = await ctx.api.ask(
+    "devstribution will close and its uninstaller will open. Apps that are running stop. The uninstaller asks whether to delete your apps, their results and saved secrets as well.",
+    "Uninstall devstribution", "Continue");
+  if (!ok) return;
+  try { await ctx.api.uninstallLauncher(); } catch (e) { toast(errorText(e), "error"); }
 }

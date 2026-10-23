@@ -304,9 +304,9 @@ def run(excel_file: Path, ctx) -> dict:
 - For development, the same `ctx` API is published on PyPI as `devstribution-runner` (type hints, local tests). Apps add it as a **dev dependency** only; it is never installed in production environments (`--no-dev`), because the launcher provides the runner.
 
 ### Execution
-1. The Rust core starts a **subprocess** inside a Job Object: `python -I <launcher-dir>\runner\bootstrap.py`.
+1. The Rust core starts a **subprocess** inside a Job Object: `python -I -S <launcher-dir>\runner\bootstrap.py`.
    - The runner is **pure Python, stdlib only**, versioned together with the launcher and stored in the launcher's install folder. Because it is not in the app's environment, it never conflicts with the app's lockfile, and "anything outside the lockfile = refused" stays true.
-   - `-I` (isolated mode) ignores `PYTHONPATH`, user site-packages and the current folder; `bootstrap.py` builds `sys.path` explicitly: runner, app code (`apps\<id>\<version-hash>\`), app dependencies.
+   - `-I` (isolated mode) ignores `PYTHONPATH`, user site-packages and the current folder; `bootstrap.py` builds `sys.path` explicitly: runner, app code (`apps\<id>\<version-hash>\`), app dependencies. `-S` defers `site` (the environment and its `.pth` files) until the runtime guard is installed.
    - The JSON protocol carries a `protocol` version, so launcher and runner can evolve safely.
 2. Inputs and secrets are passed as JSON on **stdin** (secrets never on files or environment variables); stdin stays open for control messages (e.g. `cancel`); results come back as JSON; stdout/stderr go to the log. The runner keeps the original stdout for the protocol and points fd 1 at stderr, so the app's own prints (including from C extensions) can't corrupt it; the app gets an empty stdin. The protocol is documented in `runner/devstribution_runner/_runner.py`.
    - Bytecode goes to a cache outside the app folder (`sys.pycache_prefix`), so the verified, hash-addressed code folder is never modified by running it.

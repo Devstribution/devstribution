@@ -143,6 +143,8 @@ export interface Finding {
 export interface ScanReport {
   files_scanned: number;
   findings: Finding[];
+  /** The check of the packages in `uv.lock`, when the package has one. */
+  dependencies?: { packages: number; list_date: string } | null;
 }
 
 export interface PendingInstall {
@@ -210,6 +212,8 @@ export interface Api {
   setSecret(id: string, name: string, value: string): Promise<void>;
   clearSecret(id: string, name: string): Promise<void>;
   settings(): Promise<Settings>;
+  /** Starts devstribution's own uninstaller and closes the launcher. */
+  uninstallLauncher(): Promise<void>;
   takePendingFiles(): Promise<string[]>;
   /** Run events arrive in batches (at most about ten a second), so a chatty app cannot flood the window. */
   onRunEvents(cb: (runId: string, events: RunEvent[]) => void): Promise<Unlisten>;
@@ -235,7 +239,8 @@ async function tauriApi(): Promise<Api> {
         title: "Install an app",
         multiple: false,
         directory: false,
-        filters: [{ name: "devstribution app", extensions: ["dsapp"] }],
+        // A downloaded .dsapp often arrives renamed to .zip; its content is checked all the same.
+        filters: [{ name: "devstribution app (.dsapp, or .zip after a download)", extensions: ["dsapp", "zip"] }],
       });
       return typeof path === "string" ? path : null;
     },
@@ -264,6 +269,7 @@ async function tauriApi(): Promise<Api> {
     setSecret: (id, name, value) => invoke("set_secret", { id, name, value }),
     clearSecret: (id, name) => invoke("clear_secret", { id, name }),
     settings: () => invoke("settings"),
+    uninstallLauncher: () => invoke("uninstall_launcher"),
     takePendingFiles: () => invoke("take_pending_files"),
     onRunEvents: (cb) =>
       listen<{ run_id: string; events: RunEvent[] }>("run-events", (e) => cb(e.payload.run_id, e.payload.events)),

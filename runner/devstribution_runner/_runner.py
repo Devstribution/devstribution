@@ -99,6 +99,42 @@ class ControlReader:
         return line + b"\n"
 
 
+# `.pth` files every environment has, which only set up paths for the tools that made it.
+_KNOWN_STARTUP_FILES = {"distutils-precedence.pth", "_virtualenv.pth"}
+
+
+def _load_site(emit: Callable[[Dict[str, Any]], None]) -> None:
+    """Adds the app's environment to `sys.path`, under the guard.
+
+    The launcher starts Python with `-S`, so `site` has not run yet: the `import` lines of the
+    environment's `.pth` files (code a dependency runs whenever Python starts) run here, after
+    the guard is installed, instead of before it. They are reported in the run log. Started
+    without `-S`, `site` already ran and there is nothing to do.
+    """
+    if not sys.flags.no_site:
+        return
+    import site
+
+    # Only `main` finds the environment (`pyvenv.cfg`): the folders are listed afterwards.
+    site.main()
+    for folder in site.getsitepackages():
+        try:
+            names = sorted(os.listdir(folder))
+        except OSError:
+            continue
+        for name in names:
+            if not name.endswith(".pth") or name in _KNOWN_STARTUP_FILES:
+                continue
+            try:
+                with open(os.path.join(folder, name), encoding="utf-8", errors="replace") as f:
+                    runs_code = any(line.startswith(("import ", "import\t")) for line in f)
+            except OSError:
+                continue
+            if runs_code:
+                emit({"type": "guard", "action": "observe", "rule": "startup-code",
+                      "message": f"a dependency runs code when Python starts: {name}"})
+
+
 def main() -> int:
     channel = Channel()
     control = ControlReader()
@@ -133,6 +169,7 @@ def main() -> int:
 
     # Last thing before app code: from here on, what the app does is checked.
     _guard.install(channel.emit, start.get("guard") or {})
+    _load_site(channel.emit)
 
     finished = threading.Event()
     threading.Thread(target=_control_loop, args=(control, ctx, finished), daemon=True).start()

@@ -6,6 +6,7 @@ registry or the Startup folder, and no PowerShell starts.
 """
 
 import json
+import subprocess
 import sys
 import textwrap
 import unittest
@@ -45,6 +46,37 @@ class GuardTest(RunnerBase):
         self.assertEqual([s["rule"] for s in stops], [rule], messages)
         self.assertFalse([m for m in messages if m.get("type") == "result"], "no result after a stop")
         return stops[0]
+
+    def environment_with(self, pth_files):
+        """A real environment (like the app's) whose site-packages holds these `.pth` files."""
+        env = self.root / "env"
+        subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(env)], check=True)
+        python = env / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+        purelib = subprocess.run(
+            [str(python), "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        for name, text in pth_files.items():
+            Path(purelib, name).write_text(text)
+        self.python = str(python)
+
+    def test_dependency_startup_code_runs_under_the_guard(self):
+        # A `.pth` line runs when Python starts. Here it loads hidden compiled code: before the
+        # guard was installed first, nothing would have seen it.
+        self.environment_with({"evil.pth": "import marshal; marshal.loads(marshal.dumps(1))\n"})
+        stop = self.assert_stopped("return {'v': 'ran'}", "hidden-code")
+        self.assertEqual(stop["action"], "stop")
+
+    def test_dependency_startup_code_is_reported(self):
+        self.environment_with({
+            "helper.pth": "import sys\n",
+            "paths.pth": "some/folder\n",
+            "distutils-precedence.pth": "import os\n",
+        })
+        code, messages, _ = self.run_guarded("return {'v': 'ok'}")
+        self.assertEqual(code, 0, messages)
+        startup = [m["message"] for m in self.guard_messages(messages, "observe") if m["rule"] == "startup-code"]
+        self.assertEqual(startup, ["a dependency runs code when Python starts: helper.pth"])
 
     def test_ordinary_app_runs(self):
         code, messages, _ = self.run_guarded(
