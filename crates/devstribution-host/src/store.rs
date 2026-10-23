@@ -12,6 +12,7 @@ use devstribution_core::manifest::{AppId, Kind, Manifest, Version};
 use devstribution_core::package::{
     self, Limits, PYPROJECT, SignatureStatus, VerifiedPackage, VerifyOptions,
 };
+use devstribution_core::scan::{self, ScanReport};
 use devstribution_core::signing::{parse_public_key, public_key_base64, public_key_id};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -114,6 +115,9 @@ pub struct PendingInstall {
     pub installed_version: Option<String>,
     pub action: String,
     pub warnings: Vec<String>,
+    /// What the code scan found in the verified files (`devstribution_core::scan`).
+    #[serde(default)]
+    pub scan: ScanReport,
     // Kept for the install step, not shown.
     pub publisher_key: String,
     pub content_hash: String,
@@ -417,6 +421,8 @@ impl Store {
             ));
         }
 
+        let scan = scan::scan(&stage.join("app"), verified.files.paths(), &m.permissions);
+
         let pending = PendingInstall {
             token: token.to_string(),
             id,
@@ -442,6 +448,7 @@ impl Store {
                 .unwrap_or("install")
                 .to_string(),
             warnings,
+            scan,
             publisher_key: verified.publisher_key.clone(),
             content_hash: verified.content_hash.clone(),
             content_sha256: verified.content_sha256.clone(),

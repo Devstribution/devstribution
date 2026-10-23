@@ -10,6 +10,7 @@ pub mod lock;
 pub mod manifest;
 pub mod package;
 pub mod paths;
+pub mod scan;
 pub mod signing;
 
 pub use error::{Error, Result};

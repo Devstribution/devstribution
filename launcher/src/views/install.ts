@@ -1,5 +1,6 @@
-import { ShieldAlert, ShieldCheck, Globe, Folder, KeyRound, Database, Puzzle, Sparkles, Check, Loader, Download } from "lucide";
-import type { PendingInstall, StepEvent } from "../api";
+import { ShieldAlert, ShieldCheck, ShieldX, ShieldOff, Globe, Folder, KeyRound, Database, Puzzle, Sparkles, Check, Loader, Download,
+  SquareTerminal, Cpu, Code, EyeOff, Eye, CalendarClock, PackagePlus, Binary, ScanSearch } from "lucide";
+import type { Finding, PendingInstall, StepEvent } from "../api";
 import type { Ctx } from "../main";
 import { h, icon, appIcon, bytes, clear, toast, errorText, KIND_LABEL } from "../ui";
 
@@ -13,6 +14,36 @@ function permissionRows(p: PendingInstall): HTMLElement {
   if (!rows.length) rows.push([Sparkles, "Nothing declared", "No internet, files or secrets"]);
   return h("div", { class: "perm-list" }, rows.map(([ic, t, s]) =>
     h("div", { class: "perm" }, h("div", { class: "pi" }, icon(ic, 16)), h("div", null, h("div", { class: "pt" }, t), h("div", { class: "ps" }, s)))));
+}
+
+const CATEGORY_ICON: Record<string, typeof Globe> = {
+  network: Globe, processes: SquareTerminal, native_code: Cpu, dynamic_code: Code, obfuscation: EyeOff,
+  persistence: CalendarClock, credentials: KeyRound, surveillance: Eye, evasion: ShieldOff,
+  runtime_install: PackagePlus, sap: Database, binary: Binary,
+};
+
+/** What the code scan found, one row per kind of finding, with the files it was found in. */
+function scanRows(p: PendingInstall): HTMLElement {
+  const groups = new Map<string, Finding[]>();
+  for (const f of p.scan.findings) {
+    const key = `${f.rule}
+${f.message}`;
+    groups.set(key, [...(groups.get(key) ?? []), f]);
+  }
+  const where = (f: Finding) => (f.line ? `${f.path}:${f.line} ${f.evidence}` : f.path) + (f.occurrences > 1 ? ` (+${f.occurrences - 1})` : "");
+  const rows = [...groups.values()].map((fs) => {
+    const f = fs[0];
+    const shown = fs.slice(0, 3).map(where).join(" · ") + (fs.length > 3 ? ` · ${fs.length - 3} more files` : "");
+    return h("div", { class: "perm" },
+      h("div", { class: `pi ${f.severity === "info" ? "" : f.severity}`, title: f.severity }, icon(CATEGORY_ICON[f.category] ?? ScanSearch, 16)),
+      h("div", null, h("div", { class: "pt" }, f.message), h("div", { class: "ps mono" }, shown)));
+  });
+  if (!rows.length) {
+    rows.push(h("div", { class: "perm" }, h("div", { class: "pi" }, icon(ScanSearch, 16)),
+      h("div", null, h("div", { class: "pt" }, "Nothing unusual found"),
+        h("div", { class: "ps" }, `${p.scan.files_scanned} Python file${p.scan.files_scanned === 1 ? "" : "s"} checked`))));
+  }
+  return h("div", { class: "perm-list" }, rows);
 }
 
 /** The confirmation screen. Any .dsapp, however it arrived, goes through here. */
@@ -43,6 +74,7 @@ export async function installFlow(ctx: Ctx, path?: string) {
   const verb = p.action === "update" ? "Update" : p.action === "reinstall" ? "Reinstall" : "Install";
   const newPublisher = p.trust === "new_publisher";
   const internet = p.origin && p.origin.zone_id >= 3;
+  const danger = p.scan.findings.some((f) => f.severity === "danger");
 
   clear(modal,
     h("div", { class: "modal-head center" },
@@ -51,6 +83,11 @@ export async function installFlow(ctx: Ctx, path?: string) {
         h("div", { class: "muted" }, `from “${p.namespace}” · version ${p.version} · ${KIND_LABEL[p.kind] ?? p.kind}`))),
     h("div", { class: "modal-body" },
       p.description ? h("div", { class: "soft-text center" }, p.description) : null,
+      danger
+        ? h("div", { class: "banner red" }, h("div", { class: "bi" }, icon(ShieldX, 18)),
+            h("div", null, h("strong", null, "The code does things malware does"),
+              "See “What the code does” below. Install only if the publisher can explain each one."))
+        : null,
       newPublisher
         ? h("div", { class: "banner amber" }, h("div", { class: "bi" }, icon(ShieldAlert, 18)),
             h("div", null, h("strong", null, `New publisher: “${p.namespace}”`),
@@ -66,13 +103,15 @@ export async function installFlow(ctx: Ctx, path?: string) {
       p.warnings.filter((w) => !w.startsWith("First app") && !w.startsWith("This file was downloaded")).map((w) =>
         h("div", { class: "banner amber" }, h("div", { class: "bi" }, icon(ShieldAlert, 18)), h("div", null, w))),
       h("div", { class: "section-label" }, "What this app can do"), permissionRows(p),
+      h("div", { class: "section-label" }, "What the code does"), scanRows(p),
+      h("div", { class: "muted small" }, "Read without running it: well-hidden code can be missed, and a flagged line can be harmless."),
       h("div", { class: "facts" },
         h("div", { class: "fact" }, h("div", { class: "k" }, "Size"), h("div", { class: "v" }, bytes(p.size_bytes))),
         h("div", { class: "fact" }, h("div", { class: "k" }, "Files"), h("div", { class: "v" }, String(p.file_count))),
         h("div", { class: "fact" }, h("div", { class: "k" }, "Runs on"), h("div", { class: "v" }, p.platforms.join(", "))))),
     h("div", { class: "modal-foot" },
       h("button", { class: "btn", onclick: cancel }, "Cancel"),
-      h("button", { class: "btn primary", onclick: () => confirm() }, actionLabel)));
+      h("button", { class: "btn primary", onclick: () => confirm() }, danger ? `${verb} anyway` : actionLabel)));
 
   async function confirm() {
     const steps: [StepEvent["step"] | "verify", string][] = [

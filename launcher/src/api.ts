@@ -105,6 +105,25 @@ export interface Overview {
   recent_runs: RunRecord[];
 }
 
+export type Severity = "info" | "warning" | "danger";
+
+/** One rule matched in one file by the code scan (`devstribution_core::scan`). */
+export interface Finding {
+  rule: string;
+  category: string;
+  severity: Severity;
+  message: string;
+  path: string;
+  line?: number | null;
+  evidence: string;
+  occurrences: number;
+}
+
+export interface ScanReport {
+  files_scanned: number;
+  findings: Finding[];
+}
+
 export interface PendingInstall {
   token: string;
   id: string;
@@ -127,6 +146,7 @@ export interface PendingInstall {
   installed_version?: string | null;
   action: "install" | "update" | "reinstall";
   warnings: string[];
+  scan: ScanReport;
 }
 
 export interface StepEvent {

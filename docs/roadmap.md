@@ -66,6 +66,12 @@ The parts that compile on Windows but have never run there. Each gets a result i
   Repair; check with users whether that is enough.
 - ☐ An output type for "a folder the user chose", so stateful apps get an "Open" button
   (report: packaging 2).
+- ☑ Code scan before install: the install screen lists what the code does (network, programs,
+  native code, code built at run time) and flags what looks like malware (hidden code, starting
+  with Windows, reading browser passwords, switching off the antivirus, injecting into
+  processes). Undeclared network or SAP use is a warning. The same scan warns in `pack` and runs
+  as `devstribution scan` (exit code 1 on danger, `--json` for CI). First piece of the IT review
+  kit below.
 - ☐ Error messages reviewed end to end: every failure says what happened and what to do.
 - ☐ About page with version, licences of bundled software, and where the data folder is.
 
