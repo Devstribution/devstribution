@@ -251,7 +251,8 @@ The first version is in the code; how IT sets it up is in [`managed-mode.md`](ma
 
 Phase 2 of the plan: the rest of managed mode (the per-machine service and installs in Program
 Files, an ADMX template, IT countersignatures), catalog with GitHub namespace verification,
-`devstribution://` links, revocation (a signed list, which can also live on a network share); the
+`devstribution://` links, revocation (a signed list, which can also live on a network share; see
+"Possibilities" below); the
 `background` app kind; `resources` downloads (refused at install today).
 
 - **`web` apps** ([plan](plan.md), "kinds"): Streamlit, Gradio or NiceGUI apps shown in their own
@@ -276,3 +277,31 @@ Files, an ADMX template, IT countersignatures), catalog with GitHub namespace ve
   guard are all Python-specific; a second language would need each of them again. If needed, a
   "signed executable" kind (no environment, no scan, only the signature and the Job Object) is
   the cheap option, clearly labelled as reviewed less.
+
+## Possibilities
+
+Ideas worth keeping, not planned yet.
+
+- **A public revocation list on GitHub.** One list of bad publisher keys (stolen or malicious)
+  and bad package hashes. Every launcher checks it, so a stolen key stops working everywhere
+  without each IT department removing the author by hand. Private keys never go on it.
+  GitHub only hosts the file. What makes the list hard to tamper with is checked by the launcher:
+  - **Signed offline.** The launcher has the list's public key built in and refuses any list whose
+    signature does not match. Editing the file on GitHub, or anywhere between GitHub and the user,
+    gets nowhere.
+  - **Numbered.** Launchers never accept an older list than the one they have, so a replayed old
+    copy cannot bring revoked keys back.
+  - **Expiring.** A list that is overdue (deleted, blocked, held back) is noticed: managed mode
+    installs nothing new, free mode warns. Offline, the last list that checked out still applies.
+  - **Hard to sign alone.** Ideally two of three keys, held by different people, must sign each
+    list. An offline root key certifies the key that signs lists, so that key can be replaced
+    without a new launcher.
+  - **Mirrorable.** The file carries its own signature, so IT can copy it to an internal share
+    (many company networks block github.com) and point the policy at the copy, or turn it off.
+
+  The list only blocks. A public list of *trusted* publishers would be worth only as much as the
+  vetting behind it. At most, it would show free-mode users a "known publisher" hint, and in
+  managed mode IT's approval would still decide.
+- **Apps pushed by IT.** An `Apps` policy value naming a folder. At each start, the launcher
+  installs or updates every `.dsapp` in it from an approved author, and removes the apps IT took
+  out. Today colleagues double-click the packages themselves.
