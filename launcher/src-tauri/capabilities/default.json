@@ -15,6 +15,7 @@
     "allow-discard-install",
     "allow-uninstall-app",
     "allow-repair-app",
+    "allow-release-quarantine",
     "allow-start-run",
     "allow-cancel-run",
     "allow-list-runs",

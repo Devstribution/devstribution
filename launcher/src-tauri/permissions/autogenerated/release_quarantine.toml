@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-release-quarantine"
+description = "Enables the release_quarantine command without any pre-configured scope."
+commands.allow = ["release_quarantine"]
+
+[[permission]]
+identifier = "deny-release-quarantine"
+description = "Denies the release_quarantine command without any pre-configured scope."
+commands.deny = ["release_quarantine"]

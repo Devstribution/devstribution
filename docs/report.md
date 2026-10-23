@@ -27,8 +27,8 @@ safe choice).
 | # | Finding | Where | State |
 |---|---|---|---|
 | 1 | **`pack` has no way to leave out a folder.** `app_1/output/` holds client data (Excel, SQLite, diagnostic zips) and would have been packed and signed. Worked around by packing a clean copy; a `[tool.devstribution] exclude = [...]` list (or honouring `.gitignore`) is needed. | `crates/devstribution-core/src/package.rs` (`EXCLUDED_DIRS`) | Fixed |
-| 2 | **Stateful apps don't fit the per-run output folder.** The app keeps its Excel di lavoro, archive and database between runs, so it writes to a folder the user picks; `file` outputs must be inside `ctx.output_dir`, so the result can only be shown as text, without an "Open result" button. An output type for "a folder the user chose" would fix it. | `runner/devstribution_runner/_runner.py:277` | Open |
-| 5 | **The data guard missed `output/ultimo_esito.json`.** Repacking with the new CLI: the spreadsheets and the database in `output/` were refused as data, but the app's last result (a `.json` with client figures) would have been signed into the package. JSON is too common as configuration to treat as data everywhere. Fixed for ricon with a `.dsappignore` (`output/`, `tests/`, `*.bat`); for `pack`, a folder that holds refused data files could have its other files refused too. | `crates/devstribution-core/src/package.rs` (`DATA_EXTENSIONS`) | Open |
+| 2 | **Stateful apps don't fit the per-run output folder.** The app keeps its Excel di lavoro, archive and database between runs, so it writes to a folder the user picks; `file` outputs had to be inside `ctx.output_dir`, so the result could only be shown as text, without an "Open result" button. Fixed without a format change: a `file` output may also be inside a folder the user chose for one of the run's `folder` inputs. The runner, the launcher's re-check and "Open result" all accept those folders, and the run record keeps them. | `runner/devstribution_runner/_runner.py` (`_result_folders`), `crates/devstribution-host/src/run.rs` (`result_folders`) | Fixed; tests `test_output_in_a_chosen_folder_is_allowed`, `forged_results_are_trimmed_to_what_the_manifest_declares` |
+| 5 | **The data guard missed `output/ultimo_esito.json`.** Repacking with the new CLI: the spreadsheets and the database in `output/` were refused as data, but the app's last result (a `.json` with client figures) would have been signed into the package. JSON is too common as configuration to treat as data everywhere. Fixed: a folder (below the app folder) that holds unconfirmed data is treated as a data folder, and its other files are refused too, apart from Python code and files listed with `!pattern`. | `crates/devstribution-core/src/package.rs` (`collect_app_files`) | Fixed; test `files_next_to_data_are_refused_too` |
 | 4 | **The code scan's first real run flagged `socket` in three files** without declared network access. They only call `socket.gethostname()` for the diagnostics. The scanner now counts `socket` only when another member is used. | `crates/devstribution-core/src/scan.rs` (`SOFT_MODULES`) | Fixed; test `harmless_socket_use_is_not_network` |
 | 3 | No cooperative cancellation: the app never calls `ctx.progress()`, so Cancel relies on the 3 s `KeyboardInterrupt` fallback. Fine to test the fallback with. | `app_1/main.py` | Note |
 
@@ -80,6 +80,11 @@ safe choice).
 | Uninstalling with "delete app data" removes the data folder and the apps' secrets in Credential Manager (`--forget-secrets`) | Pass |
 | Data folder move: the new folder `%LOCALAPPDATA%\dev.devstribution.launcher\data` is used. The old `%LOCALAPPDATA%\devstribution` holds only empty folders and a runner copy, with no `state.json`, so there was nothing to move and it stays behind | Not exercised (no old data); the leftover folder is harmless |
 
+| *Runtime guard, 23 Oct (automated, on this PC):* | |
+| Runner guard tests: one app per rule stopped before the call (Run key, Startup folder, browser passwords, `powershell /Enc`, `vssadmin` behind `cmd`, `WriteProcessMemory`, `marshal`), undeclared network and `pyrfc` blocked, loopback allowed; Python 3.11 and 3.13 | Pass |
+| A program started with `WinExec` (no audit event) is caught by the Job Object watch; the app is quarantined, refused until allowed, then runs | Pass |
+| ricon 0.1.1 under the guard (`dev`, `diagnostica` and `run`): no false positives; only `cmd /c ver` observed | Pass |
+
 The checks used a throwaway test app (`wincheck`: `tree-*` / `excel-*` modes, a secret input) and
 `examples/hello-gui`.
 
@@ -88,3 +93,5 @@ The checks used a throwaway test app (`wincheck`: `tree-*` / `excel-*` modes, a 
 - The data folder move with real old data (a pre-0.2 launcher's `state.json`).
 - uv behind a company proxy (`--system-certs` with TLS inspection): needs the company network.
 - Everything again with the signed installer, once signing is set up.
+- The runtime guard in the real launcher: the quarantine banner, "Allow and run again", a stop
+  while the app panel is open.

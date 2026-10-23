@@ -93,6 +93,23 @@ fn looks_like_data(name: &str) -> bool {
         .is_some_and(|(_, ext)| DATA_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
 }
 
+/// Python source, which stays packable even in a folder that holds data.
+fn is_code(name: &str) -> bool {
+    name.rsplit_once('.')
+        .is_some_and(|(_, ext)| matches!(ext.to_ascii_lowercase().as_str(), "py" | "pyi"))
+}
+
+/// The folders of `path`, innermost first, without the app folder itself: `a/b/c.json` →
+/// `a/b`, `a`.
+fn parent_dirs(path: &str) -> impl Iterator<Item = &str> {
+    let mut rest = path;
+    std::iter::from_fn(move || {
+        let (dir, _) = rest.rsplit_once('/')?;
+        rest = dir;
+        Some(dir)
+    })
+}
+
 /// The files of an app folder that go into its package.
 pub struct AppFiles {
     /// Package path (with `/`) → file on disk, sorted.
@@ -101,7 +118,9 @@ pub struct AppFiles {
     /// app's `.gitignore` / `.dsappignore`. Folders end with `/`.
     pub excluded: Vec<String>,
     /// Data-like files (see `DATA_EXTENSIONS`) that are neither left out nor listed with
-    /// `!pattern`. `pack` refuses to sign while this is not empty.
+    /// `!pattern`, and the other files in their folders (an app's last result in `output/` is
+    /// often a `.json` next to its spreadsheets), apart from Python code. `pack` refuses to sign
+    /// while this is not empty.
     pub unconfirmed_data: Vec<String>,
 }
 
@@ -126,6 +145,8 @@ pub fn collect_app_files(app_dir: &Path) -> Result<AppFiles> {
     let mut files = BTreeMap::new();
     let mut excluded = Vec::new();
     let mut unconfirmed_data = Vec::new();
+    // Files that are not data themselves, but would be refused next to data: (path, name).
+    let mut beside_data = Vec::new();
     let mut walker = walkdir::WalkDir::new(app_dir)
         .follow_links(false)
         .sort_by_file_name()
@@ -168,8 +189,12 @@ pub fn collect_app_files(app_dir: &Path) -> Result<AppFiles> {
             excluded.push(rel);
             continue;
         }
-        if looks_like_data(&name) && !rule.is_whitelist() {
-            unconfirmed_data.push(rel.clone());
+        if !rule.is_whitelist() {
+            if looks_like_data(&name) {
+                unconfirmed_data.push(rel.clone());
+            } else if !is_code(&name) {
+                beside_data.push(rel.clone());
+            }
         }
         if !file_type.is_file() {
             return Err(Error::Package(format!("`{rel}` is not a regular file")));
@@ -177,6 +202,18 @@ pub fn collect_app_files(app_dir: &Path) -> Result<AppFiles> {
         validate_relative_path(&rel).map_err(Error::Package)?;
         files.insert(rel, entry.into_path());
     }
+    // A folder (below the app folder) holding unconfirmed data is a data folder: what else it
+    // holds is refused too, unless it is code or listed with `!pattern`.
+    let data_dirs: HashSet<&str> = unconfirmed_data
+        .iter()
+        .filter_map(|p| parent_dirs(p).next())
+        .collect();
+    let mut beside: Vec<String> = beside_data
+        .into_iter()
+        .filter(|p| parent_dirs(p).any(|d| data_dirs.contains(d)))
+        .collect();
+    unconfirmed_data.append(&mut beside);
+    unconfirmed_data.sort();
     let mut lower = HashSet::new();
     for path in files.keys() {
         if !lower.insert(path.to_lowercase()) {
@@ -209,7 +246,8 @@ pub fn check_app_files(app: &AppFiles, manifest: &Manifest) -> Result<()> {
             .collect();
         let more = app.unconfirmed_data.len() - shown.len();
         return Err(Error::Package(format!(
-            "{} file(s) look like data, not app code: {}{}. A package is signed and handed out, so \
+            "{} file(s) look like data, or sit in a folder with data, not app code: {}{}. A \
+             package is signed and handed out, so \
              data must not get in by accident. Leave them out with a line in {IGNORE_FILE} (e.g. \
              `output/`), or, if the app needs them, list them there as `!path` (e.g. \
              `!templates/report.xlsx`)",
@@ -846,6 +884,46 @@ source = { virtual = "." }
         // A `!` line in .dsappignore wins over the app's .gitignore.
         fs::write(app.join(".gitignore"), "*.xlsx\n").unwrap();
         assert!(packed_paths(&f).contains(&"templates/report.xlsx".to_string()));
+    }
+
+    #[test]
+    fn files_next_to_data_are_refused_too() {
+        let f = fixture();
+        let app = f.app();
+        fs::create_dir_all(app.join("output/2026")).unwrap();
+        fs::create_dir_all(app.join("config")).unwrap();
+        fs::create_dir_all(app.join("templates")).unwrap();
+        fs::write(app.join("output/Clienti.xlsx"), "client data").unwrap();
+        fs::write(app.join("output/ultimo_esito.json"), "client figures").unwrap();
+        fs::write(app.join("output/2026/note.txt"), "client notes").unwrap();
+        fs::write(app.join("output/helpers.py"), "").unwrap();
+        fs::write(app.join("config/settings.json"), "{}").unwrap();
+        fs::write(app.join("templates/report.xlsx"), "template").unwrap();
+        fs::write(app.join("templates/layout.json"), "{}").unwrap();
+
+        let collected = collect_app_files(&app).unwrap();
+        assert_eq!(
+            collected.unconfirmed_data,
+            [
+                "output/2026/note.txt",
+                "output/Clienti.xlsx",
+                "output/ultimo_esito.json",
+                "templates/layout.json",
+                "templates/report.xlsx",
+            ]
+        );
+        assert!(pack_error(&f).contains("output/ultimo_esito.json"));
+
+        // Confirming the template clears its folder; the JSON next to it needs no line of its own.
+        fs::write(app.join(IGNORE_FILE), "output/\n!templates/report.xlsx\n").unwrap();
+        let packed = packed_paths(&f);
+        for path in [
+            "config/settings.json",
+            "templates/layout.json",
+            "templates/report.xlsx",
+        ] {
+            assert!(packed.contains(&path.to_string()), "{path} in {packed:?}");
+        }
     }
 
     #[test]

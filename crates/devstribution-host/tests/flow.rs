@@ -259,3 +259,105 @@ def run(name: str, ctx) -> dict:
     );
     assert!(lines.iter().any(|l| l == "still running"));
 }
+
+fn install_app(store: &Store, tmp: &Path, main: &str) {
+    write_app_with(&tmp.join("src"), "1.0.0", main);
+    let pkg = tmp.join("app.dsapp");
+    pack(&tmp.join("src"), &signer(), &pkg).unwrap();
+    let pending = store.inspect(&pkg).unwrap();
+    store.install(&pending.token, &mut |_| {}).unwrap();
+}
+
+/// Runs the installed app to the end and records it, as the launcher does.
+fn run_recorded(store: &Store) -> anyhow::Result<run::RunResult> {
+    let runner_dir = runner::install(&store.paths).unwrap();
+    let (spec, mut record) = store.prepare_run("alice/hello", &Map::new(), &runner_dir)?;
+    let result = run::start(spec, Arc::new(|_| {})).unwrap().wait();
+    store.finish_run(&mut record, &result).unwrap();
+    Ok(result)
+}
+
+/// The runtime guard stops an app that loads hidden code, the app is quarantined until the
+/// user decides, and allowing the rule lets it run (still reported).
+#[test]
+fn guard_stop_quarantines_until_allowed() {
+    const HIDDEN: &str = r#"
+import marshal
+
+def run(name: str, ctx) -> dict:
+    exec(marshal.loads(marshal.dumps(compile("x = 1", "hidden", "exec"))))
+    out = ctx.output_dir / "greeting.txt"
+    out.write_text("hi")
+    return {"greeting": out}
+"#;
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Store::open(Paths {
+        root: tmp.path().join("home"),
+    })
+    .unwrap();
+    install_app(&store, tmp.path(), HIDDEN);
+
+    let result = run_recorded(&store).unwrap();
+    assert_eq!(result.status, RunStatus::Error);
+    assert_eq!(result.guard_stop().unwrap().rule, "hidden-code");
+    assert!(
+        result
+            .error
+            .unwrap()
+            .starts_with("Stopped by devstribution")
+    );
+    assert!(result.outputs.is_empty());
+    let app = store.app("alice/hello").unwrap();
+    assert_eq!(app.record.quarantine.unwrap().hit.rule, "hidden-code");
+    assert_eq!(store.runs(None, 1).unwrap()[0].guard[0].rule, "hidden-code");
+
+    let refused = run_recorded(&store).unwrap_err().to_string();
+    assert!(refused.contains("is blocked"), "{refused}");
+
+    let app = store.release_quarantine("alice/hello", true).unwrap();
+    assert!(app.record.quarantine.is_none());
+    assert_eq!(app.record.guard_allow, ["hidden-code"]);
+    let result = run_recorded(&store).unwrap();
+    assert_eq!(result.status, RunStatus::Ok, "{:?}", result.error);
+    assert!(result.guard.iter().any(|h| h.rule == "allowed"));
+}
+
+/// A program started behind the runner's back (straight through the Windows API, which no
+/// audit hook sees) is still caught: the launcher checks every process in the Job Object.
+#[cfg(windows)]
+#[test]
+fn job_object_catches_programs_the_hook_cannot_see() {
+    const SNEAKY: &str = r#"
+import ctypes, time
+
+def run(name: str, ctx) -> dict:
+    # Harmless: `rem` does nothing, ping only waits. The command line is what matters.
+    ctypes.windll.kernel32.WinExec(b"cmd /c rem vssadmin delete shadows /all & ping -n 6 127.0.0.1", 0)
+    time.sleep(20)
+    out = ctx.output_dir / "greeting.txt"
+    out.write_text("hi")
+    return {"greeting": out}
+"#;
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Store::open(Paths {
+        root: tmp.path().join("home"),
+    })
+    .unwrap();
+    install_app(&store, tmp.path(), SNEAKY);
+    let started = std::time::Instant::now();
+    let result = run_recorded(&store).unwrap();
+    let stop = result
+        .guard_stop()
+        .expect("stopped by the Job Object watch");
+    assert_eq!(stop.rule, "delete-backups");
+    assert!(stop.detail.contains("vssadmin"), "{}", stop.detail);
+    assert!(started.elapsed() < std::time::Duration::from_secs(15));
+    assert!(
+        store
+            .app("alice/hello")
+            .unwrap()
+            .record
+            .quarantine
+            .is_some()
+    );
+}

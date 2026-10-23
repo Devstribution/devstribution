@@ -17,8 +17,9 @@ use devstribution_core::signing::{parse_public_key, public_key_base64, public_ke
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use crate::guard::GuardHit;
 use crate::paths::Paths;
-use crate::run::{RunResult, RunSpec, RunStatus};
+use crate::run::{self, RunResult, RunSpec, RunStatus};
 use crate::time::{date, now_secs, random_hex, stamp};
 use crate::uv::{self, LockMode};
 use crate::zone::{self, Origin};
@@ -47,6 +48,20 @@ pub struct AppRecord {
     /// Last values typed in the form (never secrets), to prefill the next run.
     #[serde(default)]
     pub last_inputs: Map<String, Value>,
+    /// Set when the runtime guard stopped a run: the app does not run again until the user
+    /// decides. Kept across updates, so a new version cannot clear it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quarantine: Option<Quarantine>,
+    /// Guard rules the user allowed for this app after a stop.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub guard_allow: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Quarantine {
+    pub run_id: String,
+    pub at: u64,
+    pub hit: GuardHit,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -144,7 +159,15 @@ pub struct RunRecord {
     #[serde(default)]
     pub outputs: Map<String, Value>,
     pub error: Option<String>,
+    /// What the runtime guard did during the run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub guard: Vec<GuardHit>,
     pub output_dir: PathBuf,
+    /// Where the run's file results may be: `output_dir` and the folders chosen for the run
+    /// (see [`run::result_folders`]). "Open result" opens nothing outside them. Empty in
+    /// records from before it existed, which means `output_dir` only.
+    #[serde(default)]
+    pub result_folders: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -537,11 +560,10 @@ impl Store {
                     &pending.content_hash,
                 )
                 .context("this install is no longer valid")?;
-                let last_inputs = state
-                    .apps
-                    .get(&pending.id)
-                    .map(|r| r.last_inputs.clone())
-                    .unwrap_or_default();
+                let previous = state.apps.get(&pending.id);
+                let last_inputs = previous.map(|r| r.last_inputs.clone()).unwrap_or_default();
+                let quarantine = previous.and_then(|r| r.quarantine.clone());
+                let guard_allow = previous.map(|r| r.guard_allow.clone()).unwrap_or_default();
                 state
                     .pins
                     .entry(id.namespace.clone())
@@ -562,6 +584,8 @@ impl Store {
                         installed_at: now_secs(),
                         origin: pending.origin.clone(),
                         last_inputs,
+                        quarantine,
+                        guard_allow,
                     },
                 );
                 let newer = state
@@ -659,7 +683,14 @@ impl Store {
         runner_dir: &Path,
     ) -> Result<(RunSpec, RunRecord)> {
         let app = self.app(id)?;
-        let resolved = crate::run::resolve_inputs(&app.manifest, inputs)?;
+        if let Some(q) = &app.record.quarantine {
+            bail!(
+                "{} is blocked: in an earlier run it {}. Allow it or uninstall it first.",
+                app.manifest.title,
+                q.hit.message
+            );
+        }
+        let resolved = run::resolve_inputs(&app.manifest, inputs)?;
         let mut secrets = Map::new();
         for name in crate::run::secret_names(&app.manifest) {
             let value = crate::secrets::get(id, &name)?
@@ -700,7 +731,9 @@ impl Store {
             duration_ms: 0,
             outputs: Map::new(),
             error: None,
+            guard: Vec::new(),
             output_dir: output_dir.clone(),
+            result_folders: run::result_folders(&app.manifest, &resolved, &output_dir),
         };
         self.save_run(&record)?;
         // One bytecode cache per installed version: an app cannot leave compiled code that
@@ -722,6 +755,7 @@ impl Store {
             inputs: resolved,
             secrets,
             args: Vec::new(),
+            guard_allow: app.record.guard_allow.clone(),
         };
         Ok((spec, record))
     }
@@ -732,7 +766,40 @@ impl Store {
         record.duration_ms = result.duration_ms;
         record.outputs = result.outputs.clone();
         record.error = result.error.clone();
+        record.guard = result.guard.clone();
+        if let Some(hit) = result.guard_stop() {
+            let quarantine = Quarantine {
+                run_id: record.id.clone(),
+                at: now_secs(),
+                hit: hit.clone(),
+            };
+            self.update_state(|state| {
+                if let Some(app) = state.apps.get_mut(&record.app_id) {
+                    app.quarantine = Some(quarantine);
+                }
+                Ok(())
+            })?;
+        }
         self.save_run(record)
+    }
+
+    /// Ends an app's quarantine. With `allow`, the rule that stopped it no longer stops this
+    /// app (it is still reported); without, the next run is checked as before.
+    pub fn release_quarantine(&self, id: &str, allow: bool) -> Result<InstalledApp> {
+        self.update_state(|state| {
+            let app = state
+                .apps
+                .get_mut(id)
+                .ok_or_else(|| anyhow!("`{id}` is not installed"))?;
+            if let Some(q) = app.quarantine.take()
+                && allow
+                && !app.guard_allow.contains(&q.hit.rule)
+            {
+                app.guard_allow.push(q.hit.rule);
+            }
+            Ok(())
+        })?;
+        self.app(id)
     }
 
     fn save_run(&self, record: &RunRecord) -> Result<()> {

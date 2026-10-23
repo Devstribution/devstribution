@@ -84,11 +84,19 @@ async function boot() {
       else if (e.type === "log") r.lines.push({ level: e.level, text: e.message });
       else if (e.type === "output") r.lines.push({ level: "output", text: e.line });
       else if (e.type === "cancelling") r.cancelling = true;
+      else if (e.type === "guard") {
+        const text = e.action === "stop" ? `Stopped: the app ${e.message} (${e.detail})`
+          : e.action === "block" ? `Blocked: the app ${e.message} (${e.detail})`
+          : `${e.rule}: ${e.message}`;
+        r.lines.push({ level: e.action === "observe" ? "info" : "guard", text });
+      }
       else if (e.type === "finished") {
         r.result = e.result;
         // Its panel shows the result; otherwise say so, wherever the user is.
         if (openPanel?.appId !== r.appId) {
-          const msg = { ok: `${r.appTitle} finished`, error: `${r.appTitle} didn’t work`, cancelled: `${r.appTitle} was cancelled`, running: "" }[e.result.status];
+          const stopped = e.result.guard?.some((g) => g.action === "stop");
+          const msg = stopped ? `${r.appTitle} was stopped by devstribution`
+            : { ok: `${r.appTitle} finished`, error: `${r.appTitle} didn’t work`, cancelled: `${r.appTitle} was cancelled`, running: "" }[e.result.status];
           toast(msg, e.result.status === "ok" ? "ok" : e.result.status === "error" ? "error" : "info", { label: "Open", run: () => ctx.openApp(r.appId) });
         }
       }

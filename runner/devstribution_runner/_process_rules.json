@@ -1,0 +1,101 @@
+{
+  "_about": "Programs an app must not start: what malware starts. Read by the runner (before a program starts) and by the launcher (for every process that appears in the run's Job Object). A rule matches a command line when one of its words is one of `programs` (folder and .exe left out) and, after that word, a word is one of `flags` (a leading / or dash counts as -) or the rest contains one of `contains`. A rule with neither matches every start of the program. All lower case.",
+  "rules": [
+    {
+      "id": "encoded-powershell",
+      "message": "started PowerShell with hidden (encoded) commands",
+      "programs": ["powershell", "pwsh"],
+      "flags": ["-e", "-ec", "-en", "-enc", "-enco", "-encod", "-encode", "-encoded", "-encodedc", "-encodedco", "-encodedcom", "-encodedcomm", "-encodedcomma", "-encodedcomman", "-encodedcommand"],
+      "contains": ["frombase64string"]
+    },
+    {
+      "id": "download-and-run",
+      "message": "downloaded and ran code with PowerShell",
+      "programs": ["powershell", "pwsh"],
+      "contains": ["downloadstring", "downloaddata", "net.webclient", "invoke-expression", "iex(", "iex (", "start-bitstransfer"]
+    },
+    {
+      "id": "antivirus-off",
+      "message": "tried to switch off or weaken the antivirus",
+      "programs": ["powershell", "pwsh"],
+      "contains": ["set-mppreference", "add-mppreference", "disablerealtimemonitoring"]
+    },
+    {
+      "id": "antivirus-off",
+      "message": "tried to switch off or weaken the antivirus",
+      "programs": ["sc", "net", "reg"],
+      "contains": ["windefend", "windows defender"]
+    },
+    {
+      "id": "start-with-windows",
+      "message": "tried to make a program start with Windows",
+      "programs": ["schtasks"],
+      "flags": ["-create", "-change"]
+    },
+    {
+      "id": "start-with-windows",
+      "message": "tried to make a program start with Windows",
+      "programs": ["reg"],
+      "contains": ["\\currentversion\\run", "\\winlogon", "image file execution options"]
+    },
+    {
+      "id": "start-with-windows",
+      "message": "tried to make a program start with Windows",
+      "programs": ["powershell", "pwsh"],
+      "contains": ["register-scheduledtask", "\\currentversion\\run"]
+    },
+    {
+      "id": "hidden-download",
+      "message": "used a Windows tool that malware uses to download or unpack code",
+      "programs": ["certutil"],
+      "flags": ["-decode", "-decodehex", "-urlcache", "-verifyctl"]
+    },
+    {
+      "id": "hidden-download",
+      "message": "used a Windows tool that malware uses to download or unpack code",
+      "programs": ["bitsadmin"],
+      "flags": ["-transfer", "-addfile", "-create"]
+    },
+    {
+      "id": "hidden-download",
+      "message": "used a Windows tool that malware uses to download or unpack code",
+      "programs": ["mshta"]
+    },
+    {
+      "id": "hidden-download",
+      "message": "used a Windows tool that malware uses to download or unpack code",
+      "programs": ["regsvr32"],
+      "contains": ["scrobj", ":http"]
+    },
+    {
+      "id": "delete-backups",
+      "message": "tried to delete Windows backups, as ransomware does",
+      "programs": ["vssadmin"],
+      "contains": ["delete shadows", "resize shadowstorage"]
+    },
+    {
+      "id": "delete-backups",
+      "message": "tried to delete Windows backups, as ransomware does",
+      "programs": ["wmic"],
+      "contains": ["shadowcopy delete"]
+    },
+    {
+      "id": "delete-backups",
+      "message": "tried to delete Windows backups, as ransomware does",
+      "programs": ["wbadmin"],
+      "contains": ["delete catalog", "delete systemstatebackup", "delete backup"]
+    },
+    {
+      "id": "delete-backups",
+      "message": "tried to delete Windows backups, as ransomware does",
+      "programs": ["bcdedit"],
+      "contains": ["recoveryenabled", "bootstatuspolicy"]
+    },
+    {
+      "id": "firewall-off",
+      "message": "tried to switch off the Windows firewall",
+      "programs": ["netsh"],
+      "contains": ["state off", "opmode disable", "opmode=disable"]
+    }
+  ]
+}

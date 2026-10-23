@@ -8,8 +8,11 @@ stdin, launcher → runner
      "output_dir": "...", "inputs": {"name": value}, "input_types": {"name": "file"},
      "outputs": [{"name": "report", "type": "file"}],
      "secrets": {"name": "value"}, "allowed_secrets": ["name"], "args": [],
-     "pycache_dir": "..."}
+     "pycache_dir": "...",
+     "guard": {"network": ["api.company.com"], "sap": false, "allow": ["rule-id"]}}
   `pycache_dir` keeps bytecode out of the app folder, which must stay as verified.
+  `guard` is what the runtime guard checks the run against (see `_guard.py`); a start message
+  without it gets the strictest guard: no network, no SAP, nothing allowed.
   then control messages: {"type": "cancel"}. Closing stdin also cancels the run.
 
 runner → launcher, on the original stdout (the app's own stdout is redirected to stderr, which
@@ -17,11 +20,13 @@ the launcher writes to the run log):
     {"type": "progress", "value": 0.3, "message": "..."}
     {"type": "log", "level": "info", "message": "..."}
     {"type": "com_process", "pid": 1234, "created": 133000000000000000}
+    {"type": "guard", "action": "stop" | "block" | "observe", "rule": "...", "message": "...",
+     "detail": "..."}
     {"type": "result", "status": "ok", "outputs": {...}}
     {"type": "result", "status": "error", "error": "...", "traceback": "..."}
     {"type": "result", "status": "cancelled"}
 
-Exit code: 0 ok, 1 error, 2 cancelled, 3 protocol error.
+Exit code: 0 ok, 1 error, 2 cancelled, 3 protocol error, 4 stopped by the guard.
 """
 
 import datetime
@@ -35,8 +40,9 @@ import threading
 import traceback
 import _thread
 from pathlib import Path
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, List
 
+from . import _guard
 from ._context import Cancelled, Context
 
 PROTOCOL = 1
@@ -125,6 +131,9 @@ def main() -> int:
 
     devstribution_runner.ctx = ctx
 
+    # Last thing before app code: from here on, what the app does is checked.
+    _guard.install(channel.emit, start.get("guard") or {})
+
     finished = threading.Event()
     threading.Thread(target=_control_loop, args=(control, ctx, finished), daemon=True).start()
 
@@ -183,7 +192,7 @@ def _run(start: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         func = _load_function(module_name, function_name)
         kwargs = _convert_inputs(func, start, ctx)
         returned = func(**kwargs, ctx=ctx)
-        return _convert_outputs(returned, start.get("outputs") or [], ctx.output_dir)
+        return _convert_outputs(returned, start.get("outputs") or [], _result_folders(start, ctx))
 
     if kind in ("gui", "cli"):
         sys.argv = [module_name] + [str(a) for a in start.get("args") or []]
@@ -262,7 +271,18 @@ def _convert(name: str, kind: str, raw: Any) -> Any:
         raise AppError(f"input {name!r}: invalid {kind} {raw!r} ({exc})") from None
 
 
-def _convert_outputs(returned: Any, outputs: list, output_dir: Path) -> Dict[str, Any]:
+def _result_folders(start: Dict[str, Any], ctx: Context) -> List[Path]:
+    """Where file outputs may be: the run's output folder, and the folders the user chose for
+    `folder` inputs (apps that keep their work between runs write there)."""
+    values = start.get("inputs") or {}
+    folders = [ctx.output_dir]
+    for name, kind in (start.get("input_types") or {}).items():
+        if kind == "folder" and values.get(name):
+            folders.append(Path(values[name]))
+    return folders
+
+
+def _convert_outputs(returned: Any, outputs: list, folders: List[Path]) -> Dict[str, Any]:
     declared = {o["name"]: o["type"] for o in outputs}
     if returned is None:
         returned = {}
@@ -274,7 +294,7 @@ def _convert_outputs(returned: Any, outputs: list, output_dir: Path) -> Dict[str
     missing = set(declared) - set(returned)
     if missing:
         raise AppError(f"run() did not return the outputs {sorted(missing)}")
-    root = output_dir.resolve()
+    roots = [folder.resolve() for folder in folders]
     result: Dict[str, Any] = {}
     for name, kind in declared.items():
         value = returned[name]
@@ -282,8 +302,10 @@ def _convert_outputs(returned: Any, outputs: list, output_dir: Path) -> Dict[str
             path = Path(value).resolve()
             if not path.is_file():
                 raise AppError(f"output {name!r}: file not found: {path}")
-            if root != path and root not in path.parents:
-                raise AppError(f"output {name!r}: files must be written inside ctx.output_dir")
+            if not any(root == path or root in path.parents for root in roots):
+                raise AppError(
+                    f"output {name!r}: files must be written inside ctx.output_dir or a folder chosen for the run"
+                )
             result[name] = str(path)
         elif kind == "table":
             result[name] = json.loads(json.dumps(value, default=str))

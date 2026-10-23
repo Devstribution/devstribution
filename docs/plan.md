@@ -299,7 +299,7 @@ def run(excel_file: Path, ctx) -> dict:
 ```
 - The manifest is the **single source** of inputs; `devstribution dev` and `devstribution pack` check that the signature of `run()` matches (same names and compatible types) and refuse the package otherwise.
 - `ctx` exposes `progress()`, `log()`, `output_dir`, `secrets.get(name)`, `cancelled`, `on_cleanup(fn)` and `track_com(obj)` (see "Cancellation and cleanup").
-- The return value is a dict whose keys are the `outputs`; files must be written to `ctx.output_dir`.
+- The return value is a dict whose keys are the `outputs`; files must be written to `ctx.output_dir`, or inside a folder the user chose for a `folder` input of the same run (apps that keep their work between runs, like a working Excel file).
 - Errors: an exception = failed run, with the traceback in the local log and an offer to create a diagnostic package.
 - For development, the same `ctx` API is published on PyPI as `devstribution-runner` (type hints, local tests). Apps add it as a **dev dependency** only; it is never installed in production environments (`--no-dev`), because the launcher provides the runner.
 
@@ -439,5 +439,5 @@ Status: all five items are built as a proof of concept (launcher in `launcher/`,
 | Signing tool | Ed25519 implementation in the Rust core, **minisign-compatible format** (interoperable, verifiable with existing tools, same format as the Tauri updater). No Sigstore |
 | Extension and URL scheme | **Decided**: extension `.dsapp`, scheme `devstribution://`. Check that `.dsapp` isn't already associated with widespread software |
 | Catalog and revocation | Repo in the project's GitHub org, served via GitHub Pages. Catalog key **offline**, not in CI secrets; the revocation list is signed with the same key. Mirror on a network share supported by the policy |
-| Sandbox | v1: informational permissions + Job Object (timeout, tree kill, memory limits). Later, consider AppContainer or per-app network blocking via Windows Firewall, only if the cost is reasonable; state it in the threat model |
+| Sandbox | v1: informational permissions + Job Object (timeout, tree kill, memory limits). Before 1.0, a runtime guard: audit hooks in the runner enforce the declared permissions and stop malware-like behaviour, and the launcher watches new processes in the Job Object ([`roadmap.md`](roadmap.md), section 4). Later, consider AppContainer or per-app network blocking via Windows Firewall, only if the cost is reasonable; state it in the threat model |
 | Per-machine Python | Decide after Phase 0 which mode is the default and which Python versions the per-machine installer includes |

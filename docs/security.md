@@ -23,7 +23,7 @@ apps, within the limits listed below.
 | Code running at install time | Install only extracts, verifies, and runs `uv sync --no-build` from the signed lockfile: no `setup.py`, no build backend. Nothing from the package runs before the user confirms. |
 | A package making uv fetch or install something else | `uv.lock` must name only wheels from PyPI's file host, over HTTPS, with SHA-256 hashes, checked before install. uv runs with `--no-config` (no `uv.toml` or `[tool.uv]` from the package), a cleaned environment (no `UV_*`, `PIP_*`, `PYTHON*` from the session), its own Python builds (`--managed-python` with an explicit version, so no `.python-version` from the package) and the system certificate store. Release launchers use only the uv they ship, pinned and hash-checked at build time. |
 | A look-alike publisher key | Keys are shown by a SHA-256 fingerprint of the whole key, not minisign's 8-byte key number, which anyone can choose. Trust decisions compare the full key. |
-| An app's output or result tricking the launcher | Output is read as bytes (invalid UTF-8 cannot stop the reading), lines and logs are capped, events reach the window in batches. Results are re-checked by the launcher: only declared outputs, file outputs only inside the run's output folder. "Open result" opens only a recorded result, by its resolved path, and only shows programs, scripts and shortcuts in their folder. |
+| An app's output or result tricking the launcher | Output is read as bytes (invalid UTF-8 cannot stop the reading), lines and logs are capped, events reach the window in batches. Results are re-checked by the launcher: only declared outputs, file outputs only inside the run's output folder or a folder the user chose for that run's `folder` inputs. "Open result" opens only a recorded result, by its resolved path, and only shows programs, scripts and shortcuts in their folder. |
 | An app making the launcher end other processes | COM processes (Excel) an app reports are only ended if they started during the run, and only if they are still the same process. |
 | An app's processes surviving Cancel or the launcher closing (Windows) | The app starts suspended and joins a Job Object with kill-on-close before it runs; a run that cannot get one does not start. |
 | An app tampering with the runner other apps load | Before every run the runner folder is compared with the copy built into the launcher and rewritten if a file differs or was added. Each installed app version has its own bytecode cache. |
@@ -31,6 +31,7 @@ apps, within the limits listed below.
 | The launcher window being used to do more than the launcher needs | The window may call only the launcher's own commands, event listening, the file picker and yes/no questions (no `core:default`). The backend checks every argument (ids, run ids, secret names, paths). |
 | A DLL planted next to the signed launcher (Windows) | Imported DLLs load from System32 only (`/DEPENDENTLOADFLAG`), others never from the current folder or PATH (`SetDefaultDllDirectories`). The launcher's data is kept out of its install folder. |
 | An app whose code does more than it declares, or hides what it does | Before the install button, the code scan lists what the code uses and flags undeclared network or SAP use, programs and compiled files that cannot be reviewed, code built at run time, and what is typical of malware (decode-and-run, start-with-Windows entries, browser password stores, antivirus switches, process injection, hidden text-direction characters). A red banner and "Install anyway" when something looks like malware. The scan reads, never runs, the code; see limit 2. |
+| An app doing more than it declared, or what malware does, while it runs | The runtime guard: an audit hook in the runner, installed before app code, blocks network use the app does not declare (and hosts it does not list) and SAP's RFC library without `sap`; it stops the run before the call on start-with-Windows entries, the antivirus's settings, browser password stores, the Windows tools malware uses, process injection, keyboard hooks and hidden compiled code. The launcher checks every process in the run's Job Object against the same rules. A stop ends the whole tree and quarantines the app until the user decides. See limit 2 for what it does not see. |
 | A downloaded package without a warning | Mark-of-the-Web is read (also UTF-16); a mark that cannot be understood counts as "from the internet". |
 | A tampered CI pipeline (once it signs releases) | Actions pinned to commit SHAs, read-only token, `cargo audit` and `npm audit` on every change, Dependabot updates. |
 
@@ -50,13 +51,22 @@ These are deliberate limits of the current design. Each one says why, and what w
    The per-user launcher protects against *packages*, not against code already running as the
    user. The **per-machine mode** ([`plan.md`](plan.md), "Python installation modes") moves code
    and trust state into admin-only folders behind a service, and is the answer where this matters.
-2. **Apps are not sandboxed.** The permissions shown at install (internet, files, secrets, SAP) are
-   what the publisher *declares*. Nothing yet stops an app from doing more: it runs with the user's
-   rights. Trust in the publisher is the protection, which is why the confirmation screen is
-   explicit about new publishers. The code scan shown there is a static reading of the package's
-   own Python files: it does not read dependencies, and code that builds names or downloads code
-   at run time can get past it. It is a prompt to ask questions, not a verdict. Planned: the IT review kit ([`plan.md`](plan.md)), then
-   enforcement (AppContainer, per-app firewall rules) where the cost is reasonable.
+2. **Apps are not sandboxed.** Apps run with the user's rights. Trust in the publisher is the
+   protection, which is why the confirmation screen is explicit about new publishers. Two layers
+   narrow what a dishonest app can do without being noticed, and neither is a wall:
+   - The **code scan** at install is a static reading of the package's own Python files: it does
+     not read dependencies, and code that builds names or downloads code at run time can get past
+     it. It is a prompt to ask questions, not a verdict.
+   - The **runtime guard** ([`roadmap.md`](roadmap.md), section 4) sees what goes through
+     Python's audit events, inside the app's own process. It does not see network use, files or
+     programs reached through native code (`ctypes` calls to WinHTTP, COM objects such as
+     `MSXML2.XMLHTTP`, C extensions), SAP driven through SAP GUI's COM interface, or anything
+     after code patches the interpreter's memory. Folder permissions are not enforced. The Job
+     Object check sees every program the run starts, but only once it has started, so a very
+     short program can act before it is ended.
+
+   After 1.0: the IT review kit ([`plan.md`](plan.md)) and a kernel-enforced sandbox
+   (AppContainer) where the cost is reasonable.
 3. **Trust on first use.** Outside managed mode, whoever first installs a namespace on a PC pins its
    key, and the name is marked "unverified". Catalog and GitHub-source verification (Phase 2)
    replace this with a verified binding.
@@ -103,6 +113,9 @@ Results in [`report.md`](report.md):
 
 ### Still to verify on a real Windows PC
 
+- **Runtime guard in the launcher:** a stop quarantines the app, the panel shows the banner,
+  "Allow and run again" lets that rule pass (the automated tests already run on Windows,
+  including the Job Object catching a program started behind the hook).
 - **Job Object:** Excel is closed after a crash (closed after Cancel and after a killed run: verified).
 - **Data migration:** an existing `%LOCALAPPDATA%\devstribution` data folder moves to the new
   location on first start of the new launcher.

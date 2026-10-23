@@ -59,6 +59,7 @@ pub fn dev(dir: &Path, inputs: &[String], args: &[String], json_output: bool) ->
         inputs: resolved,
         secrets,
         args: args.to_vec(),
+        guard_allow: Vec::new(),
     };
     let handle = run::start(spec, Arc::new(print_event))?;
 
@@ -141,6 +142,12 @@ fn print_event(event: RunEvent) {
         }
         RunEvent::Log { level, message } => eprintln!("[{level}] {message}"),
         RunEvent::Output { line } => eprintln!("{line}"),
+        // The launcher would quarantine the app; in development the run just stops.
+        RunEvent::Guard(hit) => match hit.action.as_str() {
+            "observe" => eprintln!("[guard] {}: {}", hit.rule, hit.message),
+            "block" => eprintln!("[guard] blocked: the app {} ({})", hit.message, hit.detail),
+            _ => eprintln!("[guard] STOPPED: the app {} ({})", hit.message, hit.detail),
+        },
         RunEvent::Cancelling | RunEvent::Finished { .. } => {}
     }
 }

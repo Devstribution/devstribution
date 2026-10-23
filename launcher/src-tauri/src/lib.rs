@@ -11,7 +11,7 @@ use std::time::Duration;
 use devstribution_core::manifest::{Input, Output, Permissions};
 use devstribution_host::run::{self, RunEvent};
 use devstribution_host::store::{
-    InstallStep, InstalledApp, PendingInstall, RunRecord, Stats, Store,
+    InstallStep, InstalledApp, PendingInstall, Quarantine, RunRecord, Stats, Store,
 };
 use devstribution_host::zone::Origin;
 use devstribution_host::{Paths, runner, secrets, uv};
@@ -105,6 +105,8 @@ struct AppView {
     origin: Option<Origin>,
     last_inputs: Map<String, Value>,
     secrets: Vec<SecretView>,
+    quarantine: Option<Quarantine>,
+    guard_allow: Vec<String>,
 }
 
 impl From<InstalledApp> for AppView {
@@ -135,6 +137,8 @@ impl From<InstalledApp> for AppView {
             origin: app.record.origin,
             last_inputs: app.record.last_inputs,
             secrets,
+            quarantine: app.record.quarantine,
+            guard_allow: app.record.guard_allow,
             id,
         }
     }
@@ -247,6 +251,18 @@ async fn repair_app(app: AppHandle, id: String) -> CmdResult<()> {
     .await
 }
 
+/// Ends an app's quarantine after the runtime guard stopped it: `allow` lets the rule that
+/// stopped it pass from now on ("Allow and run again"); without, runs are checked as before.
+#[tauri::command]
+async fn release_quarantine(app: AppHandle, id: String, allow: bool) -> CmdResult<AppView> {
+    blocking(move || {
+        let s = state(&app);
+        let _guard = lock(&s.write_lock);
+        Ok(s.store.release_quarantine(&id, allow)?.into())
+    })
+    .await
+}
+
 #[derive(Clone, Serialize)]
 struct RunEventsPayload {
     run_id: String,
@@ -313,6 +329,7 @@ async fn start_run(app: AppHandle, id: String, inputs: Map<String, Value>) -> Cm
                         error: Some(format!("{e:#}")),
                         traceback: None,
                         duration_ms: 0,
+                        guard: Vec::new(),
                     },
                 );
                 return Err(e);
@@ -386,8 +403,8 @@ async fn run_log(app: AppHandle, run_id: String) -> CmdResult<String> {
 
 /// Opens a run's result: its output folder, or a file the run returned as a result. Nothing
 /// else can be opened, whatever the page asks: the path must be one of the run's recorded
-/// results and resolve inside its output folder. Files Windows would run (programs, scripts,
-/// shortcuts) are only shown in their folder.
+/// results and resolve inside its output folder or a folder chosen for the run. Files Windows
+/// would run (programs, scripts, shortcuts) are only shown in their folder.
 #[tauri::command]
 async fn open_output(
     app: AppHandle,
@@ -410,7 +427,11 @@ async fn open_output(
                 }
                 // The resolved path is the one opened, so it cannot change after the check.
                 let resolved = Path::new(&p).canonicalize()?;
-                if !resolved.starts_with(&output_dir) || !resolved.is_file() {
+                let allowed = std::iter::once(&record.output_dir)
+                    .chain(&record.result_folders)
+                    .filter_map(|dir| dir.canonicalize().ok())
+                    .any(|dir| resolved.starts_with(dir));
+                if !allowed || !resolved.is_file() {
                     anyhow::bail!("this file is not a result of the run");
                 }
                 resolved
@@ -624,6 +645,7 @@ pub fn run() {
             discard_install,
             uninstall_app,
             repair_app,
+            release_quarantine,
             start_run,
             cancel_run,
             list_runs,
