@@ -10,8 +10,9 @@ uv, or packages that can carry client data, would put our signature on the wrong
 *Revised 23 October 2026.* Package integrity, the Windows checks and the installer are done. What
 changed: making the platform **safe enough for IT to allow** moves before 1.0. The declared
 permissions become enforced while an app runs (section 4), and the scan reads deeper (section 5).
-Before, these were planned only for managed mode after 1.0. Signing and Phase 0 wait on people
-outside the project, so they run alongside.
+Before, these were planned only for managed mode after 1.0, and a first version of managed mode
+itself now comes before 1.0 too (section 10). Signing and Phase 0 wait on people outside the
+project, so they run alongside.
 
 Status: ☐ to do · ◐ in progress · ☑ done
 
@@ -25,8 +26,10 @@ Status: ☐ to do · ◐ in progress · ☑ done
    policy come with managed mode.
 3. ◐ **Deeper scan** (section 5): dependencies ☑ (malicious packages, look-alike names, start-up
    code under the guard); AMSI and what changed in an update next.
-4. **Results shown in the launcher** (section 7): tables and images without opening Excel.
-5. **IT-facing evidence** (section 8): Windows Event Log, SBOM, `SECURITY.md`, fuzzing.
+4. ☐ **Managed mode, first version** (section 10): a company policy in HKLM decides which authors
+   may be installed. No server needed. Next to tackle (see [`HANDOFF.md`](HANDOFF.md)).
+5. **Results shown in the launcher** (section 7): tables and images without opening Excel.
+6. **IT-facing evidence** (section 8): Windows Event Log, SBOM, `SECURITY.md`, fuzzing.
 
 At the same time, waiting on others: code signing (the SignPath application, Certum as the
 fallback) and Phase 0 on a locked-down company PC (section 3).
@@ -215,11 +218,34 @@ slow moment is the first install of an app with heavy dependencies (pandas).
   `report.md`. Optimise only what the numbers point at (for example, sharing an environment
   between versions with the same lockfile, or starting the runner sooner).
 
+## 10. Managed mode, first version
+
+Moved here from "After 1.0" on 23 October 2026. It is what a company's IT asks for before
+allowing devstribution on its PCs, and it needs no server: the policy comes through the registry
+(GPO or Intune), and the approved authors are files IT can keep on a network share. The design is
+in [`plan.md`](plan.md), "Trust model and policy".
+
+- ☐ **Policy from HKLM.** Managed mode when `HKLM\SOFTWARE\Policies\devstribution` exists,
+  free mode as today otherwise. The allowed authors are listed inline or in a TOML policy file
+  that only admins can write.
+- ☐ **`.trust` files** (an author's namespace and key fingerprints): `devstribution trust export`
+  writes one. In managed mode, only approved authors install: no trust on first use and no
+  "Install anyway".
+- ☐ **A helpful block message**, with a ready-to-forward `.trust` ("ask your IT to trust X").
+- ☐ **Policy options**: scan and dependency danger findings (refuse or let the user decide), the
+  guard's mode per rule and who may release a quarantine (section 4), and the minimum launcher
+  version.
+- ☐ **Shown in the launcher**: the mode line, the policy in Settings, approved authors on the
+  install screen.
+- ☐ **Dry run**: log what would have been refused, without refusing it.
+- ☐ **Tests** in `flow.rs`, then checked on Windows with the registry value set by hand.
+
 ## After 1.0
 
-Phase 2 of the plan: managed mode (company policy in HKLM), catalog with GitHub namespace
-verification, `devstribution://` links, revocation; the `background` app kind; `resources`
-downloads (refused at install today).
+Phase 2 of the plan: the rest of managed mode (the per-machine service and installs in Program
+Files, an ADMX template, IT countersignatures), catalog with GitHub namespace verification,
+`devstribution://` links, revocation (a signed list, which can also live on a network share); the
+`background` app kind; `resources` downloads (refused at install today).
 
 - **`web` apps** ([plan](plan.md), "kinds"): Streamlit, Gradio or NiceGUI apps shown in their own
   launcher window, with a one-time token. This is how an app gets a full custom UI *inside*
