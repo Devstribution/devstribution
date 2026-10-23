@@ -225,20 +225,27 @@ allowing devstribution on its PCs, and it needs no server: the policy comes thro
 (GPO or Intune), and the approved authors are files IT can keep on a network share. The design is
 in [`plan.md`](plan.md), "Trust model and policy".
 
-- ☐ **Policy from HKLM.** Managed mode when `HKLM\SOFTWARE\Policies\devstribution` exists,
-  free mode as today otherwise. The allowed authors are listed inline or in a TOML policy file
-  that only admins can write.
-- ☐ **`.trust` files** (an author's namespace and key fingerprints): `devstribution trust export`
-  writes one. In managed mode, only approved authors install: no trust on first use and no
-  "Install anyway".
-- ☐ **A helpful block message**, with a ready-to-forward `.trust` ("ask your IT to trust X").
-- ☐ **Policy options**: scan and dependency danger findings (refuse or let the user decide), the
-  guard's mode per rule and who may release a quarantine (section 4), and the minimum launcher
-  version.
-- ☐ **Shown in the launcher**: the mode line, the policy in Settings, approved authors on the
-  install screen.
-- ☐ **Dry run**: log what would have been refused, without refusing it.
-- ☐ **Tests** in `flow.rs`, then checked on Windows with the registry value set by hand.
+The first version is in the code; how IT sets it up is in [`managed-mode.md`](managed-mode.md).
+
+- ☑ **Policy from HKLM.** Managed mode when `HKLM\SOFTWARE\Policies\devstribution` exists,
+  free mode as today otherwise. The allowed authors are listed inline, in `.trust` files in a
+  folder, or in a TOML policy file. Files and folders users can write are refused, and a policy
+  that cannot be read fails closed.
+- ☑ **`.trust` files** (an author's namespace and public keys): `devstribution trust export`
+  writes one, `trust show` prints its fingerprints. In managed mode, only approved authors
+  install and run: no trust on first use and no "Install anyway".
+- ☑ **A helpful block message**: the reasons, who to ask, and a ready-to-forward `.trust`
+  ("Save a request for IT…").
+- ☑ **Policy options**: scan and dependency danger findings (refuse or let the user decide),
+  guard rules made report-only, whether users may allow a stopped rule, the minimum launcher
+  version. *Not yet:* a different guard mode per rule beyond report-only.
+- ☑ **Shown in the launcher**: the mode line, the policy in Settings, approved authors on the
+  install screen and in the app panel.
+- ☑ **Dry run**: logs what would have been refused (`state/policy.log`), without refusing it.
+- ☑ **Tests** in `flow.rs` (policy set through `Store::set_policy`) and for the policy reader.
+- ☐ **Checked on Windows**: the registry read, the permission check on a local folder and on a
+  network share, and the screens ([`managed-mode.md`](managed-mode.md), "Checking it on a test
+  PC").
 
 ## After 1.0
 
