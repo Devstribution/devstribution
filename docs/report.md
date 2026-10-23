@@ -84,6 +84,10 @@ safe choice).
 | Runner guard tests: one app per rule stopped before the call (Run key, Startup folder, browser passwords, `powershell /Enc`, `vssadmin` behind `cmd`, `WriteProcessMemory`, `marshal`), undeclared network and `pyrfc` blocked, loopback allowed; Python 3.11 and 3.13 | Pass |
 | A program started with `WinExec` (no audit event) is caught by the Job Object watch; the app is quarantined, refused until allowed, then runs | Pass |
 | ricon 0.1.1 under the guard (`dev`, `diagnostica` and `run`): no false positives; only `cmd /c ver` observed | Pass |
+| *Runtime guard in the installed launcher, 23 Oct (`guard-demo`, a harmless `cmd /c rem vssadmin delete shadows /all`):* | |
+| Started through `subprocess`, panel open: the run ends as "Stopped by devstribution", the panel shows the red "Blocked by devstribution" banner, the Apps list shows "Blocked" | Pass |
+| Run refused while quarantined; "Allow and run again" runs to the end, the command only reported in the log | Pass |
+| Started through `WinExec` (behind the hook), on a fresh install: stopped by the Job Object watch, same banner | Pass |
 
 The checks used a throwaway test app (`wincheck`: `tree-*` / `excel-*` modes, a secret input) and
 `examples/hello-gui`.
@@ -93,5 +97,3 @@ The checks used a throwaway test app (`wincheck`: `tree-*` / `excel-*` modes, a 
 - The data folder move with real old data (a pre-0.2 launcher's `state.json`).
 - uv behind a company proxy (`--system-certs` with TLS inspection): needs the company network.
 - Everything again with the signed installer, once signing is set up.
-- The runtime guard in the real launcher: the quarantine banner, "Allow and run again", a stop
-  while the app panel is open.

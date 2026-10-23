@@ -20,8 +20,9 @@ Status: ☐ to do · ◐ in progress · ☑ done
 1. ◐ **The open findings from real use** (from [`report.md`](report.md)): the data guard
    missing `.json` results ☑, results in a folder the user chose ☑; uninstall easy to find is
    waiting on what users say.
-2. ◐ **Runtime guard** (section 4): declared network and SAP use enforced, malware-like behaviour
-   stops the run and quarantines the app. Built and tested; to check in the real launcher.
+2. ☑ **Runtime guard** (section 4): declared network and SAP use enforced, malware-like behaviour
+   stops the run and quarantines the app. Checked in the installed launcher; rule modes set by
+   policy come with managed mode.
 3. **Deeper scan** (section 5): AMSI, dependencies, what changed in an update.
 4. **Results shown in the launcher** (section 7): tables and images without opening Excel.
 5. **IT-facing evidence** (section 8): Windows Event Log, SBOM, `SECURITY.md`, fuzzing.
@@ -120,8 +121,9 @@ on what it sees. Neither needs admin rights. The process rules live in one file,
   and `devstribution-host/tests/flow.rs`: stop → quarantine → allow, and on Windows a program
   started through `WinExec`, behind the hook's back, caught by the Job Object. ricon runs clean
   under the guard (only its `cmd /c ver` is observed).
-- ☐ **Check in the real launcher on Windows**: the banner, "Allow and run again", and a stop
-  while the app panel is open.
+- ☑ **Checked in the installed launcher on Windows** (`report.md`): a stop through the hook with the
+  app panel open, and one through the Job Object; the banner, the run refused while
+  blocked, and "Allow and run again".
 
 ## 5. A deeper scan before install
 

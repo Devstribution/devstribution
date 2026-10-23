@@ -113,9 +113,6 @@ Results in [`report.md`](report.md):
 
 ### Still to verify on a real Windows PC
 
-- **Runtime guard in the launcher:** a stop quarantines the app, the panel shows the banner,
-  "Allow and run again" lets that rule pass (the automated tests already run on Windows,
-  including the Job Object catching a program started behind the hook).
 - **Job Object:** Excel is closed after a crash (closed after Cancel and after a killed run: verified).
 - **Data migration:** an existing `%LOCALAPPDATA%\devstribution` data folder moves to the new
   location on first start of the new launcher.
