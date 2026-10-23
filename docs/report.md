@@ -73,6 +73,11 @@ safe choice).
 | Code scan: `scan-demo.dsapp` (fake start-with-Windows entry and decode-and-run) shows the red banner, two danger rows and "Install anyway" | Pass |
 | Cancel, app ignores it (`tree-stubborn`): whole tree gone after the grace period, run `cancelled` after 21 s | Pass |
 | Closing the launcher mid-run (`tree-stubborn`): no app process left (KILL_ON_JOB_CLOSE); the run stays `running` until the next start, which records it as "the launcher closed during the run" | Pass (the record's fix-up on the next start not seen yet) |
+| *Installer, 23 Oct (`npx tauri build`, `devstribution_0.1.0_x64-setup.exe`, 13.5 MB, unsigned):* | |
+| Per-user NSIS installer installs without admin rights | Pass |
+| Double-clicking a `.dsapp` opens the installed launcher's install screen; a second double-click while it is open goes to the running launcher (single instance) | Pass |
+| A `.dsapp` downloaded with a browser shows "Downloaded from the internet" (Mark-of-the-Web) | Pass |
+| Uninstalling with "delete app data" removes the data folder and the apps' secrets in Credential Manager (`--forget-secrets`) | Pass |
 | Data folder move: the new folder `%LOCALAPPDATA%\dev.devstribution.launcher\data` is used. The old `%LOCALAPPDATA%\devstribution` holds only empty folders and a runner copy, with no `state.json`, so there was nothing to move and it stays behind | Not exercised (no old data); the leftover folder is harmless |
 
 The checks used a throwaway test app (`wincheck`: `tree-*` / `excel-*` modes, a secret input) and
@@ -80,6 +85,6 @@ The checks used a throwaway test app (`wincheck`: `tree-*` / `excel-*` modes, a 
 
 ## Still to check on Windows
 
-Mark-of-the-Web origin, and the file association and single instance: these need the installer
-(`npx tauri build`), as does the uninstaller removing the data folder and the apps' secrets.
-Also: the data folder move with real old data, and uv behind a company proxy.
+- The data folder move with real old data (a pre-0.2 launcher's `state.json`).
+- uv behind a company proxy (`--system-certs` with TLS inspection): needs the company network.
+- Everything again with the signed installer, once signing is set up.

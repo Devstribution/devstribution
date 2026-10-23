@@ -28,21 +28,23 @@ What goes into a `.dsapp`, and what the launcher runs it with, must be exactly w
 
 The parts that compile on Windows but have never run there. Each gets a result in `report.md`.
 
-- ☐ Cancel, timeout and closing the launcher kill the whole process tree (Job Object).
-- ☐ Excel started through COM is closed after a run, also after Cancel.
-- ☐ Secrets are saved to and read from Credential Manager.
-- ☐ `gui` apps start with `pythonw.exe`, without a console window.
-- ☐ The new UI fixes (menu, uninstall dialog, no sideways scrolling) in the real launcher.
-- ☐ The pre-signing security fixes that only Windows can run (list in
+- ☑ Cancel, timeout and closing the launcher kill the whole process tree (Job Object).
+- ☑ Excel started through COM is closed after a run, also after Cancel.
+- ☑ Secrets are saved to and read from Credential Manager.
+- ☑ `gui` apps start with `pythonw.exe`, without a console window.
+- ◐ The new UI fixes in the real launcher: menu and uninstall dialog ☑; no sideways scrolling not
+  checked on purpose yet.
+- ◐ The pre-signing security fixes that only Windows can run (list in
   [`security.md`](security.md), "Still to verify on a real Windows PC"): suspended start in the
   Job Object, restricted DLL loading, the data folder move, the uninstaller removing secrets,
   uv behind a company proxy.
 
 ## 3. Installer and signing
 
-- ☐ `npx tauri build`: per-user NSIS installer, no admin rights needed.
-- ☐ File association (double-click a `.dsapp`) and single instance, from the installed launcher.
-- ☐ Mark-of-the-Web: a `.dsapp` downloaded with a browser shows "Downloaded from the internet".
+- ☑ `npx tauri build`: per-user NSIS installer, no admin rights needed; the uninstaller removes the
+  data folder and the apps' secrets.
+- ☑ File association (double-click a `.dsapp`) and single instance, from the installed launcher.
+- ☑ Mark-of-the-Web: a `.dsapp` downloaded with a browser shows "Downloaded from the internet".
 - ☐ Code signing in CI (SignPath for open-source projects), so SmartScreen and AppLocker/WDAC see a
   known publisher.
 - ☐ Phase 0 of [`plan.md`](plan.md): install and run on a locked-down company PC.

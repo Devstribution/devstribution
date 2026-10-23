@@ -93,18 +93,17 @@ commits are on `main` after PR "Security review before signing".
 | 17 | Dependencies | `zip` 7.3 had three advisories (not in code we call), plus `time` and `quick-xml`; Tauri's Rust and JavaScript versions did not match. | `zip` 9, updates, Tauri 2.12 on both sides; `cargo audit` and `npm audit` clean and in CI. |
 | 18 | CI | Actions pinned by moving tags. | Pinned by commit SHA; audit job; Dependabot. |
 
+### Verified on a real Windows PC (23 October 2026)
+
+Results in [`report.md`](report.md):
+- **Job Object:** Cancel and closing the launcher end the app and every process it started.
+- **DLL loading:** the launcher starts normally with the restrictions; WebView2 loads.
+- **Installer:** the NSIS installer with the uninstall hook; "delete app data" removes the data
+  folder and the apps' secrets.
+
 ### Still to verify on a real Windows PC
 
-These were built and type-checked for Windows but can only be run there:
-
-- **Job Object:** the app starts suspended and is resumed after joining its Job Object. Check:
-  - Cancel and closing the launcher end the app and every process it started;
-  - Excel is closed after a crash.
-- **DLL loading:** the launcher starts with `/DEPENDENTLOADFLAG:0x800` and
-  `SetDefaultDllDirectories` (WebView2 loads normally).
-- **Installer:**
-  - `npx tauri build` produces the NSIS installer with the uninstall hook;
-  - uninstalling with "delete app data" removes the data folder and the apps' secrets.
+- **Job Object:** Excel is closed after a crash (closed after Cancel and after a killed run: verified).
 - **Data migration:** an existing `%LOCALAPPDATA%\devstribution` data folder moves to the new
   location on first start of the new launcher.
 - **uv behind a company proxy:** `--system-certs` with the company's TLS inspection.
