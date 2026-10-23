@@ -258,9 +258,10 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
             h("strong", null, "Blocked by devstribution"),
             h("div", null, `${relTime(q.at)} the app ${q.hit.message}, so devstribution stopped it. It won’t run again until you decide.`),
             q.hit.detail ? h("div", { class: "mono detail" }, q.hit.detail) : null,
+            app.may_allow_guard_rules ? null : h("div", null, "Your organisation decides whether it may run past this: ask your IT department."),
             h("div", { class: "banner-actions" },
               h("button", { class: "btn small", onclick: () => uninstall() }, icon(Trash2, 14), "Uninstall"),
-              h("button", { class: "btn small", onclick: async () => {
+              !app.may_allow_guard_rules ? null : h("button", { class: "btn small", onclick: async () => {
                 const ok = await ctx.api.ask(
                   `Let ${app.title} run even though it ${q.hit.message}? Only do this if you trust ${app.namespace} and know why the app needs to. devstribution still reports it every time.`,
                   "Allow and run again", "Allow");

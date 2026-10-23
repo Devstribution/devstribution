@@ -11,7 +11,8 @@ published it, and the launcher checks that what you run is exactly what that pub
 is not code-signed, and some Windows-specific parts still need testing on real PCs. The design is
 in [docs/plan.md](docs/plan.md); the launcher's look (palette, type, components) in
 [docs/design.md](docs/design.md). What the platform protects against, and what it doesn't, is in
-[docs/security.md](docs/security.md).
+[docs/security.md](docs/security.md). For IT departments: [docs/managed-mode.md](docs/managed-mode.md)
+explains how to allow only the authors you approve.
 
 ![The launcher: home with recent and most used apps](docs/images/home.png)
 

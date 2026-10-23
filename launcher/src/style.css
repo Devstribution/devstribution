@@ -283,6 +283,8 @@ svg.lucide { flex: none; }
 .sidebar-card p { margin: 0; font-size: var(--fs-xs); color: var(--muted); }
 .mode-line { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-3) var(--sp-2) 0; font-size: var(--fs-xs); color: var(--muted); }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); flex: none; }
+.dot.warn { background: var(--warning); }
+.policy-rules { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
 .preview-badge {
   margin-left: auto; font-size: var(--fs-micro); font-weight: var(--fw-heavy); color: var(--on-warning); background: var(--warning);
   padding: 2px var(--sp-2); border-radius: var(--r-pill);

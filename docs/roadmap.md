@@ -225,26 +225,34 @@ allowing devstribution on its PCs, and it needs no server: the policy comes thro
 (GPO or Intune), and the approved authors are files IT can keep on a network share. The design is
 in [`plan.md`](plan.md), "Trust model and policy".
 
-- ☐ **Policy from HKLM.** Managed mode when `HKLM\SOFTWARE\Policies\devstribution` exists,
-  free mode as today otherwise. The allowed authors are listed inline or in a TOML policy file
-  that only admins can write.
-- ☐ **`.trust` files** (an author's namespace and key fingerprints): `devstribution trust export`
-  writes one. In managed mode, only approved authors install: no trust on first use and no
-  "Install anyway".
-- ☐ **A helpful block message**, with a ready-to-forward `.trust` ("ask your IT to trust X").
-- ☐ **Policy options**: scan and dependency danger findings (refuse or let the user decide), the
-  guard's mode per rule and who may release a quarantine (section 4), and the minimum launcher
-  version.
-- ☐ **Shown in the launcher**: the mode line, the policy in Settings, approved authors on the
-  install screen.
-- ☐ **Dry run**: log what would have been refused, without refusing it.
-- ☐ **Tests** in `flow.rs`, then checked on Windows with the registry value set by hand.
+The first version is in the code; how IT sets it up is in [`managed-mode.md`](managed-mode.md).
+
+- ☑ **Policy from HKLM.** Managed mode when `HKLM\SOFTWARE\Policies\devstribution` exists,
+  free mode as today otherwise. The allowed authors are listed inline, in `.trust` files in a
+  folder, or in a TOML policy file. Files and folders users can write are refused, and a policy
+  that cannot be read fails closed.
+- ☑ **`.trust` files** (an author's namespace and public keys): `devstribution trust export`
+  writes one, `trust show` prints its fingerprints. In managed mode, only approved authors
+  install and run: no trust on first use and no "Install anyway".
+- ☑ **A helpful block message**: the reasons, who to ask, and a ready-to-forward `.trust`
+  ("Save a request for IT…").
+- ☑ **Policy options**: scan and dependency danger findings (refuse or let the user decide),
+  guard rules made report-only, whether users may allow a stopped rule, the minimum launcher
+  version. *Not yet:* a different guard mode per rule beyond report-only.
+- ☑ **Shown in the launcher**: the mode line, the policy in Settings, approved authors on the
+  install screen and in the app panel.
+- ☑ **Dry run**: logs what would have been refused (`state/policy.log`), without refusing it.
+- ☑ **Tests** in `flow.rs` (policy set through `Store::set_policy`) and for the policy reader.
+- ☐ **Checked on Windows**: the registry read, the permission check on a local folder and on a
+  network share, and the screens ([`managed-mode.md`](managed-mode.md), "Checking it on a test
+  PC").
 
 ## After 1.0
 
 Phase 2 of the plan: the rest of managed mode (the per-machine service and installs in Program
 Files, an ADMX template, IT countersignatures), catalog with GitHub namespace verification,
-`devstribution://` links, revocation (a signed list, which can also live on a network share); the
+`devstribution://` links, revocation (a signed list, which can also live on a network share; see
+"Possibilities" below); the
 `background` app kind; `resources` downloads (refused at install today).
 
 - **`web` apps** ([plan](plan.md), "kinds"): Streamlit, Gradio or NiceGUI apps shown in their own
@@ -269,3 +277,31 @@ Files, an ADMX template, IT countersignatures), catalog with GitHub namespace ve
   guard are all Python-specific; a second language would need each of them again. If needed, a
   "signed executable" kind (no environment, no scan, only the signature and the Job Object) is
   the cheap option, clearly labelled as reviewed less.
+
+## Possibilities
+
+Ideas worth keeping, not planned yet.
+
+- **A public revocation list on GitHub.** One list of bad publisher keys (stolen or malicious)
+  and bad package hashes. Every launcher checks it, so a stolen key stops working everywhere
+  without each IT department removing the author by hand. Private keys never go on it.
+  GitHub only hosts the file. What makes the list hard to tamper with is checked by the launcher:
+  - **Signed offline.** The launcher has the list's public key built in and refuses any list whose
+    signature does not match. Editing the file on GitHub, or anywhere between GitHub and the user,
+    gets nowhere.
+  - **Numbered.** Launchers never accept an older list than the one they have, so a replayed old
+    copy cannot bring revoked keys back.
+  - **Expiring.** A list that is overdue (deleted, blocked, held back) is noticed: managed mode
+    installs nothing new, free mode warns. Offline, the last list that checked out still applies.
+  - **Hard to sign alone.** Ideally two of three keys, held by different people, must sign each
+    list. An offline root key certifies the key that signs lists, so that key can be replaced
+    without a new launcher.
+  - **Mirrorable.** The file carries its own signature, so IT can copy it to an internal share
+    (many company networks block github.com) and point the policy at the copy, or turn it off.
+
+  The list only blocks. A public list of *trusted* publishers would be worth only as much as the
+  vetting behind it. At most, it would show free-mode users a "known publisher" hint, and in
+  managed mode IT's approval would still decide.
+- **Apps pushed by IT.** An `Apps` policy value naming a folder. At each start, the launcher
+  installs or updates every `.dsapp` in it from an approved author, and removes the apps IT took
+  out. Today colleagues double-click the packages themselves.

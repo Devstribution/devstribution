@@ -13,9 +13,16 @@ in [`status_quo.md`](status_quo.md); the long-term order of work is in [`roadmap
 > - Since then: the runtime guard, the dependency check, "Uninstall devstribution" in Settings
 >   and `.zip` downloads, all checked in the installed launcher (PR #19).
 >
-> Next: managed mode (step 1), then signing and Phase 0.
+> **Update, later on 23 October:** managed mode's first version is in the code (step 1 below):
+> the policy from the registry, `.trust` files, the block message with a request for IT, the
+> policy in Settings, dry run, tests. How IT sets it up: [`managed-mode.md`](managed-mode.md).
+> Also fixed: "Open result" now opens the folder the user chose when the app wrote its results
+> there, and CI runs each setup step once.
+>
+> Next: check managed mode on Windows (registry value set by hand, a trust folder only
+> administrators can write, then a network share), then signing and Phase 0.
 
-1. **Managed mode, first version: no server needed.** This is what a company's IT will ask
+1. **Managed mode, first version: no server needed.** *Done in code, to check on Windows.* This is what a company's IT will ask
    for before allowing devstribution on its PCs. Today trust is per user, on first use. The
    design is in [`plan.md`](plan.md), "Trust model and policy"; the checklist is
    [`roadmap.md`](roadmap.md), section 10. Everything below works with what IT already has: the
@@ -107,14 +114,14 @@ runner starts Python with `-I -S`. Run `cargo test` from a shell where `uv` is o
 
 | Path | What |
 |---|---|
-| `crates/devstribution-core` | Package format: manifest, `FILES.sha256`, signatures and fingerprints, packing, safe extraction, lockfile checks (`lock::check_sources` is the install gate), the code scan (`scan`) |
-| `crates/devstribution-host` | Install store (pins, anti-downgrade, `admit`), uv environments (hardened `uv::sync`), supervised runs (Job Object), runner, history, secrets, data folder |
-| `crates/devstribution-cli` | `devstribution init / dev / pack / keygen / verify / scan` |
+| `crates/devstribution-core` | Package format: manifest, `FILES.sha256`, signatures and fingerprints, packing, safe extraction, lockfile checks (`lock::check_sources` is the install gate), the code scan (`scan`), `.trust` files (`trust`) |
+| `crates/devstribution-host` | Install store (pins, anti-downgrade, `admit`), managed mode's policy (`policy`), uv environments (hardened `uv::sync`), supervised runs (Job Object), runner, history, secrets, data folder |
+| `crates/devstribution-cli` | `devstribution init / dev / pack / keygen / verify / scan / trust` |
 | `runner/` | Stdlib-only Python runner started by the launcher; protocol in `devstribution_runner/_runner.py` |
 | `launcher/src` | TypeScript UI, no framework. `style.css` holds the design tokens, documented in [`design.md`](design.md); `look.ts` handles the theme and colour choices. |
 | `launcher/src-tauri` | Rust commands over the host crate, `capabilities/` (what the window may call), `build.rs` (command list, DLL load flag), `windows/hooks.nsh` (uninstaller), icons |
 | `examples/` | `excel-report` (form), `hello-gui` (gui, tkinter) |
-| `docs/` | `plan.md` (design), `roadmap.md` (to 1.0), `format.md` (package spec), `security.md` (threat model, review), `design.md` (look), `report.md` (Windows findings), `status_quo.md` |
+| `docs/` | `plan.md` (design), `roadmap.md` (to 1.0), `format.md` (package spec), `security.md` (threat model, review), `design.md` (look), `report.md` (Windows findings), `status_quo.md`, `managed-mode.md` (for IT) |
 
 ## Things to know before changing code
 

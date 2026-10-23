@@ -23,7 +23,7 @@ apps, within the limits listed below.
 | Code running at install time | Install only extracts, verifies, and runs `uv sync --no-build` from the signed lockfile: no `setup.py`, no build backend. Nothing from the package runs before the user confirms. |
 | A package making uv fetch or install something else | `uv.lock` must name only wheels from PyPI's file host, over HTTPS, with SHA-256 hashes, checked before install. uv runs with `--no-config` (no `uv.toml` or `[tool.uv]` from the package), a cleaned environment (no `UV_*`, `PIP_*`, `PYTHON*` from the session), its own Python builds (`--managed-python` with an explicit version, so no `.python-version` from the package) and the system certificate store. Release launchers use only the uv they ship, pinned and hash-checked at build time. |
 | A look-alike publisher key | Keys are shown by a SHA-256 fingerprint of the whole key, not minisign's 8-byte key number, which anyone can choose. Trust decisions compare the full key. |
-| An app's output or result tricking the launcher | Output is read as bytes (invalid UTF-8 cannot stop the reading), lines and logs are capped, events reach the window in batches. Results are re-checked by the launcher: only declared outputs, file outputs only inside the run's output folder or a folder the user chose for that run's `folder` inputs. "Open result" opens only a recorded result, by its resolved path, and only shows programs, scripts and shortcuts in their folder. |
+| An app's output or result tricking the launcher | Output is read as bytes (invalid UTF-8 cannot stop the reading), lines and logs are capped, events reach the window in batches. Results are re-checked by the launcher: only declared outputs, file outputs only inside the run's output folder or a folder the user chose for that run's `folder` inputs. "Open result" opens only a recorded result, the run's output folder or a folder chosen for the run, by its resolved path, and only shows programs, scripts and shortcuts in their folder. |
 | An app making the launcher end other processes | COM processes (Excel) an app reports are only ended if they started during the run, and only if they are still the same process. |
 | An app's processes surviving Cancel or the launcher closing (Windows) | The app starts suspended and joins a Job Object with kill-on-close before it runs; a run that cannot get one does not start. |
 | An app tampering with the runner other apps load | Before every run the runner folder is compared with the copy built into the launcher and rewritten if a file differs or was added. Each installed app version has its own bytecode cache. |
@@ -34,6 +34,8 @@ apps, within the limits listed below.
 | A dependency that is known malware, or named like a popular package to be installed by mistake | The dependency check reads `uv.lock` at install, in `pack` and in `devstribution scan`: a package (or the locked version of one) reported as malicious on PyPI is a danger finding, with the red banner and "Install anyway"; a name one edit away from one of the 1,000 most downloaded packages is a warning. The lists are bundled (OSV's `MAL-` entries and the top 15,000 packages), so nothing is sent anywhere; the screen says up to which date the reports are known. |
 | An app doing more than it declared, or what malware does, while it runs | The runtime guard: an audit hook in the runner, installed before app code and before the environment's `site-packages` (so the code a dependency's `.pth` file runs at start-up is checked too, and reported), blocks network use the app does not declare (and hosts it does not list) and SAP's RFC library without `sap`; it stops the run before the call on start-with-Windows entries, the antivirus's settings, browser password stores, the Windows tools malware uses, process injection, keyboard hooks and hidden compiled code. The launcher checks every process in the run's Job Object against the same rules. A stop ends the whole tree and quarantines the app until the user decides. See limit 2 for what it does not see. |
 | A downloaded package without a warning | Mark-of-the-Web is read (also UTF-16); a mark that cannot be understood counts as "from the internet". |
+| Managed mode: an author IT has not approved, or an approved namespace signed with another key | Only namespaces and full keys listed in the HKLM policy install and run; checked at inspect, again at install, and before every run. No trust on first use, no "Install anyway". |
+| Managed mode: a user or an app pointing the launcher at its own policy | The policy is only read from `HKLM`, which users cannot write. Policy files, trust folders and `.trust` files the user could write are refused (Windows is asked whether the user could open them for writing). A policy that cannot be read approves no one. |
 | A tampered CI pipeline (once it signs releases) | Actions pinned to commit SHAs, read-only token, `cargo audit` and `npm audit` on every change, Dependabot updates. |
 
 ## What is not covered (stated limits)
@@ -74,10 +76,18 @@ These are deliberate limits of the current design. Each one says why, and what w
    key, and the name is marked "unverified". Catalog and GitHub-source verification (Phase 2)
    replace this with a verified binding.
 4. **A local administrator** can change anything, including policy and the launcher itself.
+   Managed mode assumes standard user accounts: a user who runs devstribution elevated can write
+   the policy's files, which the launcher then refuses (it fails closed).
 5. **Bugs in signed apps** are the publisher's. The platform makes them fail cleanly and alone
    (timeouts, Job Objects, per-version environments), not correct.
 6. **Linux GTK libraries** that Tauri uses on Linux are flagged "unmaintained" by RustSec (`glib`,
    `zbus`, …). There is no known vulnerability, and the Windows launcher does not use them.
+7. **Managed mode with the per-user launcher** protects users against packages IT has not
+   approved, not against a user who sets out to get round it: the launcher's own files are in
+   the user's folder. AppLocker or WDAC rules that allow only the signed launcher close this,
+   as will the per-machine mode. Apps installed under the policy keep running while the
+   approved authors cannot be read (a share out of reach), so that laptops work away from the
+   office; nothing new installs meanwhile.
 
 ## Pre-signing review, October 2026
 
@@ -120,3 +130,5 @@ Results in [`report.md`](report.md):
 - **Data migration:** an existing `%LOCALAPPDATA%\devstribution` data folder moves to the new
   location on first start of the new launcher.
 - **uv behind a company proxy:** `--system-certs` with the company's TLS inspection.
+- **Managed mode:** the registry read and the "can the user write this?" check, on a local
+  folder and on a network share ([`managed-mode.md`](managed-mode.md)).

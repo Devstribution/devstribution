@@ -3,6 +3,12 @@
 Where the project stands. What the next session does is in [`HANDOFF.md`](HANDOFF.md), and the
 plan to a signed 1.0 is in [`roadmap.md`](roadmap.md).
 
+> **Update, 23 October:** the security PR and the code scan are merged. Since then: the runtime
+> guard, the dependency check, "Uninstall devstribution" in Settings, `.zip` downloads, and the
+> first version of **managed mode** (the policy from the registry, `.trust` files, a block
+> message with a request for IT; see [`managed-mode.md`](managed-mode.md)). Managed mode still
+> needs checking on a real Windows PC. The rest of this page is from 22 October.
+
 ## In one paragraph
 
 The proof of concept from [`plan.md`](plan.md) became a proper app:

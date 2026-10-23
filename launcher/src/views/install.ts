@@ -52,6 +52,39 @@ ${f.message}`;
   return h("div", { class: "perm-list" }, rows);
 }
 
+/** A package the organisation's policy refuses: why, who to ask, and a ready-to-send request. */
+function blockedScreen(ctx: Ctx, p: PendingInstall, modal: HTMLElement, overlay: HTMLElement) {
+  const close = () => { ctx.api.discardInstall(p.token); overlay.remove(); };
+  const contact = p.blocked?.contact;
+  const save = async () => {
+    try {
+      if (await ctx.api.saveTrustRequest(p.token)) toast("Request saved: send the .trust file to your IT department", "ok");
+    } catch (e) { toast(errorText(e), "error"); }
+  };
+  const approvable = p.blocked?.author_not_approved ?? false;
+  clear(modal,
+    h("div", { class: "modal-head center" },
+      appIcon(p, "xl"),
+      h("div", null, h("h2", null, `${p.title} can’t be installed`),
+        h("div", { class: "muted" }, `from “${p.namespace}” · version ${p.version} · ${KIND_LABEL[p.kind] ?? p.kind}`))),
+    h("div", { class: "modal-body" },
+      h("div", { class: "banner red" }, h("div", { class: "bi" }, icon(ShieldX, 18)),
+        h("div", { class: "grow" }, h("strong", null, "Your organisation’s policy doesn’t allow it"),
+          (p.blocked?.reasons ?? []).map((r) => h("div", null, `${r[0].toUpperCase()}${r.slice(1)}.`.replace(/`([^`]+)`/g, "“$1”"))))),
+      h("div", { class: "soft-text" },
+        contact ? `Ask ${contact}. ` : "Ask your IT department. ",
+        approvable
+          ? "To approve this author, they need its signing key: save it as a request and send it to them. They should check the key "
+          : "Nothing was installed.",
+        approvable ? h("span", { class: "mono" }, p.key_id) : null,
+        approvable ? " with the author before approving it." : null),
+      h("div", { class: "section-label" }, "What this app can do"), permissionRows(p),
+      h("div", { class: "section-label" }, "What the code does"), scanRows(p)),
+    h("div", { class: "modal-foot" },
+      h("button", { class: "btn", onclick: close }, "Close"),
+      approvable ? h("button", { class: "btn primary", onclick: save }, "Save a request for IT…") : null));
+}
+
 /** The confirmation screen. Any .dsapp, however it arrived, goes through here. */
 export async function installFlow(ctx: Ctx, path?: string) {
   const chosen = path ?? (await ctx.api.pickPackage());
@@ -81,6 +114,7 @@ export async function installFlow(ctx: Ctx, path?: string) {
   const newPublisher = p.trust === "new_publisher";
   const internet = p.origin && p.origin.zone_id >= 3;
   const danger = p.scan.findings.some((f) => f.severity === "danger");
+  if (p.blocked) return blockedScreen(ctx, p, modal, overlay);
 
   clear(modal,
     h("div", { class: "modal-head center" },
@@ -94,7 +128,15 @@ export async function installFlow(ctx: Ctx, path?: string) {
             h("div", null, h("strong", null, "The code does things malware does"),
               "See “What the code does” below. Install only if the publisher can explain each one."))
         : null,
-      newPublisher
+      p.trust === "approved"
+        ? h("div", { class: "banner green" }, h("div", { class: "bi" }, icon(ShieldCheck, 18)),
+            h("div", null, h("strong", null, "Approved by your organisation"),
+              `Your IT department approves apps from “${p.namespace}” signed with this key (`, h("span", { class: "mono" }, p.key_id), ")."))
+        : p.trust === "not_approved"
+        ? h("div", { class: "banner amber" }, h("div", { class: "bi" }, icon(ShieldAlert, 18)),
+            h("div", null, h("strong", null, `“${p.namespace}” isn’t approved by your organisation`),
+              "Your IT department is only trying out its policy, so you can still install it. Key ", h("span", { class: "mono" }, p.key_id), "."))
+        : newPublisher
         ? h("div", { class: "banner amber" }, h("div", { class: "bi" }, icon(ShieldAlert, 18)),
             h("div", null, h("strong", null, `New publisher: “${p.namespace}”`),
               "The package is intact and signed, but this name isn’t verified. Install it only if you trust where it came from. Later versions must come from the same key ",

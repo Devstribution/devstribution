@@ -1,7 +1,7 @@
 // Small DOM helpers: element builder, icons, formatting, toasts and recurring bits of UI.
 
 import { createElement, type IconNode } from "lucide";
-import { CircleAlert, CircleCheck, Info, ShieldCheck, ShieldAlert } from "lucide";
+import { CircleAlert, CircleCheck, Info, ShieldCheck, ShieldAlert, ShieldX } from "lucide";
 import type { RunStatus } from "./api";
 
 type Child = Node | string | number | null | undefined | false | Child[];
@@ -127,6 +127,12 @@ export function statusText(status: RunStatus): HTMLElement {
 }
 
 export function trustTag(trust: string): HTMLElement {
+  if (trust === "approved") {
+    return h("span", { class: "tag green", title: "Your organisation approves this author and its signing key" }, icon(ShieldCheck, 12), "Approved");
+  }
+  if (trust === "not_approved") {
+    return h("span", { class: "tag red", title: "Your organisation's policy does not approve this author and key" }, icon(ShieldX, 12), "Not approved");
+  }
   return trust === "first_use"
     ? h("span", { class: "tag green", title: "Signed with the key pinned when you installed this publisher's first app" },
         icon(ShieldCheck, 12), "Signature verified")

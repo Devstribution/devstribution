@@ -17,6 +17,7 @@ const COMMANDS: &[&str] = &[
     "settings",
     "uninstall_launcher",
     "take_pending_files",
+    "save_trust_request",
 ];
 
 fn main() {

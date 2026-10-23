@@ -5,7 +5,8 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use devstribution_core::package::pack;
-use devstribution_core::signing::{Signer, generate_keys};
+use devstribution_core::signing::{Signer, generate_keys, public_key_base64};
+use devstribution_host::policy::{Loader, Policy, Value, Values};
 use devstribution_host::run::{self, RunEvent, RunStatus};
 use devstribution_host::store::Store;
 use devstribution_host::{Paths, runner};
@@ -258,6 +259,239 @@ def run(name: str, ctx) -> dict:
             .any(|l| l.starts_with("caf\u{fffd} ") && l.len() < 20_000)
     );
     assert!(lines.iter().any(|l| l == "still running"));
+}
+
+/// A package of `alice/hello` (or `id`) at `version`, signed with `key`.
+fn package(
+    tmp: &Path,
+    name: &str,
+    id: &str,
+    version: &str,
+    main: &str,
+    key: &Signer,
+) -> std::path::PathBuf {
+    let src = tmp.join(format!("src-{name}"));
+    write_app_with(&src, version, main);
+    let pyproject = src.join("pyproject.toml");
+    let text = fs::read_to_string(&pyproject).unwrap();
+    fs::write(
+        &pyproject,
+        text.replace("\"alice/hello\"", &format!("\"{id}\"")),
+    )
+    .unwrap();
+    let pkg = tmp.join(format!("{name}.dsapp"));
+    pack(&src, key, &pkg).unwrap();
+    pkg
+}
+
+fn managed(values: Vec<(&str, Value)>) -> Policy {
+    let values = Values(
+        values
+            .into_iter()
+            .map(|(n, v)| (n.to_string(), v))
+            .collect(),
+    );
+    Policy::from_values("test", &values, &Loader { admin_only: false })
+}
+
+fn approve(namespace: &str, key: &Signer) -> String {
+    format!("{namespace} {}", public_key_base64(key.public_key()))
+}
+
+/// Managed mode: only authors the policy approves install and run; a refusal says why and who
+/// to ask, and is logged; a dry run only logs; unreadable approvals keep installed apps running.
+#[test]
+fn managed_mode_installs_only_approved_authors() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut store = Store::open(Paths {
+        root: tmp.path().join("home"),
+    })
+    .unwrap();
+    let alice = signer();
+    let policy = |extra: Vec<(&str, Value)>| {
+        let mut v = vec![
+            ("Authors", Value::Multi(vec![approve("alice", &alice)])),
+            ("Contact", Value::String("the IT service desk".into())),
+        ];
+        v.extend(extra);
+        managed(v)
+    };
+    store.set_policy(Some(policy(vec![])));
+
+    // An author IT has not approved: shown, but blocked, and the install is refused.
+    let stranger = package(tmp.path(), "bob", "bob/hello", "1.0.0", MAIN, &signer());
+    let pending = store.inspect(&stranger).unwrap();
+    assert_eq!(pending.trust, "not_approved");
+    let blocked = pending.blocked.clone().expect("blocked");
+    assert!(
+        blocked.reasons[0].contains("has not approved the author `bob`"),
+        "{blocked:?}"
+    );
+    assert_eq!(blocked.contact.as_deref(), Some("the IT service desk"));
+    assert!(blocked.author_not_approved);
+    let err = store
+        .install(&pending.token, &mut |_| {})
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("does not allow"), "{err}");
+
+    // An approved namespace signed with another key.
+    let other_key = package(
+        tmp.path(),
+        "other-key",
+        "alice/hello",
+        "1.0.0",
+        MAIN,
+        &signer(),
+    );
+    let blocked = store.inspect(&other_key).unwrap().blocked.expect("blocked");
+    assert!(
+        blocked.reasons[0].contains("but not the key"),
+        "{blocked:?}"
+    );
+
+    // Malware-like code from an approved author: refused by default.
+    let danger =
+        format!("{MAIN}\ndef _unused():\n    import base64\n    exec(base64.b64decode('eD0x'))\n");
+    let flagged = package(
+        tmp.path(),
+        "flagged",
+        "alice/hello",
+        "1.0.0",
+        &danger,
+        &alice,
+    );
+    let blocked = store.inspect(&flagged).unwrap().blocked.expect("blocked");
+    assert!(blocked.reasons[0].contains("malware"), "{blocked:?}");
+
+    // The approved author installs and runs.
+    let good = package(tmp.path(), "good", "alice/hello", "1.0.0", MAIN, &alice);
+    let pending = store.inspect(&good).unwrap();
+    assert_eq!(pending.trust, "approved");
+    assert!(
+        pending.blocked.is_none() && pending.warnings.is_empty(),
+        "{:?}",
+        pending.warnings
+    );
+    let app = store.install(&pending.token, &mut |_| {}).unwrap();
+    assert!(app.record.policy_approved);
+    assert_eq!(store.pins().unwrap()["alice"].source, "policy");
+    let result = run_recorded(&store).unwrap();
+    assert_eq!(result.status, RunStatus::Ok, "{:?}", result.error);
+
+    let log = fs::read_to_string(store.policy_log()).unwrap();
+    assert_eq!(log.lines().count(), 3, "{log}");
+    assert!(log.lines().all(|l| l.contains("\"decision\":\"refused\"")));
+
+    // IT approves another key for alice instead: the installed app no longer runs.
+    store.set_policy(Some(managed(vec![(
+        "Authors",
+        Value::Multi(vec![approve("alice", &signer())]),
+    )])));
+    assert_eq!(
+        store.app("alice/hello").unwrap().trust,
+        devstribution_host::store::Trust::NotApproved
+    );
+    let err = run_recorded(&store).unwrap_err().to_string();
+    assert!(
+        err.contains("cannot run") && err.contains("Ask your IT department"),
+        "{err}"
+    );
+
+    // The approvals cannot be read (a share out of reach): what was approved keeps running,
+    // nothing new installs.
+    store.set_policy(Some(managed(vec![(
+        "PolicyFile",
+        Value::String(
+            tmp.path()
+                .join("unreachable")
+                .join("policy.toml")
+                .display()
+                .to_string(),
+        ),
+    )])));
+    assert_eq!(store.policy().unwrap().problems.len(), 1);
+    assert_eq!(run_recorded(&store).unwrap().status, RunStatus::Ok);
+    assert!(store.inspect(&stranger).unwrap().blocked.is_some());
+
+    // A dry run refuses nothing, warns, and logs what it would have refused.
+    store.set_policy(Some(policy(vec![("DryRun", Value::Dword(1))])));
+    let pending = store.inspect(&stranger).unwrap();
+    assert!(pending.blocked.is_none());
+    assert!(
+        pending.warnings.iter().any(|w| w.contains("would refuse")),
+        "{:?}",
+        pending.warnings
+    );
+    store.install(&pending.token, &mut |_| {}).unwrap();
+    let log = fs::read_to_string(store.policy_log()).unwrap();
+    assert!(
+        log.lines()
+            .last()
+            .unwrap()
+            .contains("\"decision\":\"would_refuse\""),
+        "{log}"
+    );
+
+    // A launcher older than the policy asks for installs and runs nothing.
+    store.set_policy(Some(policy(vec![(
+        "MinLauncherVersion",
+        Value::String("999.0".into()),
+    )])));
+    let err = run_recorded(&store).unwrap_err().to_string();
+    assert!(
+        err.contains("999.0 or newer") && err.contains("Ask the IT service desk"),
+        "{err}"
+    );
+
+    // Free mode again: trust on first use, as before.
+    store.set_policy(None);
+    assert_eq!(store.inspect(&good).unwrap().trust, "first_use");
+}
+
+/// In managed mode a user cannot let an app run past the guard rule that stopped it, unless
+/// the policy allows it; rules the policy makes report-only do not stop anyone.
+#[test]
+fn managed_mode_keeps_guard_decisions_for_it() {
+    const HIDDEN: &str = r#"
+import marshal
+
+def run(name: str, ctx) -> dict:
+    exec(marshal.loads(marshal.dumps(compile("x = 1", "hidden", "exec"))))
+    out = ctx.output_dir / "greeting.txt"
+    out.write_text("hi")
+    return {"greeting": out}
+"#;
+    let tmp = tempfile::tempdir().unwrap();
+    let mut store = Store::open(Paths {
+        root: tmp.path().join("home"),
+    })
+    .unwrap();
+    let alice = signer();
+    let authors = || ("Authors", Value::Multi(vec![approve("alice", &alice)]));
+    store.set_policy(Some(managed(vec![
+        authors(),
+        ("ScanDanger", Value::String("ask".into())),
+    ])));
+    let pkg = package(tmp.path(), "hidden", "alice/hello", "1.0.0", HIDDEN, &alice);
+    let pending = store.inspect(&pkg).unwrap();
+    assert!(pending.blocked.is_none(), "{:?}", pending.blocked);
+    store.install(&pending.token, &mut |_| {}).unwrap();
+
+    assert_eq!(run_recorded(&store).unwrap().status, RunStatus::Error);
+    let err = store
+        .release_quarantine("alice/hello", true)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("does not let users"), "{err}");
+
+    store.set_policy(Some(managed(vec![
+        authors(),
+        ("GuardReportOnly", Value::Multi(vec!["hidden-code".into()])),
+    ])));
+    store.release_quarantine("alice/hello", false).unwrap();
+    let result = run_recorded(&store).unwrap();
+    assert_eq!(result.status, RunStatus::Ok, "{:?}", result.error);
 }
 
 fn install_app(store: &Store, tmp: &Path, main: &str) {

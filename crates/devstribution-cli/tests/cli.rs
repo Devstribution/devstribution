@@ -107,6 +107,52 @@ fn init_dev_pack_verify() {
         .arg(home.join("keys/mallory.pub"))
         .assert()
         .failure();
+
+    // The trust file IT approves alice with: the same from the key and from the package.
+    let from_key = tmp.path().join("alice.trust");
+    cli(&home)
+        .args([
+            "trust",
+            "export",
+            "--namespace",
+            "alice",
+            "--name",
+            "Alice's tools",
+            "-o",
+        ])
+        .arg(&from_key)
+        .assert()
+        .success();
+    let from_pkg = tmp.path().join("from-package.trust");
+    cli(&home)
+        .args([
+            "trust",
+            "export",
+            "--name",
+            "Alice's tools",
+            "--from-package",
+        ])
+        .arg(&pkg)
+        .arg("-o")
+        .arg(&from_pkg)
+        .assert()
+        .success();
+    assert_eq!(
+        fs::read_to_string(&from_key).unwrap(),
+        fs::read_to_string(&from_pkg).unwrap()
+    );
+    let shown = cli(&home)
+        .args(["trust", "show"])
+        .arg(&from_key)
+        .output()
+        .unwrap();
+    assert!(shown.status.success());
+    assert!(stdout(&shown).contains("Author `alice`") && stdout(&shown).contains("Alice's tools"));
+    cli(&home)
+        .args(["trust", "export", "--namespace", "bob", "--from-package"])
+        .arg(&pkg)
+        .assert()
+        .failure();
 }
 
 #[test]

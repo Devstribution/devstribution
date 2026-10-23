@@ -1,11 +1,30 @@
 // Demo backend for previewing the UI in a browser. Nothing here runs in the real launcher.
 
-import type { Api, AppView, PendingInstall, RunEvent, RunRecord, Settings, StepEvent, Stats } from "./api";
+import type { Api, AppView, PendingInstall, Policy, RunEvent, RunRecord, Settings, StepEvent, Stats, Trust } from "./api";
 
 const now = () => Math.floor(Date.now() / 1000);
 const DAY = 86_400;
 
-const base = { trust: "first_use" as const, requires: [], origin: null, last_inputs: {}, secrets: [], quarantine: null, guard_allow: [] as string[] };
+/** `?managed` in the address shows the demo in managed mode, with an example policy. */
+const MANAGED = typeof location !== "undefined" && new URLSearchParams(location.search).has("managed");
+const MANAGED_POLICY: Policy = {
+  source: "HKLM\\SOFTWARE\\Policies\\devstribution · \\\\fileserver\\it\\devstribution\\policy.toml",
+  authors: [
+    { namespace: "devstribution", name: "devstribution examples", fingerprints: ["2972-B9E7-77FF-C794-0A1B-6E33-91D0-5C2F"] },
+    { namespace: "finance", name: "Finance automation team", fingerprints: ["8D41-C0A9-F2B3-7E10-44C2-19AB-E07D-3B58"] },
+    { namespace: "ops", name: null, fingerprints: ["51E0-AB77-33C9-D2F4-7F02-8C61-A9E4-0D17"] },
+  ],
+  contact: "the IT service desk (it-help@example.com)",
+  dry_run: false,
+  scan_danger: "refuse",
+  users_may_allow_guard_rules: false,
+  guard_report_only: [],
+  min_launcher_version: "0.1.0",
+  problems: [],
+  log_file: "C:\\Users\\edo\\AppData\\Local\\dev.devstribution.launcher\\data\\state\\policy.log",
+};
+
+const base = { trust: (MANAGED ? "approved" : "first_use") as Trust, requires: [], origin: null, last_inputs: {}, secrets: [], quarantine: null, guard_allow: [] as string[], may_allow_guard_rules: !MANAGED };
 const noPerms = { network: [], folders: [], sap: false, secrets: [] };
 
 const apps: AppView[] = [
@@ -272,7 +291,17 @@ export function mockApi(): Api {
       return input.type === "folder" ? "C:\\Users\\edo\\Documents\\Invoices" : "C:\\Users\\edo\\Documents\\orders-2026.xlsx";
     },
     async ask(message) { return window.confirm(message); },
-    async inspectPackage() { await sleep(500); return structuredClone(pending); },
+    async inspectPackage() {
+      await sleep(500);
+      const p = structuredClone(pending);
+      if (MANAGED) {
+        // The demo's managed mode does not approve this package's author.
+        p.trust = "not_approved";
+        p.warnings = p.warnings.filter((w) => !w.startsWith("First app"));
+        p.blocked = { reasons: ["your organisation has not approved the author `acme-ops`"], contact: MANAGED_POLICY.contact, author_not_approved: true };
+      }
+      return p;
+    },
     async confirmInstall() {
       const steps: [StepEvent["step"], string][] = [
         ["files", "Copying the verified files"],
@@ -381,7 +410,8 @@ export function mockApi(): Api {
         version: "0.1.0",
         data_dir: "C:\\Users\\edo\\AppData\\Local\\devstribution",
         platform: "windows",
-        mode: "free",
+        mode: MANAGED ? "managed" : "free",
+        policy: MANAGED ? MANAGED_POLICY : null,
         uv_version: "uv 0.13.4",
         publishers: [
           { namespace: "devstribution", key_id: "2972B9E777FFC794", pinned_at: now() - 9 * DAY, source: "first-use" },
@@ -393,6 +423,7 @@ export function mockApi(): Api {
     },
     async uninstallLauncher() { throw new Error("The browser demo has no uninstaller: in the launcher, this opens devstribution's own uninstaller."); },
     async takePendingFiles() { return []; },
+    async saveTrustRequest() { return false; },
     async onRunEvents(cb) { const l: Listener<[string, RunEvent]> = ([id, e]) => cb(id, [e]); runListeners.push(l); return off(runListeners, l); },
     async onInstallStep(cb) { stepListeners.push(cb); return off(stepListeners, cb); },
     async onRunsChanged(cb) { changed.push(cb); return off(changed, cb); },
