@@ -957,6 +957,7 @@ dependencies = [
  "anyhow",
  "devstribution-core",
  "devstribution-host",
+ "dunce",
  "serde",
  "serde_json",
  "tauri",

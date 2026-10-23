@@ -403,8 +403,9 @@ async fn run_log(app: AppHandle, run_id: String) -> CmdResult<String> {
 
 /// Opens a run's result: its output folder, or a file the run returned as a result. Nothing
 /// else can be opened, whatever the page asks: the path must be one of the run's recorded
-/// results and resolve inside its output folder or a folder chosen for the run. Files Windows
-/// would run (programs, scripts, shortcuts) are only shown in their folder.
+/// results and resolve inside its output folder or a folder chosen for the run. With no file
+/// given, it opens the output folder, or the chosen folder when the app left its own empty.
+/// Files Windows would run (programs, scripts, shortcuts) are only shown in their folder.
 #[tauri::command]
 async fn open_output(
     app: AppHandle,
@@ -414,8 +415,17 @@ async fn open_output(
 ) -> CmdResult<()> {
     blocking(move || {
         let record = state(&app).store.run(&run_id)?;
-        let output_dir = record.output_dir.canonicalize()?;
+        // `dunce` gives `C:\...` rather than `\\?\C:\...`, which Explorer cannot always open.
+        let output_dir = dunce::canonicalize(&record.output_dir)?;
         let target = match path {
+            // An app that works in a folder the user chose usually leaves its own output folder
+            // empty: then the result is in the chosen folder, so open that one.
+            None if is_empty_dir(&output_dir) => record
+                .result_folders
+                .iter()
+                .skip(1)
+                .find_map(|dir| dunce::canonicalize(dir).ok().filter(|d| d.is_dir()))
+                .unwrap_or_else(|| output_dir.clone()),
             None => output_dir.clone(),
             Some(p) => {
                 if !record
@@ -426,10 +436,10 @@ async fn open_output(
                     anyhow::bail!("this file is not a result of the run");
                 }
                 // The resolved path is the one opened, so it cannot change after the check.
-                let resolved = Path::new(&p).canonicalize()?;
+                let resolved = dunce::canonicalize(&p)?;
                 let allowed = std::iter::once(&record.output_dir)
                     .chain(&record.result_folders)
-                    .filter_map(|dir| dir.canonicalize().ok())
+                    .filter_map(|dir| dunce::canonicalize(dir).ok())
                     .any(|dir| resolved.starts_with(dir));
                 if !allowed || !resolved.is_file() {
                     anyhow::bail!("this file is not a result of the run");
@@ -450,6 +460,10 @@ async fn open_output(
         Ok(())
     })
     .await
+}
+
+fn is_empty_dir(dir: &Path) -> bool {
+    std::fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_none())
 }
 
 #[tauri::command]
