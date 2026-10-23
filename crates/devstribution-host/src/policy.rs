@@ -510,8 +510,10 @@ mod system {
             let bytes = self.raw(name, flags)?;
             Some(
                 bytes
-                    .chunks_exact(2)
-                    .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|&c| u16::from_le_bytes(c))
                     .collect(),
             )
         }
