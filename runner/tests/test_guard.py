@@ -148,7 +148,8 @@ class GuardTest(RunnerBase):
         code, messages, _ = self.run_guarded(
             """
             import winreg
-            winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\\Microsoft\\Windows\\CurrentVersion\\Run").Close()
+            # HKLM: the HKCU Run key is missing on fresh profiles (CI runners)
+            winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"Software\\Microsoft\\Windows\\CurrentVersion\\Run").Close()
             return {"v": "ok"}
             """
         )
