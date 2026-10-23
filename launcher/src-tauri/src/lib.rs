@@ -547,12 +547,17 @@ fn take_pending_files(app: AppHandle) -> Vec<String> {
     std::mem::take(&mut *lock(&state(&app).pending_files))
 }
 
-/// The `.dsapp` files among the arguments, made absolute against `cwd` (a second launch from a
+/// The packages among the arguments, made absolute against `cwd` (a second launch from a
 /// terminal has its own working folder). Arguments that are not valid Unicode are skipped.
+/// `.zip` counts too: browsers, mail and file sharing often rename a downloaded `.dsapp` (a zip
+/// inside), and "Open with" then passes the renamed file. Its content is checked the same way.
 fn dsapp_args(args: impl IntoIterator<Item = OsString>, cwd: &Path) -> Vec<String> {
     args.into_iter()
         .filter_map(|a| a.into_string().ok())
-        .filter(|a| a.to_ascii_lowercase().ends_with(".dsapp"))
+        .filter(|a| {
+            let a = a.to_ascii_lowercase();
+            a.ends_with(".dsapp") || a.ends_with(".zip")
+        })
         .map(|a| cwd.join(a).to_string_lossy().into_owned())
         .collect()
 }

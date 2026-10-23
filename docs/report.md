@@ -13,6 +13,7 @@ Findings from running the proof of concept on Windows by hand (Windows 11, toolc
 
 | # | Finding | Where | State |
 |---|---|---|---|
+| 5 | **A shared `.dsapp` arrives as `.zip`.** Downloaded through a browser or a file-sharing service, the package (a zip inside, with an extension nobody knows) was saved as `.zip` and had to be renamed by hand. Fixed: the file picker, drag and drop and "Open with" accept `.zip` too; the content is checked as before, and a zip that is not an app says so before anything is extracted. Double-clicking a `.zip` still opens Explorer. The lasting fix is the launcher downloading the package itself (`devstribution://` links, roadmap "After 1.0"). | `launcher/src/main.ts`, `api.ts`, `src-tauri/src/lib.rs`, `devstribution-core/src/package.rs` | Fixed |
 | 4 | **The launcher can't uninstall itself.** Nothing in the launcher removes devstribution; only Windows' "Installed apps" list (or `uninstall.exe` in the install folder) does. A user who installed it to a folder of their choice has to know where that is. Fixed: Settings → "Uninstall devstribution…" asks, starts `uninstall.exe` next to the launcher (which still asks whether to delete app data) and closes the launcher; a copy not installed by the setup program says so. Checked in the installed launcher (installed to a folder of the user's choice). | `launcher/src/views/settings.ts`, `src-tauri/src/lib.rs` (`uninstall_launcher`) | Fixed |
 | 3 | **Uninstall's confirmation failed**: `window.confirm` is routed to the dialog plugin, which wasn't allowed (`dialog.confirm not allowed` in the log). Fixed: `api.ask()` uses the plugin's `ask()`, and the capability now grants `dialog:allow-ask`. | `launcher/src/views/app.ts`, `api.ts`, `capabilities/default.json` | Fixed |
 | 2 | **The "⋯" menu was cut off**: only "Repair" showed, "Uninstall" was hidden. The app page's top card had `overflow: hidden` (to clip its decorative glow), which also clipped the menu opening below it. Fixed: the glow is now a background layer and the card no longer clips. Checked in the browser demo; check in the real launcher. | `launcher/src/styles.css` (`.hero`) | Fixed |
@@ -93,6 +94,8 @@ safe choice).
 | *Dependency check, 23 Oct:* | |
 | `devstribution scan` on ricon (22 packages) and both examples: nothing flagged, the packages counted | Pass |
 | ricon `diagnostica` with the runner started with `-S` (`site` loaded after the guard): runs as before | Pass |
+| Installed launcher, `deps-demo` (hand-signed; `uv.lock` names `0requests` 0.0.1, reported as malicious, and `requezts`, wheel URLs that do not exist): red banner with the danger and warning rows; "Install anyway" fails cleanly at the download | Pass |
+| Installed launcher, `pth-demo` (depends on pywin32): installs with "No package reported as malicious", runs, and the log reports `pywin32.pth` as start-up code; pywin32's start-up code is not stopped by the guard | Pass |
 | Look-alike names: of the PyPI packages ranked 5,000 to 15,000, 90 would match a top-1,000 name, nearly all legitimately (`elasticsearch8`, `willow`); hence the top 15,000 count as known and digit-only differences are ignored | Measured |
 
 The checks used a throwaway test app (`wincheck`: `tree-*` / `excel-*` modes, a secret input) and

@@ -239,7 +239,8 @@ async function tauriApi(): Promise<Api> {
         title: "Install an app",
         multiple: false,
         directory: false,
-        filters: [{ name: "devstribution app", extensions: ["dsapp"] }],
+        // A downloaded .dsapp often arrives renamed to .zip; its content is checked all the same.
+        filters: [{ name: "devstribution app (.dsapp, or .zip after a download)", extensions: ["dsapp", "zip"] }],
       });
       return typeof path === "string" ? path : null;
     },

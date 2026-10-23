@@ -186,6 +186,8 @@ The scan reads only the package's own Python files today. Extend it where attack
 - ☑ "Uninstall devstribution" in Settings (report: Launcher UX 4): starts the installer's own
   uninstaller, with its "delete app data" choice, and closes the launcher. Checked in the
   installed launcher.
+- ☑ A `.dsapp` renamed to `.zip` by a download installs too (report: Launcher UX 5): picker, drag and
+  drop and "Open with". `devstribution://` links (after 1.0) would avoid the renaming.
 - ☐ About page with version, licences of bundled software, and where the data folder is.
 
 ## 8. Release engineering and evidence for IT
