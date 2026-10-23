@@ -23,7 +23,8 @@ Status: ☐ to do · ◐ in progress · ☑ done
 2. ☑ **Runtime guard** (section 4): declared network and SAP use enforced, malware-like behaviour
    stops the run and quarantines the app. Checked in the installed launcher; rule modes set by
    policy come with managed mode.
-3. **Deeper scan** (section 5): AMSI, dependencies, what changed in an update.
+3. ◐ **Deeper scan** (section 5): dependencies ☑ (malicious packages, look-alike names, start-up
+   code under the guard); AMSI and what changed in an update next.
 4. **Results shown in the launcher** (section 7): tables and images without opening Excel.
 5. **IT-facing evidence** (section 8): Windows Event Log, SBOM, `SECURITY.md`, fuzzing.
 
@@ -132,10 +133,18 @@ The scan reads only the package's own Python files today. Extend it where attack
 - ☐ **AMSI**: send the package's scripts to Windows' antimalware interface before the install
   button, so Defender or the company's antivirus reviews them too ("Checked by your antivirus").
   The runtime hook sends `exec` / `compile` strings to AMSI as well.
-- ☐ **Dependencies**: check `uv.lock` against OSV, which lists PyPI's known *malicious* packages
-  (`MAL-` entries) as well as vulnerable ones; flag names one typo away from popular packages;
-  flag wheels with `.pth` files (they run code when Python starts) and with unexpected binaries.
-  Done offline from a bundled snapshot where possible, so `pack` and the launcher send nothing.
+- ☑ **Dependencies** (`devstribution-core/src/deps.rs`), offline from bundled lists refreshed by
+  `scripts/update_dep_data.py` before each release, so `pack` and the launcher send nothing:
+  - packages reported as malicious on PyPI (OSV `MAL-` entries, about 11,900): the whole package,
+    or only the hijacked versions (`num2words` 0.5.15); a danger finding, so the red banner;
+  - names one edit away from the 1,000 most downloaded packages (`requezts`): a warning. The top
+    15,000 count as known, and adding or dropping a digit (`elasticsearch8`) does not count.
+    Measured: about 1% of the packages ranked 5,000 to 15,000 would have matched;
+  - code a dependency runs when Python starts (`.pth` files): the runner now starts with `-S` and
+    loads `site` after installing the guard, so that code is checked like the app's, and each
+    such file is reported in the run log.
+  - Still to do: vulnerable (not malicious) versions, which need a fresher source than a bundled
+    list (an opt-in online check for IT); wheels with unexpected binaries.
 - ☐ **What changed in an update**: the update screen shows the scan and permissions compared with
   the installed version ("New: network use in `sync.py`, starts programs"). A quiet malicious
   update is the realistic attack, and the diff is what a reviewer reads.

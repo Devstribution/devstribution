@@ -143,6 +143,8 @@ export interface Finding {
 export interface ScanReport {
   files_scanned: number;
   findings: Finding[];
+  /** The check of the packages in `uv.lock`, when the package has one. */
+  dependencies?: { packages: number; list_date: string } | null;
 }
 
 export interface PendingInstall {

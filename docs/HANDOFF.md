@@ -95,7 +95,7 @@ Set `DEVSTRIBUTION_HOME` to a scratch folder to keep test installs out of the re
 
 **The conda environment** is fine for tooling. It doesn't leak into apps: installed apps get uv's
 own Python (`--managed-python`), with conda's variables removed from the environment, and the
-runner starts Python with `-I`. Run `cargo test` from a shell where `uv` is on PATH.
+runner starts Python with `-I -S`. Run `cargo test` from a shell where `uv` is on PATH.
 
 ## Layout
 

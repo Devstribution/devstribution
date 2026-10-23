@@ -46,6 +46,12 @@ pub fn scan(target: &Path, json: bool) -> Result<u8> {
 
 fn print_report(title: &str, report: &ScanReport) {
     println!("{title}: {} Python file(s) scanned", report.files_scanned);
+    if let Some(deps) = &report.dependencies {
+        println!(
+            "  {} package(s) in uv.lock checked against PyPI's malicious-package reports up to {}",
+            deps.packages, deps.list_date
+        );
+    }
     if report.findings.is_empty() {
         println!("  nothing flagged");
         return;

@@ -242,6 +242,7 @@ const pending: PendingInstall = {
       { rule: "network", category: "network", severity: "info", message: "Connects to other computers", path: "kpi/sharepoint.py", line: 3, evidence: "import requests", occurrences: 4 },
       { rule: "processes", category: "processes", severity: "info", message: "Starts other programs", path: "main.py", line: 12, evidence: "subprocess.run(...)", occurrences: 1 },
     ],
+    dependencies: { packages: 14, list_date: "2026-10-23" },
   },
 };
 

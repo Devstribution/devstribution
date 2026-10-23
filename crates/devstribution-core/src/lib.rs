@@ -4,6 +4,7 @@
 //! in canonical form) and `FILES.sha256.minisig` (the publisher's minisign signature over it).
 //! See `docs/plan.md`, "App package standard (v1)".
 
+pub mod deps;
 pub mod error;
 pub mod files;
 pub mod lock;

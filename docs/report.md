@@ -90,6 +90,10 @@ safe choice).
 | Run refused while quarantined; "Allow and run again" runs to the end, the command only reported in the log | Pass |
 | Started through `WinExec` (behind the hook), on a fresh install: stopped by the Job Object watch, same banner | Pass |
 | `examples/hello-gui` (tkinter, `pythonw.exe`) under the guard: runs as before, nothing reported | Pass |
+| *Dependency check, 23 Oct:* | |
+| `devstribution scan` on ricon (22 packages) and both examples: nothing flagged, the packages counted | Pass |
+| ricon `diagnostica` with the runner started with `-S` (`site` loaded after the guard): runs as before | Pass |
+| Look-alike names: of the PyPI packages ranked 5,000 to 15,000, 90 would match a top-1,000 name, nearly all legitimately (`elasticsearch8`, `willow`); hence the top 15,000 count as known and digit-only differences are ignored | Measured |
 
 The checks used a throwaway test app (`wincheck`: `tree-*` / `excel-*` modes, a secret input) and
 `examples/hello-gui`.

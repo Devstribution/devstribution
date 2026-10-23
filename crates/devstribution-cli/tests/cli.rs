@@ -187,3 +187,57 @@ def _later():
     let stderr = String::from_utf8_lossy(&packed.stderr);
     assert!(stderr.contains("code scan (danger): main.py:"), "{stderr}");
 }
+
+#[test]
+fn scan_flags_malicious_and_look_alike_dependencies() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    let app = tmp.path().join("hello");
+    cli(&home)
+        .args(["init", "--id", "alice/hello"])
+        .arg(&app)
+        .assert()
+        .success();
+    let package = |name: &str, version: &str| {
+        format!(
+            "\n[[package]]\nname = \"{name}\"\nversion = \"{version}\"\n\
+             source = {{ registry = \"https://pypi.org/simple\" }}\n"
+        )
+    };
+    let lock = "version = 1\n\n[[package]]\nname = \"hello\"\nversion = \"0.1.0\"\n\
+                source = { virtual = \".\" }\n"
+        .to_string()
+        + &package("requests", "2.32.3")
+        // Reported as malicious on PyPI (OSV MAL-2022-…).
+        + &package("0requests", "0.0.1")
+        + &package("requezts", "1.0.0");
+    fs::write(app.join("uv.lock"), lock).unwrap();
+
+    let scanned = cli(&home)
+        .arg("scan")
+        .arg(&app)
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert_eq!(
+        scanned.status.code(),
+        Some(1),
+        "a malicious package fails the scan"
+    );
+    let report: serde_json::Value = serde_json::from_str(&stdout(&scanned)).unwrap();
+    assert_eq!(report["dependencies"]["packages"], 3);
+    let flagged: Vec<(&str, &str)> = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| (f["rule"].as_str().unwrap(), f["evidence"].as_str().unwrap()))
+        .collect();
+    assert!(
+        flagged.contains(&("malicious-package", "0requests 0.0.1")),
+        "{flagged:?}"
+    );
+    assert!(
+        flagged.contains(&("typosquat", "requezts 1.0.0 (looks like `requests`)")),
+        "{flagged:?}"
+    );
+}
