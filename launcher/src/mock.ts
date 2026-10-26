@@ -7,6 +7,7 @@ const DAY = 86_400;
 
 /** `?managed` in the address shows the demo in managed mode, with an example policy. */
 const MANAGED = typeof location !== "undefined" && new URLSearchParams(location.search).has("managed");
+const UPDATE = typeof location !== "undefined" && new URLSearchParams(location.search).has("update");
 const MANAGED_POLICY: Policy = {
   source: "HKLM\\SOFTWARE\\Policies\\devstribution · \\\\fileserver\\it\\devstribution\\policy.toml",
   authors: [
@@ -299,6 +300,36 @@ export function mockApi(): Api {
         p.trust = "not_approved";
         p.warnings = p.warnings.filter((w) => !w.startsWith("First app"));
         p.blocked = { reasons: ["your organisation has not approved the author `acme-ops`"], contact: MANAGED_POLICY.contact, author_not_approved: true };
+      } else if (UPDATE) {
+        // `?update`: the same app over an installed 0.9.0 that asked for less.
+        p.action = "update";
+        p.installed_version = "0.9.0";
+        p.trust = "first_use";
+        p.warnings = [];
+        p.origin = null;
+        p.changes = {
+          old_version: "0.9.0",
+          new_version: "1.0.0",
+          highlights: [
+            { severity: "warning", message: "Now connects to sharepoint.acme.example" },
+            { severity: "warning", message: "New in the code: Runs code that is built while the app runs, which cannot be reviewed in advance (kpi/rules.py)" },
+            { severity: "warning", message: "1 new package: msal" },
+            { severity: "info", message: "New in the code: Connects to other computers (kpi/sharepoint.py)" },
+            { severity: "info", message: "2 packages updated" },
+          ],
+          permissions: { network_added: ["sharepoint.acme.example"], network_removed: [], folders_added: [], folders_removed: [], secrets_added: [], secrets_removed: [], sap: null },
+          declared: ["inputs: workbook → workbook, week"],
+          packages: [{ name: "msal", old: null, new: "1.31.0" }, { name: "openpyxl", old: "3.1.2", new: "3.1.5" }, { name: "requests", old: "2.32.2", new: "2.32.3" }],
+          files: [
+            { path: "kpi/rules.py", status: "changed", binary: false, lines_added: 14, lines_removed: 3 },
+            { path: "kpi/sharepoint.py", status: "added", binary: false, lines_added: 52, lines_removed: 0 },
+            { path: "main.py", status: "changed", binary: false, lines_added: 6, lines_removed: 2 },
+            { path: "pyproject.toml", status: "changed", binary: false, lines_added: 4, lines_removed: 1 },
+            { path: "uv.lock", status: "changed", binary: false, lines_added: 40, lines_removed: 6 },
+          ],
+          findings_added: [],
+          findings_removed: [],
+        };
       }
       return p;
     },
@@ -378,8 +409,13 @@ export function mockApi(): Api {
             ? { report: `${record.output_dir}\\orders-2026-by-customer.xlsx`, summary: "1842 rows in 6 groups of Customer" }
             : {},
           duration_ms: Date.now() - started,
+          // What the runtime guard reported, for the result's "What it did" line.
+          guard: [
+            { action: "observe" as const, rule: "program", message: "C:\\Windows\\system32\\cmd.exe /c ver", detail: "" },
+            { action: "observe" as const, rule: "files", message: "wrote 1 file in its output folder", detail: "" },
+          ],
         };
-        Object.assign(record, { status: "ok", outputs: result.outputs, duration_ms: result.duration_ms, finished_at: now() });
+        Object.assign(record, { status: "ok", outputs: result.outputs, duration_ms: result.duration_ms, finished_at: now(), guard: result.guard });
         emit(record.id, { type: "finished", result });
         changed.forEach((l) => l());
       }, 650);

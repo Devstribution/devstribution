@@ -2,6 +2,7 @@
 
 mod checks;
 mod dev;
+mod diff;
 mod env;
 mod init;
 mod keys;
@@ -92,6 +93,21 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Show what changed between two versions of an app: permissions, code scan findings,
+    /// packages and files (app folders or .dsapp files). Exits with 1 when the new version adds
+    /// something that looks like malware
+    Diff {
+        /// The version you know (app folder or .dsapp file)
+        old: PathBuf,
+        /// The new version
+        new: PathBuf,
+        /// Also print the changed lines of every text file
+        #[arg(long)]
+        code: bool,
+        /// Print the comparison as JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Make or read the `.trust` files IT approves authors with (managed mode)
     Trust {
         #[command(subcommand)]
@@ -161,6 +177,12 @@ fn main() -> ExitCode {
             no_password,
         } => keys::keygen(&namespace, dir, no_password).map(|_| 0),
         Command::Scan { target, json } => scan::scan(&target, json),
+        Command::Diff {
+            old,
+            new,
+            code,
+            json,
+        } => diff::diff(&old, &new, code, json),
         Command::Verify { file, key } => keys::verify(&file, key).map(|_| 0),
         Command::Trust {
             command:

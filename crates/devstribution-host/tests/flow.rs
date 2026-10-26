@@ -88,6 +88,7 @@ fn install_run_update_and_refusals() {
     let pending = store.inspect(&v1).unwrap();
     assert_eq!(pending.action, "install");
     assert_eq!(pending.trust, "new_publisher");
+    assert!(pending.changes.is_none());
     let mut steps = Vec::new();
     let app = store
         .install(&pending.token, &mut |s| steps.push(s.step))
@@ -149,6 +150,16 @@ fn install_run_update_and_refusals() {
         (pending.action.as_str(), pending.trust.as_str()),
         ("update", "first_use")
     );
+    // Compared with the installed version.
+    let changes = pending
+        .changes
+        .as_ref()
+        .expect("an update says what changed");
+    assert_eq!(
+        (changes.old_version.as_str(), changes.new_version.as_str()),
+        ("1.0.0", "2.0.0")
+    );
+    assert!(changes.files.iter().any(|f| f.path == "pyproject.toml"));
     store.install(&pending.token, &mut |_| {}).unwrap();
     assert_eq!(store.app("alice/hello").unwrap().record.version, "2.0.0");
 

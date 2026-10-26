@@ -91,6 +91,8 @@ pub struct RunSpec {
     pub run_dir: PathBuf,
     pub output_dir: PathBuf,
     pub pycache_dir: PathBuf,
+    /// devstribution's data folder: no app may change it, or read other runs' results in it.
+    pub data_dir: PathBuf,
     /// Input values after [`resolve_inputs`].
     pub inputs: Map<String, Value>,
     pub secrets: Map<String, Value>,
@@ -175,6 +177,9 @@ fn start_message(spec: &RunSpec) -> Value {
             "network": m.permissions.network,
             "sap": m.permissions.sap,
             "allow": spec.guard_allow,
+            "own": [spec.run_dir, spec.pycache_dir],
+            "protected": [spec.data_dir],
+            "private": [spec.data_dir.join("runs")],
         },
     })
 }
@@ -285,7 +290,8 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
             }
             {
                 let mut hits = guard_hits.lock().unwrap();
-                if hits.len() >= MAX_HITS && !hit.is_stop() {
+                // The run's closing summary of the files it changed is always kept.
+                if hits.len() >= MAX_HITS && !hit.is_stop() && hit.rule != "files" {
                     return;
                 }
                 hits.push(hit.clone());

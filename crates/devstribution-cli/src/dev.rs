@@ -56,6 +56,7 @@ pub fn dev(dir: &Path, inputs: &[String], args: &[String], json_output: bool) ->
         run_dir,
         output_dir: output_dir.clone(),
         pycache_dir: paths.pycache(),
+        data_dir: paths.root.clone(),
         inputs: resolved,
         secrets,
         args: args.to_vec(),

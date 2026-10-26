@@ -101,7 +101,17 @@ on what it sees. Neither needs admin rights. The process rules live in one file,
     download-and-run, `certutil -decode`, `mshta`, …), deleting backups, switching off the
     firewall, process injection and keyboard hooks (native functions looked up through `ctypes`),
     listing every saved Windows password, and loading compiled code outside imports (`marshal`).
-  - **Observed**: programs started and hosts contacted, once each, in the run log.
+  - ☑ **Files** (26 October): stops on reading saved keys and passwords (SSH keys, Windows
+    credentials, password databases, Outlook `.pst`/`.ost`, wallets), writing to Windows,
+    Program Files, PowerShell profiles, devstribution's data folder, other apps or the app's own
+    Python, reading another run's results, running or loading a program the run wrote itself,
+    and changing more than 50 existing files outside the output folder, the user's choices and
+    the temporary folder. What the user chose through inputs is the app's. Cloud credentials
+    (`.aws`, `.azure`, …), which cloud libraries read on their own, are reported, not stopped.
+  - **Observed**: programs started, hosts contacted and files written, deleted or moved outside
+    the run's folders, once each, in the run log. Each run ends with one line on the files it
+    changed, shown under the results as "What it did" with the hosts and programs. ricon and
+    `excel-report` run clean ("wrote 1 file in what you chose" / "in its output folder").
   - The hook runs inside the app's process: malware patching memory through `ctypes` can get
     past it. The next item does not depend on the app.
 - ☑ **Watching from the launcher** through the run's Job Object, which the app cannot hide from:
@@ -148,9 +158,15 @@ The scan reads only the package's own Python files today. Extend it where attack
     such file is reported in the run log.
   - Still to do: vulnerable (not malicious) versions, which need a fresher source than a bundled
     list (an opt-in online check for IT); wheels with unexpected binaries.
-- ☐ **What changed in an update**: the update screen shows the scan and permissions compared with
-  the installed version ("New: network use in `sync.py`, starts programs"). A quiet malicious
-  update is the realistic attack, and the diff is what a reviewer reads.
+- ☑ **What changed in an update** (26 October): `devstribution_core::diff` compares two versions:
+  permissions, other declarations, packages in `uv.lock` (added, removed, older), the code scan's
+  findings (new ones by rule and file, so moved lines do not count) and every file (lines added
+  and removed; programs and compiled files flagged as unreadable). The update screen leads with
+  what deserves a look, an amber "asks for more than before" banner and "Update anyway" when
+  permissions widen, and folds every change below. `devstribution diff <old> <new>` (folders or
+  `.dsapp` files, `--code` for the changed lines, `--json`, exit code 1 when the update adds
+  something malware-like) is what an IT reviewer reads. *Not yet:* what changed inside a
+  package's own code, and "compare with the version IT approved" in managed mode.
 - ☐ **Reading more cleverly**: names built from strings (`getattr(mod, "sy" + "stem")`), download
   then run (`exec(requests.get(…).text)`), imports of computed names.
 - ☐ **False positives measured**: run the scan over a corpus of ordinary open-source scripts and
@@ -162,9 +178,11 @@ The scan reads only the package's own Python files today. Extend it where attack
 - ☐ App updates: a newer `.dsapp` already updates in place; add a clear "update available" path,
   with the scan diff from section 5.
 - ☐ Publisher key rotation: a signed statement from the old key that names the new one, so a
-  publisher can move keys without every user reinstalling.
-- ☐ Lost or compromised key: a documented way out (forget a pinned publisher in Settings, with a
-  strong warning), and revocation in the catalog later.
+  publisher can move keys without every user reinstalling ([design](revocation.md), "Owners'
+  statements").
+- ☐ Lost or compromised key: the owner's signed withdrawal, and a signed revocation list of bad
+  keys and packages with evidence, advice in free mode and IT's call in managed mode
+  ([design](revocation.md), agreed October 2026).
 
 ## 7. User experience
 
@@ -282,26 +300,9 @@ Files, an ADMX template, IT countersignatures), catalog with GitHub namespace ve
 
 Ideas worth keeping, not planned yet.
 
-- **A public revocation list on GitHub.** One list of bad publisher keys (stolen or malicious)
-  and bad package hashes. Every launcher checks it, so a stolen key stops working everywhere
-  without each IT department removing the author by hand. Private keys never go on it.
-  GitHub only hosts the file. What makes the list hard to tamper with is checked by the launcher:
-  - **Signed offline.** The launcher has the list's public key built in and refuses any list whose
-    signature does not match. Editing the file on GitHub, or anywhere between GitHub and the user,
-    gets nowhere.
-  - **Numbered.** Launchers never accept an older list than the one they have, so a replayed old
-    copy cannot bring revoked keys back.
-  - **Expiring.** A list that is overdue (deleted, blocked, held back) is noticed: managed mode
-    installs nothing new, free mode warns. Offline, the last list that checked out still applies.
-  - **Hard to sign alone.** Ideally two of three keys, held by different people, must sign each
-    list. An offline root key certifies the key that signs lists, so that key can be replaced
-    without a new launcher.
-  - **Mirrorable.** The file carries its own signature, so IT can copy it to an internal share
-    (many company networks block github.com) and point the policy at the copy, or turn it off.
-
-  The list only blocks. A public list of *trusted* publishers would be worth only as much as the
-  vetting behind it. At most, it would show free-mode users a "known publisher" hint, and in
-  managed mode IT's approval would still decide.
+- **A public revocation list on GitHub**: now designed, see [`revocation.md`](revocation.md) and
+  section 6. Still a possibility on top of it: a list of *trusted* publishers would be worth only
+  as much as the vetting behind it, so at most a "known publisher" hint in free mode.
 - **Apps pushed by IT.** An `Apps` policy value naming a folder. At each start, the launcher
   installs or updates every `.dsapp` in it from an approved author, and removes the apps IT took
   out. Today colleagues double-click the packages themselves.

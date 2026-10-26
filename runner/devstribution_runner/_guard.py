@@ -7,11 +7,16 @@ acts on what it sees:
 
 - block: a call the app did not declare (network without `permissions.network`, SAP's RFC
   library without `permissions.sap`) fails with PermissionError and is reported;
-- stop: what malware does (start with Windows, read browser passwords, switch off the
-  antivirus, inject into other programs, watch the keyboard, run hidden code or the Windows
-  tools malware uses) ends the run at once; the launcher ends the whole process tree and
+- stop: what malware does (start with Windows, read browser passwords or other saved keys
+  and passwords, switch off the antivirus, inject into other programs, watch the keyboard, run
+  hidden code, a program it wrote itself or the Windows tools malware uses, change Windows,
+  devstribution or another app, read another run's results, change many of the user's files
+  it was not given) ends the run at once; the launcher ends the whole process tree and
   quarantines the app;
-- observe: programs started and hosts contacted are reported once each, for the run log.
+- observe: programs started, hosts contacted and files changed outside the run's own folders
+  are reported once each, and the run ends with one line on the files it wrote and deleted.
+
+Files the user chose through the app's inputs are the app's to read and change.
 
 The hook runs inside the app's own process, so code that patches the interpreter's memory
 (through ctypes) can get past it. The launcher therefore also checks every process that appears
@@ -22,6 +27,7 @@ import ipaddress
 import json
 import os
 import sys
+import tempfile
 import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set
@@ -128,6 +134,45 @@ _BROWSER_FILES = frozenset(
     }
 )
 _STARTUP_FOLDER = "\\start menu\\programs\\startup\\"
+# A PowerShell profile runs every time PowerShell starts: another way to start with Windows.
+_PROFILE_FOLDERS = ("\\windowspowershell\\", "\\powershell\\")
+
+# Saved keys and passwords. An app reads them only when the user chose them as an input.
+_SECRET_FOLDERS = (
+    "\\appdata\\roaming\\microsoft\\credentials\\",
+    "\\appdata\\local\\microsoft\\credentials\\",
+    "\\appdata\\roaming\\microsoft\\protect\\",
+    "\\appdata\\local\\microsoft\\vault\\",
+    "\\appdata\\roaming\\microsoft\\crypto\\",
+    "\\appdata\\local\\microsoft\\outlook\\",
+    "\\appdata\\roaming\\filezilla\\",
+    "\\appdata\\roaming\\telegram desktop\\tdata\\",
+    "\\appdata\\roaming\\bitcoin\\",
+    "\\appdata\\roaming\\electrum\\",
+    "\\appdata\\roaming\\exodus\\",
+    "\\appdata\\roaming\\ethereum\\keystore\\",
+    "\\appdata\\roaming\\bitwarden\\",
+    "\\appdata\\local\\1password\\",
+)
+_SECRET_NAMES = frozenset({".git-credentials", ".netrc", "_netrc", ".pgpass", "wallet.dat"})
+_SECRET_EXTENSIONS = (".kdbx", ".pst", ".ost", ".ppk")
+_SSH_FOLDER = "\\.ssh\\"
+_SSH_PUBLIC = frozenset({"known_hosts", "known_hosts.old", "config"})
+# Read on their own by cloud libraries (boto3, the Azure SDK): reported, not stopped.
+_CLOUD_CREDENTIALS = ("\\.aws\\", "\\.azure\\", "\\.kube\\", "\\.docker\\config.json", "\\gcloud\\")
+
+# Files an app writes and then runs or loads: how a download-and-run hides from the command line.
+_RUNNABLE_EXTENSIONS = (
+    ".exe", ".dll", ".pyd", ".scr", ".com", ".bat", ".cmd", ".ps1", ".vbs", ".js", ".jse",
+    ".wsf", ".hta", ".msi", ".py", ".pyw",
+)
+
+# `os.devnull` and other devices (`\\.\nul`, `/dev/null`): not files.
+_DEVICES = ("\\\\.\\", "\\dev\\")
+
+#: Existing files changed (overwritten, deleted or moved) outside the output folder, the user's
+#: choices and the temporary folder before the run is stopped: what ransomware does.
+MASS_CHANGES = 50
 
 _INJECTION_FUNCTIONS = frozenset(
     {
@@ -175,6 +220,25 @@ class Guard:
         if self._network_names and not self._network_any:
             self._network_names |= _proxy_hosts()
 
+        # Where files are. `own`: the run's folders, `output` the one for its results. `chosen`: files and folders the user gave
+        # through inputs. `protected`: devstribution, its data and the app's Python. `private`:
+        # other runs' results. Resolved now, before the app can change the environment.
+        runner_root = Path(__file__).resolve().parent.parent
+        self._own = _folders(config.get("own"))
+        self._output = _folders(config.get("output"))
+        self._chosen = _folders(config.get("chosen"))
+        self._protected = _folders(
+            list(config.get("protected") or ()) + [str(runner_root), sys.prefix, sys.base_prefix]
+        )
+        self._private = _folders(config.get("private"))
+        self._system = _folders(_system_folders())
+        temp = config.get("temp")
+        self._temp = _folders([tempfile.gettempdir()] if temp is None else temp)
+        self._written: Dict[str, Set[str]] = {"output": set(), "chosen": set(), "elsewhere": set()}
+        self._removed: Dict[str, Set[str]] = {"output": set(), "chosen": set(), "elsewhere": set()}
+        self._changed: Set[str] = set()
+        self._written_programs: Set[str] = set()
+
         self._handlers: Dict[str, Callable[[tuple], None]] = {
             "socket.getaddrinfo": self._on_lookup,
             "socket.gethostbyname": self._on_lookup,
@@ -191,9 +255,14 @@ class Guard:
             "open": self._on_open,
             "sqlite3.connect": self._on_read_path,
             "shutil.copyfile": self._on_copy,
-            "os.rename": self._on_copy,
-            "os.link": self._on_copy,
-            "os.symlink": self._on_copy,
+            "os.rename": self._on_rename,
+            "os.link": self._on_link,
+            "os.symlink": self._on_link,
+            "os.remove": self._on_remove,
+            "os.rmdir": self._on_remove,
+            "shutil.rmtree": self._on_remove,
+            "os.truncate": self._on_truncate,
+            "ctypes.dlopen": self._on_dlopen,
             "subprocess.Popen": self._on_popen,
             "os.system": self._on_command,
             "os.startfile": self._on_startfile,
@@ -354,17 +423,77 @@ class Guard:
 
     # -- files -----------------------------------------------------------------------------
 
-    def _check_read(self, path: Optional[str]) -> None:
-        if path and any(f in path for f in _BROWSER_FOLDERS):
-            if path.rsplit("\\", 1)[-1] in _BROWSER_FILES:
-                self._stop("browser-passwords", "tried to read the browser's saved passwords or cookies", path)
+    def _is_chosen(self, path: str) -> bool:
+        return _inside_any(path, self._chosen)
 
-    def _check_write(self, path: Optional[str]) -> None:
-        if path and _STARTUP_FOLDER in path:
+    def _check_read(self, path: Optional[str]) -> None:
+        if not path or self._is_chosen(path):
+            return
+        name = path.rsplit("\\", 1)[-1]
+        if name in _BROWSER_FILES and any(f in path for f in _BROWSER_FOLDERS):
+            self._stop("browser-passwords", "tried to read the browser's saved passwords or cookies", path)
+        if (
+            name in _SECRET_NAMES
+            or name.endswith(_SECRET_EXTENSIONS)
+            or any(f in path for f in _SECRET_FOLDERS)
+            or (_SSH_FOLDER in path and name not in _SSH_PUBLIC and not name.endswith(".pub"))
+        ):
+            self._stop("saved-secrets", "tried to read saved keys or passwords", path)
+        if any(f in path for f in _CLOUD_CREDENTIALS):
+            self._observe("cloud-credentials", path)
+        if _inside_any(path, self._private) and not _inside_any(path, self._own):
+            self._stop("other-app-data", "tried to read another run's results", path)
+
+    def _check_change(self, value: Any, change: str) -> None:
+        """A file written (`write`), deleted (`delete`) or moved away (`move`), as the app named it."""
+        path = _abs_path(value)
+        if not path:
+            return
+        name = path.rsplit("\\", 1)[-1]
+        if _STARTUP_FOLDER in path or (name == "profile.ps1" or name.endswith("_profile.ps1")) and any(
+            f in path for f in _PROFILE_FOLDERS
+        ):
             self._stop("start-with-windows", "tried to make a program start with Windows", path)
+        native = _resolved(value)
+        real = _normal(native) if native else path
+        if real.startswith(_DEVICES):
+            return
+        if _inside_any(real, self._output):
+            where = "output"
+        elif _inside_any(real, self._own):
+            where = ""  # the bytecode cache, the run's log: not the app's work
+        elif _inside_any(real, self._protected):
+            self._stop("devstribution-files", "tried to change devstribution or an installed app", real)
+            return
+        elif _inside_any(real, self._system):
+            self._stop("system-files", "tried to change Windows or installed programs", real)
+            return
+        elif self._is_chosen(real):
+            where = "chosen"
+        elif _inside_any(real, self._temp):
+            where = ""
+        else:
+            where = "elsewhere"
+            existed = change != "write" or bool(native and os.path.lexists(native))
+            with self._lock:
+                if existed:
+                    self._changed.add(real)
+                changed = len(self._changed)
+            if changed > MASS_CHANGES:
+                self._stop(
+                    "mass-changes",
+                    "changed many of your files that it was not given",
+                    f"{changed} files, the last {real}",
+                )
+            self._observe({"write": "file-written", "delete": "file-deleted", "move": "file-moved"}[change], real)
+        with self._lock:
+            if where:
+                (self._written if change == "write" else self._removed)[where].add(real)
+            if change == "write" and name.endswith(_RUNNABLE_EXTENSIONS):
+                self._written_programs.update((path, real))
 
     def _on_open(self, args: tuple) -> None:
-        path = _path_text(args[0])
+        path = _abs_path(args[0])
         if path is None:
             return
         self._check_read(path)
@@ -374,14 +503,63 @@ class Guard:
             isinstance(flags, int) and flags > 0 and flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND)
         )
         if writing:
-            self._check_write(path)
+            self._check_change(args[0], "write")
 
     def _on_read_path(self, args: tuple) -> None:
-        self._check_read(_path_text(args[0]) if args else None)
+        self._check_read(_abs_path(args[0]) if args else None)
 
     def _on_copy(self, args: tuple) -> None:
-        self._check_read(_path_text(args[0]) if args else None)
-        self._check_write(_path_text(args[1]) if len(args) > 1 else None)
+        self._check_read(_abs_path(args[0]) if args else None)
+        self._check_change(args[1] if len(args) > 1 else None, "write")
+
+    def _on_rename(self, args: tuple) -> None:
+        if _relative_to_fd(args, 2) or _relative_to_fd(args, 3):
+            return
+        self._check_change(args[0] if args else None, "move")
+        self._check_change(args[1] if len(args) > 1 else None, "write")
+
+    def _on_link(self, args: tuple) -> None:
+        self._check_change(args[1] if len(args) > 1 else None, "write")
+
+    def _on_remove(self, args: tuple) -> None:
+        # With a folder handle (`dir_fd`, not on Windows) the path cannot be placed: the folder
+        # was checked when `shutil.rmtree` started.
+        if args and not _relative_to_fd(args, 1):
+            self._check_change(args[0], "delete")
+
+    def _on_truncate(self, args: tuple) -> None:
+        if args:
+            self._check_change(args[0], "write")
+
+    def _on_dlopen(self, args: tuple) -> None:
+        path = _abs_path(args[0]) if args else None
+        if path and (path in self._written_programs or _real(args[0]) in self._written_programs):
+            self._stop("downloaded-program", "ran a program it had just written", path)
+
+    def report_files(self) -> None:
+        """One line for the run log: which files the app wrote, deleted or moved, and where."""
+        with self._lock:
+            written = {k: len(v) for k, v in self._written.items()}
+            removed = {k: len(v) for k, v in self._removed.items()}
+        parts = []
+        for verb, counts in (("wrote", written), ("deleted or moved", removed)):
+            places = [
+                f"{n} {where}"
+                for n, where in (
+                    (counts["output"], "in its output folder"),
+                    (counts["chosen"], "in what you chose"),
+                    (counts["elsewhere"], "elsewhere"),
+                )
+                if n
+            ]
+            if places:
+                total = sum(counts.values())
+                if len(places) == 1:
+                    parts.append(f"{verb} {total} file{'s' if total != 1 else ''} {places[0].split(' ', 1)[1]}")
+                else:
+                    parts.append(f"{verb} {total} files: " + ", ".join(places))
+        if parts:
+            self._emit({"type": "guard", "action": "observe", "rule": "files", "message": "; ".join(parts), "detail": ""})
 
     # -- programs --------------------------------------------------------------------------
 
@@ -389,6 +567,10 @@ class Guard:
         rule = match_process(command, self._process_rules)
         if rule is not None:
             self._stop(rule["id"], rule["message"], command)
+        if self._written_programs:
+            text = normalize_command(command).replace("/", "\\")
+            if any(p in text for p in self._written_programs):
+                self._stop("downloaded-program", "ran a program it had just written", command)
         self._observe("program", command)
 
     def _on_popen(self, args: tuple) -> None:
@@ -449,13 +631,64 @@ def _text(value: Any) -> str:
     return str(value)
 
 
-def _path_text(value: Any) -> Optional[str]:
+def _normal(path: str) -> str:
+    """How the guard compares paths: lower case, backslashes, no `\\\\?\\` prefix, no trailing slash."""
+    text = path.replace("/", "\\").lower()
+    if text.startswith("\\\\?\\unc\\"):
+        text = "\\\\" + text[8:]
+    elif text.startswith("\\\\?\\"):
+        text = text[4:]
+    return text.rstrip("\\") if len(text) > 3 else text
+
+
+def _abs_path(value: Any) -> Optional[str]:
     if isinstance(value, int) or value is None:
         return None
     try:
-        return _text(value).lower().replace("/", "\\")
+        return _normal(os.path.abspath(_text(value)))
     except Exception:
         return None
+
+
+def _resolved(value: Any) -> Optional[str]:
+    """The path as the system names it, with links, junctions and 8.3 short names (`PROGRA~1`)
+    resolved: they lead elsewhere. Resolved before `_normal`, which only Windows could read back."""
+    if isinstance(value, int) or value is None:
+        return None
+    try:
+        return os.path.realpath(_text(value))
+    except Exception:
+        return None
+
+
+def _real(value: Any) -> Optional[str]:
+    native = _resolved(value)
+    return _normal(native) if native else None
+
+
+def _folders(paths: Any) -> List[str]:
+    out = []
+    for p in paths or ():
+        if p:
+            normal = _abs_path(p)
+            if normal:
+                out.extend({normal, _real(p) or normal})
+    return out
+
+
+def _inside_any(path: str, folders: List[str]) -> bool:
+    return any(path == f or path.startswith(f if f.endswith("\\") else f + "\\") for f in folders)
+
+
+def _relative_to_fd(args: tuple, index: int) -> bool:
+    return len(args) > index and isinstance(args[index], int) and args[index] >= 0
+
+
+def _system_folders() -> List[str]:
+    if os.name != "nt":
+        return ["/etc", "/usr", "/bin", "/sbin", "/boot", "/System", "/Library"]
+    names = ("SystemRoot", "windir", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432")
+    return [os.environ[n] for n in names if os.environ.get(n)]
 
 
 def _host_text(value: Any) -> Optional[str]:
@@ -503,6 +736,9 @@ def _proxy_hosts() -> Set[str]:
         return set()
 
 
-def install(emit: Emit, config: Dict[str, Any]) -> None:
-    if config.get("enabled", True):
-        Guard(emit, config).install()
+def install(emit: Emit, config: Dict[str, Any]) -> Optional[Guard]:
+    if not config.get("enabled", True):
+        return None
+    guard = Guard(emit, config)
+    guard.install()
+    return guard

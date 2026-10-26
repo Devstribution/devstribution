@@ -9,10 +9,14 @@ stdin, launcher → runner
      "outputs": [{"name": "report", "type": "file"}],
      "secrets": {"name": "value"}, "allowed_secrets": ["name"], "args": [],
      "pycache_dir": "...",
-     "guard": {"network": ["api.company.com"], "sap": false, "allow": ["rule-id"]}}
+     "guard": {"network": ["api.company.com"], "sap": false, "allow": ["rule-id"],
+               "own": ["<run folder>", "<bytecode cache>"], "protected": ["<data folder>"],
+               "private": ["<other runs>"]}}
   `pycache_dir` keeps bytecode out of the app folder, which must stay as verified.
   `guard` is what the runtime guard checks the run against (see `_guard.py`); a start message
-  without it gets the strictest guard: no network, no SAP, nothing allowed.
+  without it gets the strictest guard: no network, no SAP, nothing allowed. `own` are the run's
+  folders, `protected` the folders no app may change, `private` those no app may read; the
+  output folder and the files and folders chosen for `file` / `folder` inputs are added here.
   then control messages: {"type": "cancel"}. Closing stdin also cancels the run.
 
 runner → launcher, on the original stdout (the app's own stdout is redirected to stderr, which
@@ -168,7 +172,7 @@ def main() -> int:
     devstribution_runner.ctx = ctx
 
     # Last thing before app code: from here on, what the app does is checked.
-    _guard.install(channel.emit, start.get("guard") or {})
+    guard = _guard.install(channel.emit, _guard_config(start, ctx))
     _load_site(channel.emit)
 
     finished = threading.Event()
@@ -198,8 +202,27 @@ def main() -> int:
         result, code = {"type": "result", "status": "error", "error": error, "traceback": tb}, 1
     finally:
         finished.set()
+    if guard is not None:
+        guard.report_files()
     channel.emit(result)
     return code
+
+
+def _guard_config(start: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
+    """The launcher's guard settings, plus the run's own folders and what the user chose."""
+    config = dict(start.get("guard") or {})
+    own = list(config.get("own") or ()) + [str(ctx.output_dir)]
+    if sys.pycache_prefix:
+        own.append(sys.pycache_prefix)
+    config["own"] = own
+    config["output"] = [str(ctx.output_dir)]
+    types = start.get("input_types") or {}
+    config["chosen"] = [
+        value
+        for name, value in (start.get("inputs") or {}).items()
+        if types.get(name) in ("file", "folder") and isinstance(value, str) and value
+    ]
+    return config
 
 
 def _control_loop(control: ControlReader, ctx: Context, finished: threading.Event) -> None:

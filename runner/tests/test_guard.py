@@ -6,6 +6,7 @@ registry or the Startup folder, and no PowerShell starts.
 """
 
 import json
+import os
 import subprocess
 import sys
 import textwrap
@@ -206,6 +207,177 @@ class GuardTest(RunnerBase):
             open(p / "Login Data", "rb")
             """,
             "browser-passwords",
+        )
+
+    def test_saved_keys(self):
+        stop = self.assert_stopped(
+            """
+            p = ctx.output_dir / ".ssh"
+            p.mkdir(parents=True)
+            open(p / "id_ed25519", "rb")
+            """,
+            "saved-secrets",
+        )
+        self.assertTrue(stop["detail"].endswith("id_ed25519"), stop)
+
+    def test_password_database(self):
+        self.assert_stopped("open(ctx.output_dir / 'Passwords.kdbx', 'rb')", "saved-secrets")
+
+    def test_public_ssh_files_are_fine(self):
+        code, messages, _ = self.run_guarded(
+            """
+            p = ctx.output_dir / ".ssh"
+            p.mkdir(parents=True)
+            for name in ("known_hosts", "config", "id_ed25519.pub"):
+                (p / name).write_text("x")
+                open(p / name).read()
+            return {"v": "ok"}
+            """
+        )
+        self.assertEqual(code, 0, messages)
+
+    def test_a_chosen_file_is_the_apps_to_read(self):
+        db = self.root / "Passwords.kdbx"
+        db.write_text("secret")
+        self.write_app("def run(db, ctx):\n    return {'v': open(db).read()}\n")
+        code, messages, _ = self.run_app(
+            inputs={"db": str(db)}, input_types={"db": "file"}, outputs=[{"name": "v", "type": "text"}]
+        )
+        self.assertEqual(code, 0, messages)
+        self.assertEqual(messages[-1]["outputs"], {"v": "secret"})
+
+    def test_powershell_profile(self):
+        self.assert_stopped(
+            """
+            p = ctx.output_dir / "Documents" / "WindowsPowerShell"
+            p.mkdir(parents=True)
+            (p / "Microsoft.PowerShell_profile.ps1").write_text("calc")
+            """,
+            "start-with-windows",
+        )
+
+    def test_windows_files(self):
+        target = (os.environ.get("SystemRoot", "C:\\Windows") + "\\devstribution-test.txt"
+                  if sys.platform == "win32" else "/etc/devstribution-test")
+        self.assert_stopped(f"open({target!r}, 'w')", "system-files")
+
+    def test_devstribution_and_other_apps(self):
+        # The output folder lives inside the data folder, as in the launcher.
+        data = self.root
+        apps = data / "apps" / "other"
+        apps.mkdir(parents=True)
+        stop = self.assert_stopped(
+            f"""
+            (ctx.output_dir / "fine.txt").write_text("ok")
+            open({str(apps / "main.py")!r}, "w")
+            """,
+            "devstribution-files",
+            guard={"protected": [str(data)], "temp": []},
+        )
+        self.assertIn("main.py", stop["detail"])
+
+    def test_the_apps_own_python(self):
+        self.assert_stopped(
+            """
+            import sys, os
+            open(os.path.join(sys.prefix, "devstribution-test.pth"), "w")
+            """,
+            "devstribution-files",
+        )
+
+    def test_other_runs_results(self):
+        other = self.root / "runs" / "other" / "output"
+        other.mkdir(parents=True)
+        (other / "clients.xlsx").write_text("data")
+        self.assert_stopped(
+            f"open({str(other / 'clients.xlsx')!r}, 'rb')",
+            "other-app-data",
+            guard={"private": [str(self.root / "runs")]},
+        )
+
+    def test_many_existing_files_changed(self):
+        docs = self.root / "Documents"
+        docs.mkdir()
+        for i in range(_guard.MASS_CHANGES + 10):
+            (docs / f"{i}.docx").write_text("mine")
+        stop = self.assert_stopped(
+            f"""
+            import pathlib
+            for p in sorted(pathlib.Path({str(docs)!r}).iterdir()):
+                p.write_bytes(b"encrypted")
+            """,
+            "mass-changes",
+            guard={"temp": []},
+        )
+        self.assertIn(f"{_guard.MASS_CHANGES + 1} files", stop["detail"])
+        # Stopped before the call: the file over the limit and those after it were never written.
+        untouched = sum((docs / f"{i}.docx").read_text() == "mine" for i in range(_guard.MASS_CHANGES + 10))
+        self.assertEqual(untouched, 10)
+
+    def test_changes_in_a_chosen_folder_are_the_apps(self):
+        work = self.root / "work"
+        work.mkdir()
+        for i in range(_guard.MASS_CHANGES + 10):
+            (work / f"{i}.xlsx").write_text("old")
+        self.write_app(
+            "import pathlib\n"
+            "def run(folder, ctx):\n"
+            "    for p in pathlib.Path(folder).iterdir():\n"
+            "        p.write_text('new')\n"
+            "    return {'v': 'ok'}\n"
+        )
+        code, messages, _ = self.run_app(
+            inputs={"folder": str(work)}, input_types={"folder": "folder"},
+            outputs=[{"name": "v", "type": "text"}], guard={"temp": []},
+        )
+        self.assertEqual(code, 0, messages)
+        summary = [m["message"] for m in self.guard_messages(messages, "observe") if m["rule"] == "files"]
+        self.assertEqual(summary, [f"wrote {_guard.MASS_CHANGES + 10} files in what you chose"])
+
+    def test_files_changed_elsewhere_are_reported(self):
+        elsewhere = self.root / "elsewhere"
+        elsewhere.mkdir()
+        (elsewhere / "old.txt").write_text("x")
+        code, messages, _ = self.run_guarded(
+            f"""
+            import os, pathlib
+            (ctx.output_dir / "report.txt").write_text("ok")
+            base = pathlib.Path({str(elsewhere)!r})
+            for name in ("a.txt", "b.txt", "c.txt"):
+                (base / name).write_text("new")
+            os.remove(base / "old.txt")
+            return {{"v": "ok"}}
+            """,
+            guard={"temp": []},
+        )
+        self.assertEqual(code, 0, messages)
+        observed = self.guard_messages(messages, "observe")
+        self.assertEqual(len([m for m in observed if m["rule"] == "file-written"]), 3, observed)
+        self.assertEqual(len([m for m in observed if m["rule"] == "file-deleted"]), 1, observed)
+        summary = [m["message"] for m in observed if m["rule"] == "files"]
+        self.assertEqual(summary, ["wrote 4 files: 1 in its output folder, 3 elsewhere; deleted or moved 1 file elsewhere"])
+
+    def test_temporary_files_are_not_reported(self):
+        code, messages, _ = self.run_guarded(
+            """
+            import tempfile
+            with tempfile.TemporaryDirectory() as d:
+                open(d + "/scratch.txt", "w").close()
+            return {"v": "ok"}
+            """
+        )
+        self.assertEqual(code, 0, messages)
+        self.assertFalse([m for m in self.guard_messages(messages, "observe") if m["rule"].startswith("file")])
+
+    def test_running_a_program_it_wrote(self):
+        self.assert_stopped(
+            """
+            import subprocess
+            tool = ctx.output_dir / "update.bat"
+            tool.write_text("echo hi")
+            subprocess.run([str(tool)])
+            """,
+            "downloaded-program",
         )
 
     def test_encoded_powershell_never_starts(self):
