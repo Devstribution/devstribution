@@ -444,8 +444,9 @@ class Guard:
         if _inside_any(path, self._private) and not _inside_any(path, self._own):
             self._stop("other-app-data", "tried to read another run's results", path)
 
-    def _check_change(self, path: Optional[str], change: str) -> None:
-        """A file written (`write`), deleted (`delete`) or moved away (`move`)."""
+    def _check_change(self, value: Any, change: str) -> None:
+        """A file written (`write`), deleted (`delete`) or moved away (`move`), as the app named it."""
+        path = _abs_path(value)
         if not path:
             return
         name = path.rsplit("\\", 1)[-1]
@@ -453,7 +454,8 @@ class Guard:
             f in path for f in _PROFILE_FOLDERS
         ):
             self._stop("start-with-windows", "tried to make a program start with Windows", path)
-        real = _real(path)
+        native = _resolved(value)
+        real = _normal(native) if native else path
         if real.startswith(_DEVICES):
             return
         if _inside_any(real, self._output):
@@ -472,7 +474,7 @@ class Guard:
             where = ""
         else:
             where = "elsewhere"
-            existed = change != "write" or os.path.lexists(real)
+            existed = change != "write" or bool(native and os.path.lexists(native))
             with self._lock:
                 if existed:
                     self._changed.add(real)
@@ -501,37 +503,37 @@ class Guard:
             isinstance(flags, int) and flags > 0 and flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND)
         )
         if writing:
-            self._check_change(path, "write")
+            self._check_change(args[0], "write")
 
     def _on_read_path(self, args: tuple) -> None:
         self._check_read(_abs_path(args[0]) if args else None)
 
     def _on_copy(self, args: tuple) -> None:
         self._check_read(_abs_path(args[0]) if args else None)
-        self._check_change(_abs_path(args[1]) if len(args) > 1 else None, "write")
+        self._check_change(args[1] if len(args) > 1 else None, "write")
 
     def _on_rename(self, args: tuple) -> None:
         if _relative_to_fd(args, 2) or _relative_to_fd(args, 3):
             return
-        self._check_change(_abs_path(args[0]) if args else None, "move")
-        self._check_change(_abs_path(args[1]) if len(args) > 1 else None, "write")
+        self._check_change(args[0] if args else None, "move")
+        self._check_change(args[1] if len(args) > 1 else None, "write")
 
     def _on_link(self, args: tuple) -> None:
-        self._check_change(_abs_path(args[1]) if len(args) > 1 else None, "write")
+        self._check_change(args[1] if len(args) > 1 else None, "write")
 
     def _on_remove(self, args: tuple) -> None:
         # With a folder handle (`dir_fd`, not on Windows) the path cannot be placed: the folder
         # was checked when `shutil.rmtree` started.
         if args and not _relative_to_fd(args, 1):
-            self._check_change(_abs_path(args[0]), "delete")
+            self._check_change(args[0], "delete")
 
     def _on_truncate(self, args: tuple) -> None:
         if args:
-            self._check_change(_abs_path(args[0]), "write")
+            self._check_change(args[0], "write")
 
     def _on_dlopen(self, args: tuple) -> None:
         path = _abs_path(args[0]) if args else None
-        if path and (path in self._written_programs or _real(path) in self._written_programs):
+        if path and (path in self._written_programs or _real(args[0]) in self._written_programs):
             self._stop("downloaded-program", "ran a program it had just written", path)
 
     def report_files(self) -> None:
@@ -648,12 +650,20 @@ def _abs_path(value: Any) -> Optional[str]:
         return None
 
 
-def _real(path: str) -> str:
-    """With links, junctions and 8.3 short names (`PROGRA~1`) resolved: they lead elsewhere."""
+def _resolved(value: Any) -> Optional[str]:
+    """The path as the system names it, with links, junctions and 8.3 short names (`PROGRA~1`)
+    resolved: they lead elsewhere. Resolved before `_normal`, which only Windows could read back."""
+    if isinstance(value, int) or value is None:
+        return None
     try:
-        return _normal(os.path.realpath(path))
+        return os.path.realpath(_text(value))
     except Exception:
-        return path
+        return None
+
+
+def _real(value: Any) -> Optional[str]:
+    native = _resolved(value)
+    return _normal(native) if native else None
 
 
 def _folders(paths: Any) -> List[str]:
@@ -662,7 +672,7 @@ def _folders(paths: Any) -> List[str]:
         if p:
             normal = _abs_path(p)
             if normal:
-                out.extend({normal, _real(normal)})
+                out.extend({normal, _real(p) or normal})
     return out
 
 
