@@ -178,9 +178,11 @@ The scan reads only the package's own Python files today. Extend it where attack
 - ☐ App updates: a newer `.dsapp` already updates in place; add a clear "update available" path,
   with the scan diff from section 5.
 - ☐ Publisher key rotation: a signed statement from the old key that names the new one, so a
-  publisher can move keys without every user reinstalling.
-- ☐ Lost or compromised key: a documented way out (forget a pinned publisher in Settings, with a
-  strong warning), and revocation in the catalog later.
+  publisher can move keys without every user reinstalling ([design](revocation.md), "Owners'
+  statements").
+- ☐ Lost or compromised key: the owner's signed withdrawal, and a signed revocation list of bad
+  keys and packages with evidence, advice in free mode and IT's call in managed mode
+  ([design](revocation.md), agreed October 2026).
 
 ## 7. User experience
 
@@ -298,26 +300,9 @@ Files, an ADMX template, IT countersignatures), catalog with GitHub namespace ve
 
 Ideas worth keeping, not planned yet.
 
-- **A public revocation list on GitHub.** One list of bad publisher keys (stolen or malicious)
-  and bad package hashes. Every launcher checks it, so a stolen key stops working everywhere
-  without each IT department removing the author by hand. Private keys never go on it.
-  GitHub only hosts the file. What makes the list hard to tamper with is checked by the launcher:
-  - **Signed offline.** The launcher has the list's public key built in and refuses any list whose
-    signature does not match. Editing the file on GitHub, or anywhere between GitHub and the user,
-    gets nowhere.
-  - **Numbered.** Launchers never accept an older list than the one they have, so a replayed old
-    copy cannot bring revoked keys back.
-  - **Expiring.** A list that is overdue (deleted, blocked, held back) is noticed: managed mode
-    installs nothing new, free mode warns. Offline, the last list that checked out still applies.
-  - **Hard to sign alone.** Ideally two of three keys, held by different people, must sign each
-    list. An offline root key certifies the key that signs lists, so that key can be replaced
-    without a new launcher.
-  - **Mirrorable.** The file carries its own signature, so IT can copy it to an internal share
-    (many company networks block github.com) and point the policy at the copy, or turn it off.
-
-  The list only blocks. A public list of *trusted* publishers would be worth only as much as the
-  vetting behind it. At most, it would show free-mode users a "known publisher" hint, and in
-  managed mode IT's approval would still decide.
+- **A public revocation list on GitHub**: now designed, see [`revocation.md`](revocation.md) and
+  section 6. Still a possibility on top of it: a list of *trusted* publishers would be worth only
+  as much as the vetting behind it, so at most a "known publisher" hint in free mode.
 - **Apps pushed by IT.** An `Apps` policy value naming a folder. At each start, the launcher
   installs or updates every `.dsapp` in it from an approved author, and removes the apps IT took
   out. Today colleagues double-click the packages themselves.
