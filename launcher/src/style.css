@@ -554,6 +554,7 @@ kbd { font: inherit; font-size: var(--fs-xs); border: 1px solid var(--border-str
 .disclosure summary::before { content: "›"; display: inline-block; transition: transform .15s; font-size: var(--fs-md); }
 .disclosure[open] summary::before { transform: rotate(90deg); }
 .disclosure > div { margin-top: var(--sp-3); }
+.change-list { display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow: auto; }
 
 .form { display: flex; flex-direction: column; gap: 14px; }
 .form .note { font-size: var(--fs-xs); color: var(--muted); margin-bottom: -4px; }

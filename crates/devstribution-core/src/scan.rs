@@ -446,7 +446,7 @@ const STRINGS: &[(&str, &Rule)] = &[
     ("sapgui", &SAP),
 ];
 
-const BINARY_EXTENSIONS: &[&str] = &[
+pub(crate) const BINARY_EXTENSIONS: &[&str] = &[
     "exe", "dll", "pyd", "so", "dylib", "sys", "scr", "com", "msi", "jar", "ocx", "cpl",
 ];
 const SCRIPT_EXTENSIONS: &[&str] = &[

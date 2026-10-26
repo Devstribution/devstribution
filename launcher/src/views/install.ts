@@ -1,6 +1,6 @@
 import { ShieldAlert, ShieldCheck, ShieldX, ShieldOff, Globe, Folder, KeyRound, Database, Puzzle, Sparkles, Check, Loader, Download,
-  SquareTerminal, Cpu, Code, EyeOff, Eye, CalendarClock, PackagePlus, PackageCheck, Package, Binary, ScanSearch } from "lucide";
-import type { Finding, PendingInstall, StepEvent } from "../api";
+  SquareTerminal, Cpu, Code, EyeOff, Eye, CalendarClock, PackagePlus, PackageCheck, Package, Binary, ScanSearch, FileDiff } from "lucide";
+import type { AppDiff, Finding, PendingInstall, StepEvent } from "../api";
 import type { Ctx } from "../main";
 import { h, icon, appIcon, bytes, clear, toast, errorText, KIND_LABEL } from "../ui";
 
@@ -50,6 +50,40 @@ ${f.message}`;
         h("div", { class: "ps" }, `${deps.packages} package${deps.packages === 1 ? "" : "s"} checked against PyPI's malicious-package reports up to ${new Date(`${deps.list_date}T00:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`))));
   }
   return h("div", { class: "perm-list" }, rows);
+}
+
+/** Whether an update may do something the installed version could not. */
+function widened(d: AppDiff): boolean {
+  const p = d.permissions;
+  return p.network_added.length > 0 || p.folders_added.length > 0 || p.secrets_added.length > 0 || p.sap === true;
+}
+
+/** An update's changes: what deserves a look first, then the packages and files in a fold. */
+function changeRows(d: AppDiff): HTMLElement[] {
+  const rows = d.highlights.map((x) =>
+    h("div", { class: "perm" },
+      h("div", { class: `pi ${x.severity === "info" ? "" : x.severity}`, title: x.severity }, icon(FileDiff, 16)),
+      h("div", null, h("div", { class: "pt" }, x.message))));
+  const changed = d.files.length;
+  if (!rows.length) {
+    rows.push(h("div", { class: "perm" }, h("div", { class: "pi" }, icon(FileDiff, 16)),
+      h("div", null, h("div", { class: "pt" }, "Nothing that needs a look"),
+        h("div", { class: "ps" }, `${changed} file${changed === 1 ? "" : "s"} changed, no new permissions, packages or flagged code`))));
+  }
+  const out: HTMLElement[] = [h("div", { class: "perm-list" }, rows)];
+  if (changed || d.packages.length || d.declared.length) {
+    const line = (text: string) => h("div", { class: "ps mono" }, text);
+    const mark = { added: "+", removed: "−", changed: "~" } as const;
+    const pkgs = d.packages.length ? `, ${d.packages.length} package${d.packages.length === 1 ? "" : "s"}` : "";
+    out.push(h("details", { class: "disclosure" },
+      h("summary", null, `Every change (${changed} file${changed === 1 ? "" : "s"}${pkgs})`),
+      h("div", { class: "change-list" },
+        d.declared.map(line),
+        d.packages.map((c) => line(c.old && c.new ? `${c.name} ${c.old} → ${c.new}` : c.new ? `+ ${c.name} ${c.new}` : `− ${c.name} ${c.old}`)),
+        d.files.map((f) => line(`${mark[f.status]} ${f.path}${f.binary ? "  (can’t be read)" : f.status === "changed" ? `  +${f.lines_added} −${f.lines_removed}` : ""}`)),
+        h("div", { class: "muted small" }, "For the changed lines, run “devstribution diff” on the two versions."))));
+  }
+  return out;
 }
 
 /** A package the organisation's policy refuses: why, who to ask, and a ready-to-send request. */
@@ -114,6 +148,7 @@ export async function installFlow(ctx: Ctx, path?: string) {
   const newPublisher = p.trust === "new_publisher";
   const internet = p.origin && p.origin.zone_id >= 3;
   const danger = p.scan.findings.some((f) => f.severity === "danger");
+  const asksMore = p.changes ? widened(p.changes) : false;
   if (p.blocked) return blockedScreen(ctx, p, modal, overlay);
 
   clear(modal,
@@ -150,6 +185,12 @@ export async function installFlow(ctx: Ctx, path?: string) {
         : null,
       p.warnings.filter((w) => !w.startsWith("First app") && !w.startsWith("This file was downloaded")).map((w) =>
         h("div", { class: "banner amber" }, h("div", { class: "bi" }, icon(ShieldAlert, 18)), h("div", null, w))),
+      asksMore
+        ? h("div", { class: "banner amber" }, h("div", { class: "bi" }, icon(ShieldAlert, 18)),
+            h("div", null, h("strong", null, "This update asks for more than before"),
+              "See “What changed” below. Update only if you expected it."))
+        : null,
+      p.changes ? [h("div", { class: "section-label" }, `What changed since v${p.changes.old_version}`), ...changeRows(p.changes)] : null,
       h("div", { class: "section-label" }, "What this app can do"), permissionRows(p),
       h("div", { class: "section-label" }, "What the code does"), scanRows(p),
       h("div", { class: "muted small" }, "Read without running it: well-hidden code can be missed, and a flagged line can be harmless."),
@@ -159,7 +200,7 @@ export async function installFlow(ctx: Ctx, path?: string) {
         h("div", { class: "fact" }, h("div", { class: "k" }, "Runs on"), h("div", { class: "v" }, p.platforms.join(", "))))),
     h("div", { class: "modal-foot" },
       h("button", { class: "btn", onclick: cancel }, "Cancel"),
-      h("button", { class: "btn primary", onclick: () => confirm() }, danger ? `${verb} anyway` : actionLabel)));
+      h("button", { class: "btn primary", onclick: () => confirm() }, danger || asksMore ? `${verb} anyway` : actionLabel)));
 
   async function confirm() {
     const steps: [StepEvent["step"] | "verify", string][] = [

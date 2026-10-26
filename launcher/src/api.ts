@@ -153,6 +153,25 @@ export interface ScanReport {
   dependencies?: { packages: number; list_date: string } | null;
 }
 
+/** What changed since the installed version (`devstribution_core::diff`). */
+export interface AppDiff {
+  old_version: string;
+  new_version: string;
+  /** What deserves a look first, most important first. */
+  highlights: { severity: Severity; message: string }[];
+  permissions: {
+    network_added: string[]; network_removed: string[];
+    folders_added: string[]; folders_removed: string[];
+    secrets_added: string[]; secrets_removed: string[];
+    sap?: boolean | null;
+  };
+  declared: string[];
+  packages: { name: string; old?: string | null; new?: string | null }[];
+  files: { path: string; status: "added" | "removed" | "changed"; binary: boolean; lines_added: number; lines_removed: number }[];
+  findings_added: Finding[];
+  findings_removed: Finding[];
+}
+
 export interface PendingInstall {
   token: string;
   id: string;
@@ -176,6 +195,8 @@ export interface PendingInstall {
   action: "install" | "update" | "reinstall";
   warnings: string[];
   scan: ScanReport;
+  /** For an update: what changed since the installed version. */
+  changes?: AppDiff | null;
   /** Set when the organisation's policy refuses the package: it cannot be installed. */
   blocked?: { reasons: string[]; contact?: string | null; author_not_approved: boolean } | null;
 }

@@ -8,6 +8,7 @@ use std::sync::Mutex;
 
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
+use devstribution_core::diff::{self, AppDiff, AppFolder};
 use devstribution_core::manifest::{AppId, Kind, Manifest, Version};
 use devstribution_core::package::{
     self, Limits, PYPROJECT, SignatureStatus, VerifiedPackage, VerifyOptions,
@@ -165,6 +166,9 @@ pub struct PendingInstall {
     /// What the code scan found in the verified files (`devstribution_core::scan`).
     #[serde(default)]
     pub scan: ScanReport,
+    /// For an update: what changed since the installed version (`devstribution_core::diff`).
+    #[serde(default)]
+    pub changes: Option<AppDiff>,
     /// Set when the organisation's policy refuses the package: it cannot be installed.
     #[serde(default)]
     pub blocked: Option<Blocked>,
@@ -594,6 +598,15 @@ impl Store {
         }
 
         let scan = scan::scan(&stage.join("app"), verified.files.paths(), &m.permissions);
+        // Compared with the installed version's files, which were verified when installed. A
+        // comparison that fails (an app folder damaged since) only leaves the summary out.
+        let changes = installed
+            .filter(|r| r.content_sha256 != verified.content_sha256)
+            .and_then(|r| {
+                let old = AppFolder::all_files(&self.paths.app_dir(&m.id, &r.content_hash)).ok()?;
+                let new = AppFolder::new(&stage.join("app"), verified.files.paths());
+                diff::diff(&old, &new).ok()
+            });
         let reasons =
             self.policy_reasons(&m.id.namespace, &verified.publisher_key, Some(&scan), false);
         let blocked = self
@@ -637,6 +650,7 @@ impl Store {
                 .to_string(),
             warnings,
             scan,
+            changes,
             blocked,
             publisher_key: verified.publisher_key.clone(),
             content_hash: verified.content_hash.clone(),

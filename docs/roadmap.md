@@ -158,9 +158,15 @@ The scan reads only the package's own Python files today. Extend it where attack
     such file is reported in the run log.
   - Still to do: vulnerable (not malicious) versions, which need a fresher source than a bundled
     list (an opt-in online check for IT); wheels with unexpected binaries.
-- ☐ **What changed in an update**: the update screen shows the scan and permissions compared with
-  the installed version ("New: network use in `sync.py`, starts programs"). A quiet malicious
-  update is the realistic attack, and the diff is what a reviewer reads.
+- ☑ **What changed in an update** (26 October): `devstribution_core::diff` compares two versions:
+  permissions, other declarations, packages in `uv.lock` (added, removed, older), the code scan's
+  findings (new ones by rule and file, so moved lines do not count) and every file (lines added
+  and removed; programs and compiled files flagged as unreadable). The update screen leads with
+  what deserves a look, an amber "asks for more than before" banner and "Update anyway" when
+  permissions widen, and folds every change below. `devstribution diff <old> <new>` (folders or
+  `.dsapp` files, `--code` for the changed lines, `--json`, exit code 1 when the update adds
+  something malware-like) is what an IT reviewer reads. *Not yet:* what changed inside a
+  package's own code, and "compare with the version IT approved" in managed mode.
 - ☐ **Reading more cleverly**: names built from strings (`getattr(mod, "sy" + "stem")`), download
   then run (`exec(requests.get(…).text)`), imports of computed names.
 - ☐ **False positives measured**: run the scan over a corpus of ordinary open-source scripts and

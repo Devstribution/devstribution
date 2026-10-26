@@ -5,6 +5,7 @@
 //! See `docs/plan.md`, "App package standard (v1)".
 
 pub mod deps;
+pub mod diff;
 pub mod error;
 pub mod files;
 pub mod lock;

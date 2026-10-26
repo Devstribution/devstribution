@@ -102,6 +102,19 @@ pub fn check(lock: &str) -> DepCheck {
     out
 }
 
+/// Every package in `uv.lock` besides the app itself, by normalized name, with its locked
+/// version. A lockfile that does not parse gives none.
+pub fn packages(lock: &str) -> std::collections::BTreeMap<String, String> {
+    let Ok(raw) = toml::from_str::<RawLock>(lock) else {
+        return Default::default();
+    };
+    raw.package
+        .into_iter()
+        .filter(|p| !p.source.contains_key("virtual") && !p.source.contains_key("editable"))
+        .map(|p| (normalize(&p.name), p.version.unwrap_or_default()))
+        .collect()
+}
+
 /// PEP 503 name: lowercase, runs of `-`, `_` and `.` become one `-`.
 pub fn normalize(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
