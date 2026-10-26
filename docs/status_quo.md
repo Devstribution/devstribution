@@ -103,7 +103,8 @@ The same goes for these, which only the installer can test:
 
 **Installer and signing**
 
-`npx tauri build` on Windows, then SignPath (or Certum).
+`npx tauri build` on Windows, then a first unsigned public release, then SignPath (or Certum):
+SignPath only signs a project that is already released.
 
 **Your real app**
 
@@ -111,10 +112,10 @@ Repack it with the new rules and reinstall it.
 
 **Later (roadmap)**
 
-- updates and key rotation;
-- an output type for "a folder the user chose";
-- error messages reviewed end to end;
-- an About page with licences;
-- release engineering;
-- after 1.0: managed mode, catalog, `devstribution://` links, revocation, the IT review kit, the
-  `web` and `background` kinds.
+[`roadmap.md`](roadmap.md) sorts the rest into three stages:
+- A, a first unsigned release: release workflow, changelog, code signing policy, About page,
+  error messages, "Copy diagnostics";
+- B, a signed 1.0: Phase 0, managed mode checked on Windows, signing in CI, the launcher updating
+  itself, the first steps of revocation, fuzzing;
+- C, after 1.0: AMSI, Event Log, results shown in the launcher, the catalog, `devstribution://`
+  links, the IT review kit, the `web` and `background` kinds.
