@@ -30,9 +30,14 @@ behaviour, a patch (0.1.1) only fixes. The package format has its own number (fo
    agree. Open a PR with these changes and merge it when CI passes.
 4. **Dry run (optional).** Actions → Release → *Run workflow* on `main`: it builds everything
    without creating a release, so a broken build shows before there is a tag.
-5. **Tag** the merged commit on `main` and push the tag:
+5. **Tag** the merged commit on `main` and push the tag. Switch to `main` and pull first: `git tag`
+   tags whatever is checked out, so a tag made on a PR branch misses what was merged after it
+   (v0.1.0 was tagged that way, three documentation commits behind `main`).
 
    ```sh
+   git checkout main
+   git pull
+   git log --oneline -1          # the merge commit of the release PR
    git tag -a v0.2.0 -m "devstribution 0.2.0"
    git push origin v0.2.0
    ```
