@@ -241,6 +241,8 @@ svg.lucide { flex: none; }
 .small { font-size: var(--fs-sm); }
 .tiny { font-size: var(--fs-xs); }
 .muted { color: var(--muted); }
+.did-line { margin-top: var(--sp-3); font-size: var(--fs-sm); color: var(--text-2); overflow-wrap: anywhere; }
+.did-line strong { font-weight: var(--fw-semibold); }
 .soft-text { color: var(--text-2); }
 .strong { font-weight: var(--fw-bold); }
 .center { text-align: center; }

@@ -2,7 +2,7 @@ import {
   X, Square, MoreHorizontal, Wrench, Trash2, FolderOpen, ExternalLink, Pin, PinOff,
   Loader, Globe, Folder, KeyRound, Database, Puzzle, Sparkles, ShieldX,
 } from "lucide";
-import type { AppView, Input, RunRecord } from "../api";
+import type { AppView, GuardHit, Input, RunRecord } from "../api";
 import type { Ctx, LiveRun } from "../main";
 import { h, icon, appIcon, clear, duration, fileName, relTime, statusText, toast, errorText, trustTag, KIND_LABEL } from "../ui";
 
@@ -246,7 +246,8 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
             ? h("button", { class: "btn small", onclick: () => ctx.api.openOutput(run!.runId, null, false) }, icon(FolderOpen, 14), "Folder")
             : null),
         res.status === "error" && res.error ? h("div", { class: "error-box" }, res.error) : null,
-        outputs.some(Boolean) ? h("div", { class: "outputs" }, outputs) : null));
+        outputs.some(Boolean) ? h("div", { class: "outputs" }, outputs) : null,
+        whatItDid(res.guard ?? [])));
     }
 
     // ---------- quarantine ----------
@@ -378,4 +379,29 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
   }
 
   return close;
+}
+
+/** One line from the runtime guard's reports: the files the run changed, the hosts it contacted
+ *  and the programs it started. */
+function whatItDid(hits: GuardHit[]): HTMLElement | null {
+  const seen = (rule: string) => hits.filter((g) => g.action === "observe" && g.rule === rule).map((g) => g.message);
+  const parts: string[] = [];
+  const files = seen("files")[0];
+  if (files) parts.push(files);
+  const hosts = [...new Set(seen("network"))];
+  if (hosts.length) parts.push(`contacted ${hosts.join(", ")}`);
+  const programs = [...new Set(seen("program").map(programName))];
+  if (programs.length) parts.push(`started ${programs.join(", ")}`);
+  if (!parts.length) return null;
+  const text = parts.join(" · ");
+  return h("div", { class: "did-line", title: "Reported by devstribution's runtime guard" },
+    h("strong", null, "What it did: "), text.charAt(0).toUpperCase() + text.slice(1));
+}
+
+/** `C:\Windows\system32\cmd.exe /c ver` → `cmd.exe`; paths may contain spaces. */
+function programName(command: string): string {
+  const text = command.replace(/"/g, "");
+  const program = text.match(/^(.*?\.(?:exe|com|bat|cmd))(?:\s|$)/i);
+  const path = program ? program[1] : text.split(/\s/)[0];
+  return path.split(/[\\/]/).pop() || command;
 }

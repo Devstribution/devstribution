@@ -995,6 +995,7 @@ impl Store {
             run_dir,
             output_dir,
             pycache_dir,
+            data_dir: self.paths.root.clone(),
             inputs: resolved,
             secrets,
             args: Vec::new(),

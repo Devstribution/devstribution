@@ -101,7 +101,17 @@ on what it sees. Neither needs admin rights. The process rules live in one file,
     download-and-run, `certutil -decode`, `mshta`, …), deleting backups, switching off the
     firewall, process injection and keyboard hooks (native functions looked up through `ctypes`),
     listing every saved Windows password, and loading compiled code outside imports (`marshal`).
-  - **Observed**: programs started and hosts contacted, once each, in the run log.
+  - ☑ **Files** (26 October): stops on reading saved keys and passwords (SSH keys, Windows
+    credentials, password databases, Outlook `.pst`/`.ost`, wallets), writing to Windows,
+    Program Files, PowerShell profiles, devstribution's data folder, other apps or the app's own
+    Python, reading another run's results, running or loading a program the run wrote itself,
+    and changing more than 50 existing files outside the output folder, the user's choices and
+    the temporary folder. What the user chose through inputs is the app's. Cloud credentials
+    (`.aws`, `.azure`, …), which cloud libraries read on their own, are reported, not stopped.
+  - **Observed**: programs started, hosts contacted and files written, deleted or moved outside
+    the run's folders, once each, in the run log. Each run ends with one line on the files it
+    changed, shown under the results as "What it did" with the hosts and programs. ricon and
+    `excel-report` run clean ("wrote 1 file in what you chose" / "in its output folder").
   - The hook runs inside the app's process: malware patching memory through `ctypes` can get
     past it. The next item does not depend on the app.
 - ☑ **Watching from the launcher** through the run's Job Object, which the app cannot hide from:

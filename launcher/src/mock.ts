@@ -378,8 +378,13 @@ export function mockApi(): Api {
             ? { report: `${record.output_dir}\\orders-2026-by-customer.xlsx`, summary: "1842 rows in 6 groups of Customer" }
             : {},
           duration_ms: Date.now() - started,
+          // What the runtime guard reported, for the result's "What it did" line.
+          guard: [
+            { action: "observe" as const, rule: "program", message: "C:\\Windows\\system32\\cmd.exe /c ver", detail: "" },
+            { action: "observe" as const, rule: "files", message: "wrote 1 file in its output folder", detail: "" },
+          ],
         };
-        Object.assign(record, { status: "ok", outputs: result.outputs, duration_ms: result.duration_ms, finished_at: now() });
+        Object.assign(record, { status: "ok", outputs: result.outputs, duration_ms: result.duration_ms, finished_at: now(), guard: result.guard });
         emit(record.id, { type: "finished", result });
         changed.forEach((l) => l());
       }, 650);
