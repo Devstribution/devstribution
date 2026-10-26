@@ -1,0 +1,159 @@
+name: Release
+
+# A tag `v<version>` builds the Windows installer and the CLI, and creates a *draft* pre-release
+# with them, their checksums and the changelog section as notes. A person reads the draft and
+# publishes it. Run by hand (Actions → Release → Run workflow), it builds everything and creates
+# no release: a dry run.
+#
+# No build caches here: a cache filled by another run could change what goes into a release.
+# Actions are pinned to commit SHAs, as in ci.yml.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The tag, the versions and the changelog agree
+        id: tag
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$REF_TYPE" = tag ]; then tag="$REF_NAME"; else tag="v$(python3 scripts/release.py version)"; fi
+          python3 scripts/release.py check "$tag" --notes notes.md
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: notes
+          path: notes.md
+
+  installer:
+    needs: check
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Launcher dependencies
+        working-directory: launcher
+        run: npm ci
+      - name: NSIS installer (the uv sidecar is fetched and hash-checked first)
+        working-directory: launcher
+        run: npx tauri build --bundles nsis -- --locked
+      - name: Collect
+        shell: bash
+        run: |
+          mkdir dist
+          cp target/release/bundle/nsis/*-setup.exe dist/
+          ls -l dist
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        if: github.ref_type == 'tag'
+        with:
+          subject-path: dist/*
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: installer
+          path: dist/*
+          if-no-files-found: error
+
+  cli:
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      - name: Build
+        run: cargo build --release --locked -p devstribution-cli --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          name="devstribution-cli-$VERSION-$TARGET"
+          mkdir -p "stage/$name" dist
+          cp README.md LICENSE-MIT LICENSE-APACHE "stage/$name/"
+          if [ "$RUNNER_OS" = Windows ]; then
+            cp "target/$TARGET/release/devstribution.exe" "stage/$name/"
+            (cd stage && 7z a -tzip "../dist/$name.zip" "$name" > /dev/null)
+          else
+            cp "target/$TARGET/release/devstribution" "stage/$name/"
+            tar -czf "dist/$name.tar.gz" -C stage "$name"
+          fi
+          ls -l dist
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        if: github.ref_type == 'tag'
+        with:
+          subject-path: dist/*
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cli-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [check, installer, cli]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: |
+          mv notes.md ../notes.md
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Draft pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          gh release create "$TAG" dist/* --verify-tag --draft --prerelease \
+            --title "devstribution $VERSION" --notes-file notes.md
