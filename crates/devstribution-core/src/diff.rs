@@ -491,7 +491,7 @@ fn highlights(d: &AppDiff) -> Vec<Highlight> {
     if removed > 0 {
         add(Severity::Info, "Asks for less than before".into());
     }
-    out.sort_by(|a, b| b.severity.cmp(&a.severity));
+    out.sort_by_key(|h| std::cmp::Reverse(h.severity));
     out
 }
 
