@@ -21,6 +21,12 @@ in [`status_quo.md`](status_quo.md); the long-term order of work is in [`roadmap
 >
 > Next: check managed mode on Windows (registry value set by hand, a trust folder only
 > administrators can write, then a network share), then signing and Phase 0.
+>
+> **Update, 26 October:** guard file rules, the update diff (`devstribution diff`) and the
+> revocation design are merged (PR #21). The roadmap is now in three stages: A, a first unsigned
+> public release; B, a signed 1.0; C, after 1.0. Signing moved behind the release: SignPath only
+> signs a project that is already released, so the next work is roadmap stage A (release
+> workflow, `v0.1.0`, code signing policy), then the application (step 2 below).
 
 1. **Managed mode, first version: no server needed.** *Done in code, to check on Windows.* This is what a company's IT will ask
    for before allowing devstribution on its PCs. Today trust is per user, on first use. The
@@ -57,7 +63,8 @@ in [`status_quo.md`](status_quo.md); the long-term order of work is in [`roadmap
      WDAC part of the plan), an ADMX template, IT countersignatures, and a revocation list.
      Like the policy, the revocation list can live on a network share.
 2. **Apply for signing:** SignPath Foundation (free for open source), with Certum's open-source
-   certificate as the fallback. Then sign in CI ([`roadmap.md`](roadmap.md), step 3).
+   certificate as the fallback, once a first unsigned release is public ([`roadmap.md`](roadmap.md),
+   stage A). Then sign in CI (stage B).
 3. **Phase 0 of [`plan.md`](plan.md):** install and run on a locked-down company PC
    (AppLocker/WDAC).
 

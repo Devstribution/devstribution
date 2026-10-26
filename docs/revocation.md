@@ -2,8 +2,9 @@
 
 How a publisher key that should no longer be trusted (lost, stolen, or used to sign malware) stops
 being trusted on every PC, without devstribution becoming a registry of publishers. Status:
-**design, agreed October 2026, not built.** It replaces the "public revocation list" idea under
-"Possibilities" in [`roadmap.md`](roadmap.md). Where [`plan.md`](plan.md) differs (the catalog
+**design, agreed October 2026, not built.** It replaces the "public revocation list" idea that was
+under "Possibilities" in [`roadmap.md`](roadmap.md); the first two build steps come before 1.0
+(roadmap, B6), the rest after. Where [`plan.md`](plan.md) differs (the catalog
 key signing the list), this page wins.
 
 ## Decisions
