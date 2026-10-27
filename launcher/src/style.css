@@ -744,3 +744,7 @@ kbd { font: inherit; font-size: var(--fs-xs); border: 1px solid var(--border-str
 ::-webkit-scrollbar-thumb:hover { background-color: var(--scroll-thumb-hover); }
 ::-webkit-scrollbar-button { display: none; }
 .log::-webkit-scrollbar-thumb { background-color: rgba(212, 212, 216, 0.22); }
+
+/* Shown instead of a blank window when the launcher cannot set itself up. */
+.startup-error { margin: auto; }
+.failure-fill { display: grid; place-items: center; min-height: 100%; padding: var(--sp-6); }

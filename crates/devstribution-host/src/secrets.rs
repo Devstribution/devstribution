@@ -7,7 +7,7 @@ const SERVICE: &str = "devstribution";
 
 fn entry(app_id: &str, name: &str) -> Result<keyring::Entry> {
     keyring::Entry::new(SERVICE, &format!("{app_id}/{name}"))
-        .context("cannot open the system credential store")
+        .context("cannot open the system credential store (Credential Manager on Windows), where secrets are kept")
 }
 
 pub fn get(app_id: &str, name: &str) -> Result<Option<String>> {

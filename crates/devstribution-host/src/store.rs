@@ -468,9 +468,9 @@ impl Store {
 
     fn load(&self) -> Result<State> {
         match fs::read(self.state_file()) {
-            Ok(data) => serde_json::from_slice(&data).context("reading state.json"),
+            Ok(data) => serde_json::from_slice(&data).context(STATE_UNREADABLE),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(State::default()),
-            Err(e) => Err(e).context("reading state.json"),
+            Err(e) => Err(e).context(STATE_UNREADABLE),
         }
     }
 
@@ -478,7 +478,9 @@ impl Store {
         let path = self.state_file();
         let tmp = path.with_extension("json.tmp");
         fs::write(&tmp, serde_json::to_vec_pretty(state)?)?;
-        fs::rename(&tmp, &path).context("saving state.json")
+        fs::rename(&tmp, &path).context(
+            "cannot save the list of installed apps (state.json): check that the data folder can be written and has free space",
+        )
     }
 
     /// Loads the state, lets `f` change it and saves it, all under the state lock. Nothing is
@@ -726,10 +728,10 @@ impl Store {
     /// A package waiting on the confirmation screen, as `inspect` described it.
     pub fn pending(&self, token: &str) -> Result<PendingInstall> {
         if !is_token(token) {
-            bail!("invalid install token");
+            bail!("this install is no longer valid: open the package again");
         }
         let data = fs::read(self.paths.staging().join(token).join("pending.json"))
-            .context("this install is no longer pending")?;
+            .context("this install is no longer pending: open the package again")?;
         Ok(serde_json::from_slice(&data)?)
     }
 
@@ -753,16 +755,15 @@ impl Store {
         on_step: &mut dyn FnMut(InstallStep),
     ) -> Result<InstalledApp> {
         if !is_token(token) {
-            bail!("invalid install token");
+            bail!("this install is no longer valid: open the package again");
         }
         let stage = self.paths.staging().join(token);
-        let (pending_sha256, files) = self
-            .staged()
-            .get(token)
-            .cloned()
-            .ok_or_else(|| anyhow!("this install is no longer pending"))?;
-        let data =
-            fs::read(stage.join("pending.json")).context("this install is no longer pending")?;
+        let (pending_sha256, files) =
+            self.staged().get(token).cloned().ok_or_else(|| {
+                anyhow!("this install is no longer pending: open the package again")
+            })?;
+        let data = fs::read(stage.join("pending.json"))
+            .context("this install is no longer pending: open the package again")?;
         if sha256(&data) != pending_sha256 {
             bail!("the install was changed after the confirmation screen: open the package again");
         }
@@ -1784,6 +1785,9 @@ fn run_files(dir: &Path, with_record: bool) -> Vec<(String, u64)> {
 fn fingerprint_of(key: &str) -> Option<String> {
     parse_public_key(key).ok().map(|k| public_key_id(&k))
 }
+
+/// What a user sees when `state.json` cannot be read: what it is, and what to do about it.
+const STATE_UNREADABLE: &str = "the list of installed apps (state.json) cannot be read. If the file is damaged, close devstribution and move it out of the state folder: it then starts with no apps, and you install them again";
 
 fn is_token(token: &str) -> bool {
     token.len() == 24 && token.bytes().all(|b| b.is_ascii_hexdigit())

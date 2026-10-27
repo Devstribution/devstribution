@@ -87,8 +87,7 @@ function changeRows(d: AppDiff): HTMLElement[] {
 }
 
 /** A package the organisation's policy refuses: why, who to ask, and a ready-to-send request. */
-function blockedScreen(ctx: Ctx, p: PendingInstall, modal: HTMLElement, overlay: HTMLElement) {
-  const close = () => { ctx.api.discardInstall(p.token); overlay.remove(); };
+function blockedScreen(ctx: Ctx, p: PendingInstall, modal: HTMLElement, close: () => void) {
   const contact = p.blocked?.contact;
   const save = async () => {
     try {
@@ -124,32 +123,46 @@ export async function installFlow(ctx: Ctx, path?: string) {
   const chosen = path ?? (await ctx.api.pickPackage());
   if (!chosen) return;
 
-  const modal = h("div", { class: "modal", role: "dialog", "aria-label": "Install app" });
+  const modal = h("div", { class: "modal", role: "dialog", "aria-modal": "true", "aria-label": "Install app" });
   const overlay = h("div", { class: "overlay" }, modal);
+  // What Escape does right now; null while the install runs, which cannot be stopped yet.
+  let dismiss: (() => void) | null = null;
+  const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && dismiss) dismiss(); };
+  const end = () => { document.removeEventListener("keydown", onKey); overlay.remove(); };
+  document.addEventListener("keydown", onKey);
   document.body.appendChild(overlay);
-  clear(modal, h("div", { class: "modal-body loading" }, icon(Loader, 26, "spin"), h("div", { class: "muted" }, "Checking the package…")));
+
+  let cancelled = false;
+  dismiss = () => { cancelled = true; end(); };
+  clear(modal,
+    h("div", { class: "modal-body loading" }, icon(Loader, 26, "spin"), h("div", { class: "muted" }, "Checking the package…")),
+    h("div", { class: "modal-foot" }, h("button", { class: "btn", onclick: () => dismiss?.() }, "Cancel")));
 
   let p: PendingInstall;
   try {
     p = await ctx.api.inspectPackage(chosen);
   } catch (e) {
+    if (cancelled) return;
+    dismiss = end;
     clear(modal,
       h("div", { class: "modal-head center" }, h("div", { class: "modal-icon red" }, icon(ShieldAlert, 26)),
         h("div", null, h("h2", null, "This app can’t be installed"), h("div", { class: "muted" }, chosen.split(/[\\/]/).pop()))),
       h("div", { class: "modal-body" }, h("div", { class: "error-box" }, errorText(e)),
         h("div", { class: "muted small" }, "Nothing was installed. If you expected this file to work, contact its publisher.")),
-      h("div", { class: "modal-foot" }, h("button", { class: "btn primary", onclick: () => overlay.remove() }, "Close")));
+      h("div", { class: "modal-foot" }, h("button", { class: "btn primary", onclick: end }, "Close")));
     return;
   }
+  if (cancelled) { ctx.api.discardInstall(p.token); return; }
 
-  const cancel = () => { ctx.api.discardInstall(p.token); overlay.remove(); };
+  const cancel = () => { ctx.api.discardInstall(p.token); end(); };
+  dismiss = cancel;
   const actionLabel = p.action === "update" ? `Update from v${p.installed_version}` : p.action === "reinstall" ? "Reinstall" : "Install";
   const verb = p.action === "update" ? "Update" : p.action === "reinstall" ? "Reinstall" : "Install";
   const newPublisher = p.trust === "new_publisher";
   const internet = p.origin && p.origin.zone_id >= 3;
   const danger = p.scan.findings.some((f) => f.severity === "danger");
   const asksMore = p.changes ? widened(p.changes) : false;
-  if (p.blocked) return blockedScreen(ctx, p, modal, overlay);
+  if (p.blocked) return blockedScreen(ctx, p, modal, cancel);
 
   clear(modal,
     h("div", { class: "modal-head center" },
@@ -226,7 +239,8 @@ export async function installFlow(ctx: Ctx, path?: string) {
     clear(modal,
       h("div", { class: "modal-head" }, appIcon(p, "lg"), h("div", null, h("h2", null, `Installing ${p.title}`), h("div", { class: "muted" }, `version ${p.version}`))),
       h("div", { class: "modal-body" }, list),
-      h("div", { class: "modal-foot" }));
+      h("div", { class: "modal-foot" }, h("span", { class: "muted small grow" }, "This can take a few minutes the first time, and can’t be stopped once it has started.")));
+    dismiss = null;
     const unlisten = await ctx.api.onInstallStep((e) => {
       if (e.key !== p.token && e.key !== "demo") return;
       active = e.step;
@@ -240,12 +254,13 @@ export async function installFlow(ctx: Ctx, path?: string) {
       unlisten();
       await ctx.refresh();
       const foot = modal.querySelector(".modal-foot")!;
+      dismiss = end;
       clear(foot,
-        h("button", { class: "btn", onclick: () => overlay.remove() }, "Close"),
-        h("button", { class: "btn primary", onclick: () => { overlay.remove(); ctx.openApp(app.id); } }, "Open app"));
+        h("button", { class: "btn", onclick: end }, "Close"),
+        h("button", { class: "btn primary", onclick: () => { end(); ctx.openApp(app.id); } }, "Open app"));
     } catch (e) {
       unlisten();
-      overlay.remove();
+      end();
       toast(`Installation failed: ${errorText(e)}`, "error");
     }
   }
