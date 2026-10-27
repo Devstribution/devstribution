@@ -17,9 +17,14 @@ pub const PROCESS_RULES: &str =
 
 const FILES: &[(&str, &str)] = &[
     ("bootstrap.py", include_str!("../../../runner/bootstrap.py")),
+    ("child.py", include_str!("../../../runner/child.py")),
     (
         "devstribution_runner/__init__.py",
         include_str!("../../../runner/devstribution_runner/__init__.py"),
+    ),
+    (
+        "devstribution_runner/_child.py",
+        include_str!("../../../runner/devstribution_runner/_child.py"),
     ),
     (
         "devstribution_runner/_com.py",

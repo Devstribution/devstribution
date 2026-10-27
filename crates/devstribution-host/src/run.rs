@@ -29,6 +29,66 @@ const MAX_LINE: usize = 16 * 1024;
 /// Size at which `app.log` stops growing for the run.
 const MAX_LOG_BYTES: u64 = 20 << 20;
 
+/// The variables an app gets from the launcher's environment; every other one is left out.
+/// What Windows programs, COM and Python need to find the system, the user's folders, the
+/// proxy and the display. Anything else a session may hold (cloud keys, `GITHUB_TOKEN`, API
+/// keys) is a credential the app did not declare: secrets reach an app only as declared.
+const RUN_ENV: &[&str] = &[
+    "SYSTEMROOT",
+    "SYSTEMDRIVE",
+    "WINDIR",
+    "COMSPEC",
+    "PATH",
+    "PATHEXT",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "USERNAME",
+    "USERDOMAIN",
+    "USERDNSDOMAIN",
+    "LOGONSERVER",
+    "COMPUTERNAME",
+    "SESSIONNAME",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "PROGRAMDATA",
+    "ALLUSERSPROFILE",
+    "PUBLIC",
+    "ONEDRIVE",
+    "ONEDRIVECOMMERCIAL",
+    "ONEDRIVECONSUMER",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "PROGRAMW6432",
+    "COMMONPROGRAMFILES",
+    "COMMONPROGRAMFILES(X86)",
+    "COMMONPROGRAMW6432",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "HOME",
+    "OS",
+    "PROCESSOR_ARCHITECTURE",
+    "PROCESSOR_IDENTIFIER",
+    "NUMBER_OF_PROCESSORS",
+    "LANG",
+    "LC_ALL",
+    "TZ",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    // Outside Windows (development): the display, for `gui` apps.
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "XDG_RUNTIME_DIR",
+];
+
+fn kept_for_run(name: &str) -> bool {
+    RUN_ENV.iter().any(|kept| kept.eq_ignore_ascii_case(name))
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RunEvent {
@@ -180,8 +240,15 @@ fn start_message(spec: &RunSpec) -> Value {
             "own": [spec.run_dir, spec.pycache_dir],
             "protected": [spec.data_dir],
             "private": [spec.data_dir.join("runs")],
+            "child_dir": child_dir(&spec.run_dir),
         },
     })
+}
+
+/// Where the runner puts the settings and reports of the other Pythons the app starts: a folder
+/// the guard seals (`runner/devstribution_runner/_child.py`).
+fn child_dir(run_dir: &Path) -> PathBuf {
+    run_dir.join("guard")
 }
 
 enum Control {
@@ -225,6 +292,17 @@ impl RunHandle {
 /// A COM server process registered by the app: (pid, creation time).
 type ComProcess = (u32, Option<u64>);
 
+/// Whether a command line is that of a program Windows started as a COM server: COM adds
+/// `-Embedding` (or `/Embedding`). A program the user opened has no such flag, so a process
+/// the app names (the runner shares the app's process, and can be told anything) is ended
+/// only if COM started it, never because the app asked.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn started_by_com(command_line: &str) -> bool {
+    command_line
+        .split_whitespace()
+        .any(|arg| arg.eq_ignore_ascii_case("-embedding") || arg.eq_ignore_ascii_case("/embedding"))
+}
+
 pub type EventSink = Arc<dyn Fn(RunEvent) + Send + Sync>;
 
 pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
@@ -250,9 +328,13 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
     // `-X utf8`: the app's output reaches the launcher as UTF-8 whatever the Windows code page.
     // `-S`: the runner loads `site` itself, after the runtime guard, so the code dependencies
     // run from `.pth` files when Python starts is checked too.
-    cmd.args(["-I", "-S", "-X", "utf8"])
+    // `-B`: no `__pycache__` in the runner's folder, which is checked to hold exactly the
+    // runner's files before each run; the runner turns caching back on for the app's code.
+    cmd.args(["-I", "-S", "-B", "-X", "utf8"])
         .arg(spec.runner_dir.join("bootstrap.py"))
         .current_dir(&spec.run_dir)
+        .env_clear()
+        .envs(std::env::vars_os().filter(|(k, _)| k.to_str().is_some_and(kept_for_run)))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -304,8 +386,23 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
     {
         let report = report.clone();
         let allowed = spec.guard_allow.clone();
+        let pythons = guard::PythonCheck::new(
+            &spec.runner_dir,
+            &child_dir(&spec.run_dir).join("config.json"),
+        );
         job.watch(child.id(), move |event| match event {
             JobEvent::NewProcess { command } => {
+                // Another Python the guard is not in: started through a shell, `ctypes` or
+                // the `py` launcher, which the runner could not rewrite.
+                if pythons.outside_guard(&command) {
+                    let allowed = allowed.iter().any(|r| r == "unguarded-python");
+                    report(GuardHit {
+                        action: if allowed { "observe" } else { "stop" }.into(),
+                        rule: "unguarded-python".into(),
+                        message: "started Python in a way devstribution cannot check".into(),
+                        detail: command.chars().take(500).collect(),
+                    });
+                }
                 if let Some(rule) = guard::match_process(&command, guard::process_rules()) {
                     let allowed = allowed.contains(&rule.id);
                     report(GuardHit {
@@ -902,8 +999,12 @@ mod platform {
         }
     }
 
-    /// Terminates `pid` only if it is still the process created at `created` (PIDs are reused).
+    /// Terminates `pid` only if it is still the process created at `created` (PIDs are reused)
+    /// and COM started it ([`super::started_by_com`]).
     pub fn terminate_if_same(pid: u32, created: Option<u64>) {
+        if !command_line(pid).is_some_and(|c| super::started_by_com(&c)) {
+            return;
+        }
         let Some(created) = created else { return };
         unsafe {
             let h = OpenProcess(
@@ -964,6 +1065,42 @@ mod platform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_com_servers_are_ended() {
+        let excel = r#""C:\Program Files\Microsoft Office\root\Office16\EXCEL.EXE""#;
+        assert!(started_by_com(&format!("{excel} /automation -Embedding")));
+        assert!(started_by_com(r"C:\x\WINWORD.EXE /Automation /EMBEDDING"));
+        assert!(!started_by_com(&format!(
+            r#"{excel} "C:\docs\clients.xlsx""#
+        )));
+        assert!(!started_by_com(&format!(
+            r"{excel} C:\docs\-Embedding-notes.xlsx"
+        )));
+    }
+
+    #[test]
+    fn runs_get_only_the_listed_environment() {
+        for kept in [
+            "Path",
+            "SystemRoot",
+            "APPDATA",
+            "ProgramFiles(x86)",
+            "https_proxy",
+        ] {
+            assert!(kept_for_run(kept), "{kept}");
+        }
+        for left in [
+            "AWS_SECRET_ACCESS_KEY",
+            "GITHUB_TOKEN",
+            "OPENAI_API_KEY",
+            "PYTHONPATH",
+            "VIRTUAL_ENV",
+            "UV_INDEX_URL",
+        ] {
+            assert!(!kept_for_run(left), "{left}");
+        }
+    }
 
     #[test]
     fn forged_results_are_trimmed_to_what_the_manifest_declares() {

@@ -631,6 +631,12 @@ fn extract_inner(package: &Path, dest: &Path, opts: &VerifyOptions) -> Result<Ve
     let lock =
         fs::read_to_string(dest.join(UV_LOCK)).map_err(|e| Error::io(dest.join(UV_LOCK), e))?;
     crate::lock::check_sources(&lock)?;
+    // The rest of what `pack` checks in the lockfile, for packages not made by our `pack`: a
+    // wheel for every declared platform, no package that would have to be built from source.
+    let report = check_lock(&lock, &manifest.name, &manifest.platforms)?;
+    if !report.errors.is_empty() {
+        return Err(Error::Lock(report.errors.join("; ")));
+    }
     // The version as written, not only its value: `1.2` and `1.2.0` are not the same text.
     if comment.id != manifest.id
         || comment.version.to_string() != manifest.version.to_string()
@@ -671,6 +677,52 @@ fn extract_inner(package: &Path, dest: &Path, opts: &VerifyOptions) -> Result<Ve
         content_hash: content_hash(&list_data),
         content_sha256: hex::encode(sha256(&list_data)),
     })
+}
+
+/// Checks that `dir`, extracted and verified earlier, still holds exactly the files of `list`
+/// with their content: nothing changed, added or removed since, and no links.
+pub fn verify_extracted(dir: &Path, list: &FilesList) -> Result<()> {
+    let changed = |what: String| {
+        Error::Package(format!(
+            "the app's files changed after they were checked: {what}"
+        ))
+    };
+    let mut found = 0usize;
+    for entry in walkdir::WalkDir::new(dir).follow_links(false) {
+        let entry = entry.map_err(|e| Error::io(e.path().unwrap_or(dir).to_owned(), e.into()))?;
+        if entry.depth() == 0 || entry.file_type().is_dir() {
+            continue;
+        }
+        let rel = entry
+            .path()
+            .strip_prefix(dir)
+            .expect("walkdir stays inside dir")
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+        if !entry.file_type().is_file() {
+            return Err(changed(format!("`{rel}` is not a regular file")));
+        }
+        let expected = list
+            .get(&rel)
+            .ok_or_else(|| changed(format!("`{rel}` was added")))?;
+        let mut sink = io::sink();
+        let mut hasher = HashingWriter {
+            inner: &mut sink,
+            hasher: Sha256::new(),
+        };
+        let mut file = fs::File::open(entry.path()).map_err(|e| Error::io(entry.path(), e))?;
+        io::copy(&mut file, &mut hasher).map_err(|e| Error::io(entry.path(), e))?;
+        if <[u8; 32]>::from(hasher.hasher.finalize()) != *expected {
+            return Err(changed(format!("`{rel}` was modified")));
+        }
+        found += 1;
+    }
+    if found != list.len() {
+        return Err(changed("files were removed".into()));
+    }
+    Ok(())
 }
 
 fn preview(paths: &[&str]) -> String {
@@ -822,6 +874,35 @@ source = { virtual = "." }
             unchecked.signature,
             SignatureStatus::NewKey { .. }
         ));
+    }
+
+    #[test]
+    fn extracted_files_are_checked_again() {
+        let f = fixture();
+        let pkg = f.pack();
+        let dest = f.dir.path().join("checked");
+        let v = extract_and_verify(
+            &pkg,
+            &dest,
+            &VerifyOptions {
+                trusted_key: None,
+                limits: Limits::default(),
+            },
+        )
+        .unwrap();
+        verify_extracted(&dest, &v.files).unwrap();
+        let original = fs::read(dest.join("main.py")).unwrap();
+
+        fs::write(dest.join("main.py"), "print('changed')").unwrap();
+        let err = verify_extracted(&dest, &v.files).unwrap_err().to_string();
+        assert!(err.contains("`main.py` was modified"), "{err}");
+        fs::remove_file(dest.join("main.py")).unwrap();
+        let err = verify_extracted(&dest, &v.files).unwrap_err().to_string();
+        assert!(err.contains("removed"), "{err}");
+        fs::write(dest.join("main.py"), original).unwrap();
+        fs::write(dest.join("pkg").join("extra.py"), "").unwrap();
+        let err = verify_extracted(&dest, &v.files).unwrap_err().to_string();
+        assert!(err.contains("`pkg/extra.py` was added"), "{err}");
     }
 
     fn packed_paths(f: &Fixture) -> Vec<String> {

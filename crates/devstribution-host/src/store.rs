@@ -9,6 +9,7 @@ use std::sync::Mutex;
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
 use devstribution_core::diff::{self, AppDiff, AppFolder};
+use devstribution_core::files::{FilesList, sha256};
 use devstribution_core::manifest::{AppId, Kind, Manifest, Version};
 use devstribution_core::package::{
     self, Limits, PYPROJECT, SignatureStatus, VerifiedPackage, VerifyOptions,
@@ -66,7 +67,7 @@ pub struct AppRecord {
     pub policy_approved: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Quarantine {
     pub run_id: String,
     pub at: u64,
@@ -266,6 +267,13 @@ pub struct Store {
     state_lock: Mutex<()>,
     /// Managed mode's policy, read when the store opens; `None` in free mode.
     policy: Option<Policy>,
+    /// Guard stops that `state.json` could not record (disk full, a file held by an
+    /// antivirus): the app stays blocked from memory, and each later state change tries again.
+    unsaved_stops: Mutex<BTreeMap<String, Quarantine>>,
+    /// Packages on the confirmation screen, by token: the SHA-256 of their `pending.json` and
+    /// their verified file list. The staging folder can be written by anything the user runs,
+    /// so install checks both against these before trusting what is there.
+    staged: Mutex<BTreeMap<String, ([u8; 32], FilesList)>>,
 }
 
 /// This launcher's version, compared with the policy's minimum.
@@ -292,6 +300,8 @@ impl Store {
             paths,
             state_lock: Mutex::new(()),
             policy: Policy::from_system(),
+            unsaved_stops: Mutex::new(BTreeMap::new()),
+            staged: Mutex::new(BTreeMap::new()),
         };
         store.close_interrupted_runs();
         Ok(store)
@@ -491,6 +501,9 @@ impl Store {
             None => Trust::NewPublisher,
         };
         let mut record = record.clone();
+        if record.quarantine.is_none() {
+            record.quarantine = self.unsaved_stops().get(&record.id).cloned();
+        }
         // Records and pins from older versions hold minisign's key number; show the fingerprint.
         if let Some(fp) = pin.and_then(|p| fingerprint_of(&p.key)) {
             record.key_id = fp;
@@ -656,7 +669,10 @@ impl Store {
             content_hash: verified.content_hash.clone(),
             content_sha256: verified.content_sha256.clone(),
         };
-        fs::write(stage.join("pending.json"), serde_json::to_vec(&pending)?)?;
+        let data = serde_json::to_vec(&pending)?;
+        fs::write(stage.join("pending.json"), &data)?;
+        self.staged()
+            .insert(token.to_string(), (sha256(&data), verified.files.clone()));
         Ok(pending)
     }
 
@@ -672,8 +688,15 @@ impl Store {
 
     pub fn discard(&self, token: &str) {
         if is_token(token) {
+            self.staged().remove(token);
             let _ = fs::remove_dir_all(self.paths.staging().join(token));
         }
+    }
+
+    fn staged(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, ([u8; 32], FilesList)>> {
+        self.staged
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Installs a staged package after the user confirmed it.
@@ -686,9 +709,17 @@ impl Store {
             bail!("invalid install token");
         }
         let stage = self.paths.staging().join(token);
-        let pending: PendingInstall = serde_json::from_slice(
-            &fs::read(stage.join("pending.json")).context("this install is no longer pending")?,
-        )?;
+        let (pending_sha256, files) = self
+            .staged()
+            .get(token)
+            .cloned()
+            .ok_or_else(|| anyhow!("this install is no longer pending"))?;
+        let data =
+            fs::read(stage.join("pending.json")).context("this install is no longer pending")?;
+        if sha256(&data) != pending_sha256 {
+            bail!("the install was changed after the confirmation screen: open the package again");
+        }
+        let pending: PendingInstall = serde_json::from_slice(&data)?;
         let id: AppId = pending.id.parse().map_err(|e: String| anyhow!(e))?;
         let version: Version = pending.version.parse().map_err(|e: String| anyhow!(e))?;
         // The checks of the confirmation screen again, against the state as it is now: another
@@ -738,12 +769,15 @@ impl Store {
             step: "files",
             message: "Copying the verified files".into(),
         });
+        // The files as the confirmation screen showed them, checked again just before the move.
+        package::verify_extracted(&stage.join("app"), &files)?;
         if app_dir.exists() {
             fs::remove_dir_all(&app_dir)?;
         }
         fs::create_dir_all(app_dir.parent().expect("has a parent"))?;
         fs::rename(stage.join("app"), &app_dir).context("moving the app into place")?;
         let _ = fs::remove_dir_all(&stage);
+        self.staged().remove(token);
 
         on_step(InstallStep {
             step: "environment",
@@ -914,6 +948,8 @@ impl Store {
         inputs: &Map<String, Value>,
         runner_dir: &Path,
     ) -> Result<(RunSpec, RunRecord)> {
+        // A stop still in memory blocks the app either way (`describe`); keep trying to save it.
+        let _ = self.save_unsaved_stops();
         let app = self.app(id)?;
         let key = self.publisher_key(&app.record, &app.app_dir);
         let reasons = self.policy_reasons(
@@ -1025,20 +1061,62 @@ impl Store {
         record.outputs = result.outputs.clone();
         record.error = result.error.clone();
         record.guard = result.guard.clone();
+        let mut stop_unsaved = None;
         if let Some(hit) = result.guard_stop() {
             let quarantine = Quarantine {
                 run_id: record.id.clone(),
                 at: now_secs(),
                 hit: hit.clone(),
             };
-            self.update_state(|state| {
-                if let Some(app) = state.apps.get_mut(&record.app_id) {
-                    app.quarantine = Some(quarantine);
+            self.unsaved_stops()
+                .insert(record.app_id.clone(), quarantine);
+            stop_unsaved = self.save_unsaved_stops().err();
+        }
+        // The run is recorded even when the stop could not be: it says what the app did.
+        let saved = self.save_run(record);
+        match stop_unsaved {
+            Some(e) => Err(e.context(
+                "the app was stopped, but the launcher could not record it;                  it stays blocked until the launcher is closed",
+            )),
+            None => saved,
+        }
+    }
+
+    fn unsaved_stops(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Quarantine>> {
+        self.unsaved_stops
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Writes the guard stops not yet in `state.json`, trying a few times: nothing may run the
+    /// app before its stop is recorded. Those still unsaved stay blocked from memory.
+    fn save_unsaved_stops(&self) -> Result<()> {
+        let pending = self.unsaved_stops().clone();
+        if pending.is_empty() {
+            return Ok(());
+        }
+        let mut last = None;
+        for attempt in 0..3 {
+            if attempt > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            match self.update_state(|state| {
+                for (id, q) in &pending {
+                    if let Some(app) = state.apps.get_mut(id) {
+                        app.quarantine = Some(q.clone());
+                    }
                 }
                 Ok(())
-            })?;
+            }) {
+                Ok(()) => {
+                    let mut unsaved = self.unsaved_stops();
+                    unsaved.retain(|id, q| pending.get(id) != Some(q));
+                    return Ok(());
+                }
+                Err(e) => last = Some(e),
+            }
         }
-        self.save_run(record)
+        Err(last.expect("at least one attempt"))
     }
 
     /// The guard rules that only report for this app: the ones the user allowed after a stop,
@@ -1077,12 +1155,14 @@ impl Store {
                     .unwrap_or_default()
             );
         }
+        let _ = self.save_unsaved_stops();
+        let unsaved = self.unsaved_stops().get(id).cloned();
         self.update_state(|state| {
             let app = state
                 .apps
                 .get_mut(id)
                 .ok_or_else(|| anyhow!("`{id}` is not installed"))?;
-            if let Some(q) = app.quarantine.take()
+            if let Some(q) = app.quarantine.take().or(unsaved)
                 && allow
                 && !app.guard_allow.contains(&q.hit.rule)
             {
@@ -1090,6 +1170,7 @@ impl Store {
             }
             Ok(())
         })?;
+        self.unsaved_stops().remove(id);
         self.app(id)
     }
 

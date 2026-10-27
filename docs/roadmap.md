@@ -214,12 +214,18 @@ on what it sees. Neither needs admin rights. The process rules live in one file,
     the run's folders, once each, in the run log. Each run ends with one line on the files it
     changed, shown under the results as "What it did" with the hosts and programs. ricon and
     `excel-report` run clean ("wrote 1 file in what you chose" / "in its output folder").
+  - ☑ **Other Pythons** (27 October): a Python the app starts through `subprocess` or
+    `multiprocessing` starts as `python -I -S -B … child.py <settings> …`, so the same guard is
+    installed before its code runs. The settings sit in a folder the guard seals, and the
+    children's reports reach the launcher through the runner: a stop in a child ends the run.
+    A Python started any other way (a shell, `os.system`, a second runner) is stopped.
   - The hook runs inside the app's process: malware patching memory through `ctypes` can get
     past it. The next item does not depend on the app.
 - ☑ **Watching from the launcher** through the run's Job Object, which the app cannot hide from:
   - every new process (`JOB_OBJECT_MSG_NEW_PROCESS`): its command line is read and checked
     against the same rules, so a program started straight through the Windows API is still
-    caught (it has started by then; it is ended at once with the rest of the tree);
+    caught (it has started by then; it is ended at once with the rest of the tree), and so is
+    a Python that is not the runner or a guarded child;
   - at most 128 processes at once (no fork bombs), and UI restrictions: no switching desktops,
     changing display or system settings, or logging off. Not the clipboard (apps that paste
     need it) and no memory limit (pandas apps legitimately use a lot): both would break real

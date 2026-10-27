@@ -119,6 +119,14 @@ fn install_run_update_and_refusals() {
     assert_eq!(*events.lock().unwrap(), ["greeting"]);
     store.finish_run(&mut record, &result).unwrap();
     assert_eq!(store.runs(None, 10).unwrap()[0].status, RunStatus::Ok);
+    // The run left the runner's folder as installed (no `__pycache__`), so the check before
+    // the next run does not rewrite it under another run that is still using it.
+    assert!(
+        !runner_dir
+            .join("devstribution_runner")
+            .join("__pycache__")
+            .exists()
+    );
     let stats = store.stats(14).unwrap();
     assert_eq!((stats.runs, stats.ok, stats.per_day.len()), (1, 1, 14));
     assert_eq!(stats.usage.len(), 1);
@@ -214,6 +222,51 @@ fn stale_confirmations_are_checked_again() {
     );
     assert!(err.contains("older"), "{err}");
     assert_eq!(store.app("alice/hello").unwrap().record.version, "2.0.0");
+}
+
+/// What the confirmation screen showed is what gets installed: staged files and the pending
+/// record changed in between (anything the user runs can write the data folder) are refused.
+#[test]
+fn staged_installs_changed_after_confirmation_are_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Store::open(Paths {
+        root: tmp.path().join("home"),
+    })
+    .unwrap();
+    write_app(&tmp.path().join("src"), "1.0.0");
+    let pkg = tmp.path().join("app.dsapp");
+    pack(&tmp.path().join("src"), &signer(), &pkg).unwrap();
+    let staging = store.paths.staging();
+
+    let pending = store.inspect(&pkg).unwrap();
+    fs::write(
+        staging.join(&pending.token).join("app").join("main.py"),
+        "evil = 1",
+    )
+    .unwrap();
+    let err = format!(
+        "{:#}",
+        store.install(&pending.token, &mut |_| {}).unwrap_err()
+    );
+    assert!(err.contains("`main.py` was modified"), "{err}");
+
+    let pending = store.inspect(&pkg).unwrap();
+    let record = staging.join(&pending.token).join("pending.json");
+    // Any change: here only a space, which still parses.
+    let text = fs::read_to_string(&record).unwrap();
+    fs::write(&record, format!("{text} ")).unwrap();
+    let err = format!(
+        "{:#}",
+        store.install(&pending.token, &mut |_| {}).unwrap_err()
+    );
+    assert!(
+        err.contains("changed after the confirmation screen"),
+        "{err}"
+    );
+    assert!(store.installed().unwrap().is_empty());
+
+    let pending = store.inspect(&pkg).unwrap();
+    store.install(&pending.token, &mut |_| {}).unwrap();
 }
 
 /// A byte that is not UTF-8 or a huge line in the app's output must not end the run, and a
@@ -522,11 +575,8 @@ fn run_recorded(store: &Store) -> anyhow::Result<run::RunResult> {
     Ok(result)
 }
 
-/// The runtime guard stops an app that loads hidden code, the app is quarantined until the
-/// user decides, and allowing the rule lets it run (still reported).
-#[test]
-fn guard_stop_quarantines_until_allowed() {
-    const HIDDEN: &str = r#"
+/// An app the runtime guard stops: it loads hidden compiled code.
+const HIDDEN: &str = r#"
 import marshal
 
 def run(name: str, ctx) -> dict:
@@ -535,6 +585,11 @@ def run(name: str, ctx) -> dict:
     out.write_text("hi")
     return {"greeting": out}
 "#;
+
+/// The runtime guard stops an app that loads hidden code, the app is quarantined until the
+/// user decides, and allowing the rule lets it run (still reported).
+#[test]
+fn guard_stop_quarantines_until_allowed() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::open(Paths {
         root: tmp.path().join("home"),
@@ -565,6 +620,112 @@ def run(name: str, ctx) -> dict:
     let result = run_recorded(&store).unwrap();
     assert_eq!(result.status, RunStatus::Ok, "{:?}", result.error);
     assert!(result.guard.iter().any(|h| h.rule == "allowed"));
+}
+
+/// Another Python the app starts runs under the guard too: what it does stops the whole run and
+/// quarantines the app, as if the app had done it.
+#[test]
+fn child_pythons_run_under_the_guard() {
+    const CHILD: &str = r#"
+import subprocess, sys
+
+def run(name: str, ctx) -> dict:
+    key = ctx.output_dir.parent / "home" / ".ssh" / "id_ed25519"
+    subprocess.run([sys.executable, "-c", "import sys; open(sys.argv[1], 'rb').read()", str(key)])
+    import time
+    time.sleep(20)
+    out = ctx.output_dir / "greeting.txt"
+    out.write_text("hi")
+    return {"greeting": out}
+"#;
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Store::open(Paths {
+        root: tmp.path().join("home"),
+    })
+    .unwrap();
+    install_app(&store, tmp.path(), CHILD);
+
+    let runner_dir = runner::install(&store.paths).unwrap();
+    let (spec, mut record) = store
+        .prepare_run("alice/hello", &Map::new(), &runner_dir)
+        .unwrap();
+    // A saved key, where the app looks for it (made here: the app itself may not write it).
+    let ssh = spec.run_dir.join("home").join(".ssh");
+    fs::create_dir_all(&ssh).unwrap();
+    fs::write(ssh.join("id_ed25519"), "key").unwrap();
+    let started = std::time::Instant::now();
+    let result = run::start(spec, Arc::new(|_| {})).unwrap().wait();
+    store.finish_run(&mut record, &result).unwrap();
+    let stop = result.guard_stop().expect("the child's stop ends the run");
+    assert_eq!(stop.rule, "saved-secrets", "{:?}", result.guard);
+    assert!(started.elapsed() < std::time::Duration::from_secs(15));
+    let app = store.app("alice/hello").unwrap();
+    assert_eq!(app.record.quarantine.unwrap().hit.rule, "saved-secrets");
+}
+
+/// A Python started behind the runner's back (straight through the Windows API, so not
+/// rewritten to start guarded) is found in the Job Object and ends the run.
+#[cfg(windows)]
+#[test]
+fn job_object_stops_pythons_outside_the_guard() {
+    const SNEAKY: &str = r#"
+import ctypes, sys, time
+
+def run(name: str, ctx) -> dict:
+    command = f'"{sys.executable}" -c "import time; time.sleep(30)"'
+    ctypes.windll.kernel32.WinExec(command.encode("mbcs"), 0)
+    time.sleep(20)
+    out = ctx.output_dir / "greeting.txt"
+    out.write_text("hi")
+    return {"greeting": out}
+"#;
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Store::open(Paths {
+        root: tmp.path().join("home"),
+    })
+    .unwrap();
+    install_app(&store, tmp.path(), SNEAKY);
+    let started = std::time::Instant::now();
+    let result = run_recorded(&store).unwrap();
+    let stop = result
+        .guard_stop()
+        .expect("stopped by the Job Object watch");
+    assert_eq!(stop.rule, "unguarded-python", "{:?}", result.guard);
+    assert!(started.elapsed() < std::time::Duration::from_secs(15));
+}
+
+/// A stop that `state.json` cannot record (here a folder where its temporary file goes) still
+/// blocks the app, is saved as soon as the state can be written, and the run is recorded.
+#[test]
+fn guard_stop_holds_when_the_state_cannot_be_saved() {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = Paths {
+        root: tmp.path().join("home"),
+    };
+    let store = Store::open(paths.clone()).unwrap();
+    install_app(&store, tmp.path(), HIDDEN);
+
+    let runner_dir = runner::install(&store.paths).unwrap();
+    let (spec, mut record) = store
+        .prepare_run("alice/hello", &Map::new(), &runner_dir)
+        .unwrap();
+    let result = run::start(spec, Arc::new(|_| {})).unwrap().wait();
+    let blocker = store.paths.state().join("state.json.tmp");
+    fs::create_dir(&blocker).unwrap();
+    let err = format!("{:#}", store.finish_run(&mut record, &result).unwrap_err());
+    assert!(err.contains("could not record"), "{err}");
+    assert_eq!(store.runs(None, 1).unwrap()[0].guard[0].rule, "hidden-code");
+    let app = store.app("alice/hello").unwrap();
+    assert_eq!(app.record.quarantine.unwrap().hit.rule, "hidden-code");
+    let refused = run_recorded(&store).unwrap_err().to_string();
+    assert!(refused.contains("is blocked"), "{refused}");
+
+    fs::remove_dir(&blocker).unwrap();
+    let refused = run_recorded(&store).unwrap_err().to_string();
+    assert!(refused.contains("is blocked"), "{refused}");
+    let reopened = Store::open(paths).unwrap();
+    let app = reopened.app("alice/hello").unwrap();
+    assert_eq!(app.record.quarantine.unwrap().hit.rule, "hidden-code");
 }
 
 /// A program started behind the runner's back (straight through the Windows API, which no

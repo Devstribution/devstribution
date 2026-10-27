@@ -10,6 +10,24 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 
 ## [Unreleased]
 
+### Security
+
+- Apps no longer see the launcher's whole environment: only Windows' own variables, the user's
+  folders, the proxy and the locale. Tokens and keys in the user's session stay out.
+- An app declaring `network = ["*"]` gets a warning before install: it turns off the runtime
+  guard's network rule.
+- The runtime guard treats moving or linking a protected file as reading it.
+- A guard stop that cannot be saved (disk full) keeps the app blocked, and the launcher says so.
+- The runner is checked before every run, not only when the launcher starts.
+- Install checks the whole lockfile, as `pack` does, and checks the staged files again just
+  before they are moved into place.
+- The launcher ends only processes Windows started as COM servers, never a program the user
+  opened.
+- Another Python an app starts (`subprocess`, `multiprocessing`) runs under the runtime guard
+  too, and a stop there ends the run. A Python started any other way ends the run.
+- The code scan reads names and strings as Python does (fullwidth letters, `\x` escapes) and
+  catches calls passed around as values or reached through `getattr`.
+
 ## [0.1.0] - 2026-10-26
 
 The first public release: a preview for trying devstribution out, **not code-signed yet**. Windows

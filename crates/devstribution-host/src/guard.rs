@@ -5,7 +5,9 @@
 //! sees every process the run starts, through its Job Object, whatever started it, and checks
 //! each against the same rules (`_process_rules.json`): a program malware starts ends the run.
 
+use std::path::Path;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 
@@ -105,9 +107,115 @@ pub fn match_process<'a>(command: &str, rules: &'a [ProcessRule]) -> Option<&'a 
     None
 }
 
+/// Whether a process in a run's Job Object is a Python the runtime guard is not in. The runner
+/// starts every Python the app starts through `subprocess` or `multiprocessing` as
+/// `python ... <runner>\child.py <run>\guard\config.json ...`, with the guard installed first;
+/// one started any other way (a shell, `ctypes`, the `py` launcher) is not.
+pub struct PythonCheck {
+    bootstrap: String,
+    child: String,
+    settings: String,
+    /// A virtual environment's `python.exe` starts the real interpreter with its own command
+    /// line, so the runner's command is seen once; a second one is the app's.
+    runner_seen: AtomicBool,
+}
+
+impl PythonCheck {
+    pub fn new(runner_dir: &Path, settings: &Path) -> PythonCheck {
+        let text = |p: &Path| normalize_path(&p.to_string_lossy());
+        PythonCheck {
+            bootstrap: text(&runner_dir.join("bootstrap.py")),
+            child: text(&runner_dir.join("child.py")),
+            settings: text(settings),
+            runner_seen: AtomicBool::new(false),
+        }
+    }
+
+    pub fn outside_guard(&self, command: &str) -> bool {
+        if !is_python(first_word(command)) {
+            return false;
+        }
+        let text = normalize_path(command);
+        if text.contains(&self.child) && text.contains(&self.settings) {
+            return false;
+        }
+        let first_runner =
+            text.contains(&self.bootstrap) && !self.runner_seen.swap(true, Ordering::Relaxed);
+        !first_runner
+    }
+}
+
+/// Lower case, backslashes, no quotes: how paths are compared in command lines.
+fn normalize_path(text: &str) -> String {
+    text.to_lowercase().replace('/', "\\").replace('"', "")
+}
+
+/// The program of a Windows command line: up to the closing quote, or the first space.
+fn first_word(command: &str) -> &str {
+    let command = command.trim_start();
+    match command.strip_prefix('"') {
+        Some(rest) => rest.split('"').next().unwrap_or(rest),
+        None => command.split_whitespace().next().unwrap_or(""),
+    }
+}
+
+/// `python`, `pythonw`, `python3.12`, `py`, `pyw`, with or without `.exe` (the runner's
+/// `is_python`).
+fn is_python(program: &str) -> bool {
+    let name = program
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(program)
+        .to_lowercase();
+    let name = name.strip_suffix(".exe").unwrap_or(&name);
+    let version = ["pythonw", "python", "pyw", "py"]
+        .iter()
+        .find_map(|p| name.strip_prefix(p));
+    version.is_some_and(|v| {
+        v.is_empty()
+            || (v.starts_with(|c: char| c.is_ascii_digit())
+                && v.split('.')
+                    .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit())))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pythons_outside_the_guard() {
+        let runner =
+            Path::new(r"C:\Users\a\AppData\Local\dev.devstribution.launcher\data\runner\abc");
+        let settings = Path::new(
+            r"C:\Users\a\AppData\Local\dev.devstribution.launcher\data\runs\r1\guard\config.json",
+        );
+        let check = PythonCheck::new(runner, settings);
+        let python = r#""C:\Users\a\AppData\Local\dev.devstribution.launcher\data\envs\x\Scripts\python.exe""#;
+        let runner_text = runner.display();
+        let settings_text = settings.display();
+
+        // The runner, started again by the environment's python.exe: once.
+        let start = format!(r"{python} -I -S -B -X utf8 {runner_text}\bootstrap.py");
+        assert!(!check.outside_guard(&start));
+        assert!(check.outside_guard(&start));
+        // Guarded children, however often.
+        let child =
+            format!(r#"{python} -I -S -B {runner_text}\CHILD.py "{settings_text}" -c "print(1)""#);
+        assert!(!check.outside_guard(&child));
+        assert!(!check.outside_guard(&child));
+        // Child settings the app wrote elsewhere, a plain Python, the py launcher.
+        assert!(check.outside_guard(&format!(
+            r"{python} {runner_text}\child.py C:\temp\mine.json -c 1"
+        )));
+        assert!(check.outside_guard(&format!("{python} -c \"print(1)\"")));
+        assert!(check.outside_guard("py -3.12 script.py"));
+        assert!(check.outside_guard(r"C:\Python312\pythonw3.12.exe x.py"));
+        // Not Python.
+        assert!(!check.outside_guard(r#""C:\Windows\System32\cmd.exe" /c python x.py"#));
+        assert!(!check.outside_guard(r"C:\tools\pyinstaller.exe x"));
+        assert!(!check.outside_guard(r"C:\tools\python-report.exe"));
+    }
 
     /// The runner's matcher is tested on the same cases.
     const CASES: &str = include_str!("../../../runner/tests/process_rule_cases.json");
