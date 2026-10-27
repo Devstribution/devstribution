@@ -153,6 +153,64 @@ fn init_dev_pack_verify() {
         .arg(&pkg)
         .assert()
         .failure();
+
+    // An existing trust file is not replaced silently: with no terminal to ask on, it is refused.
+    let before = fs::read_to_string(&from_key).unwrap();
+    let refused = cli(&home)
+        .args([
+            "trust",
+            "export",
+            "--namespace",
+            "alice",
+            "--name",
+            "Other",
+            "-o",
+        ])
+        .arg(&from_key)
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("--force"));
+    assert_eq!(fs::read_to_string(&from_key).unwrap(), before);
+    cli(&home)
+        .args([
+            "trust",
+            "export",
+            "--namespace",
+            "alice",
+            "--name",
+            "Other",
+            "--force",
+            "-o",
+        ])
+        .arg(&from_key)
+        .assert()
+        .success();
+    assert!(fs::read_to_string(&from_key).unwrap().contains("Other"));
+}
+
+#[test]
+fn scan_and_diff_exit_2_when_the_package_cannot_be_read() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    let missing = tmp.path().join("missing.dsapp");
+    let garbage = tmp.path().join("garbage.dsapp");
+    fs::write(&garbage, b"not a zip").unwrap();
+
+    for target in [&missing, &garbage] {
+        let scanned = cli(&home).arg("scan").arg(target).output().unwrap();
+        assert_eq!(scanned.status.code(), Some(2), "scan {}", target.display());
+        let diffed = cli(&home)
+            .arg("diff")
+            .arg(target)
+            .arg(target)
+            .output()
+            .unwrap();
+        assert_eq!(diffed.status.code(), Some(2), "diff {}", target.display());
+    }
+    // Other commands keep 1 for their errors.
+    let verified = cli(&home).arg("verify").arg(&missing).output().unwrap();
+    assert_eq!(verified.status.code(), Some(1));
 }
 
 #[test]

@@ -21,6 +21,7 @@
     "allow-list-runs",
     "allow-run-log",
     "allow-open-output",
+    "allow-open-data-folder",
     "allow-set-secret",
     "allow-clear-secret",
     "allow-settings",

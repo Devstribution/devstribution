@@ -638,6 +638,19 @@ async fn save_trust_request(app: AppHandle, token: String) -> CmdResult<bool> {
     .await
 }
 
+/// Opens devstribution's data folder in the file manager, for support and for IT. It takes no
+/// path: the only folder it can open is the launcher's own root, whatever the page asks.
+#[tauri::command]
+async fn open_data_folder(app: AppHandle) -> CmdResult<()> {
+    blocking(move || {
+        let root = dunce::canonicalize(&state(&app).store.paths.root)?;
+        app.opener()
+            .open_path(root.to_string_lossy(), None::<&str>)?;
+        Ok(())
+    })
+    .await
+}
+
 /// Starts the installer's own uninstaller (`uninstall.exe` next to the launcher), which asks
 /// whether to delete app data, then closes the launcher so its files can be removed. Running
 /// apps end with it. A launcher that was not installed by the setup program has no uninstaller.
@@ -796,6 +809,7 @@ pub fn run() {
             list_runs,
             run_log,
             open_output,
+            open_data_folder,
             set_secret,
             clear_secret,
             settings,

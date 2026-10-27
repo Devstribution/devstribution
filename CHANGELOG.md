@@ -10,6 +10,23 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 
 ## [Unreleased]
 
+### Changed
+
+- `devstribution scan` and `devstribution diff` exit with 2 when a package could not be read, so
+  CI can tell it from 1, "danger found". Their other behaviour is unchanged.
+- `devstribution trust export` asks before replacing an existing file. Without a terminal to ask
+  on (CI, a pipe) it refuses; `--force` replaces it.
+
+### Fixed
+
+- The update comparison orders package versions like `1.0rc1`, `1.0.post1` and `1.0.dev1` the way
+  PEP 440 does, so a downgrade to a pre-release is marked "older" (it was only for plain numbers).
+
+### Added
+
+- Settings → Storage has an "Open folder" button for the data folder, for support and for IT.
+- `CONTRIBUTING.md`, and issue and pull request templates.
+
 ## [0.2.0] - 2026-10-27
 
 A hardening release from a scan of the whole codebase. Still a preview, **not code-signed yet**.

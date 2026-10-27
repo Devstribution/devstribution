@@ -75,4 +75,4 @@ python3 -m unittest discover -s runner/tests          # runner protocol and code
 ## License
 
 Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
-Security issues: see [SECURITY.md](SECURITY.md).
+Contributing: see [CONTRIBUTING.md](CONTRIBUTING.md). Security issues: see [SECURITY.md](SECURITY.md).

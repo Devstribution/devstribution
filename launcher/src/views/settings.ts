@@ -1,4 +1,4 @@
-import { X, Check, Pipette } from "lucide";
+import { X, Check, Pipette, FolderOpen } from "lucide";
 import type { Ctx } from "../main";
 import type { Policy } from "../api";
 import { h, icon, clear, relTime, toast, errorText } from "../ui";
@@ -87,7 +87,9 @@ export function toggleSettings(ctx: Ctx) {
       h("div", { class: "settings-group" },
         h("span", { class: "section-label" }, "Storage"),
         h("div", { class: "mono soft-text wrap-anywhere" }, s.data_dir),
-        h("div", { class: "muted tiny" }, "Apps, their Python environments, run results and logs.")),
+        h("div", { class: "muted tiny" }, "Apps, their Python environments, run results and logs."),
+        h("button", { class: "btn small self-start", onclick: () => ctx.api.openDataFolder().catch((e) => toast(errorText(e), "error")) },
+          icon(FolderOpen, 14), "Open folder")),
       h("div", { class: "settings-group" },
         h("span", { class: "section-label" }, "Uninstall"),
         h("button", { class: "btn small danger self-start", onclick: () => uninstallLauncher(ctx) }, "Uninstall devstribution…")),

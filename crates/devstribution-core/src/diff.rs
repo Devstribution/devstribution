@@ -137,7 +137,7 @@ pub struct PackageChange {
 }
 
 impl PackageChange {
-    /// The locked version went down (`None` when the versions cannot be compared simply).
+    /// The locked version went down (false when a version is not one PEP 440 describes).
     pub fn downgraded(&self) -> bool {
         match (&self.old, &self.new) {
             (Some(o), Some(n)) => compare_versions(n, o) == Some(Ordering::Less),
@@ -515,17 +515,174 @@ fn list(items: &[&str]) -> String {
 /// Compares release numbers part by part (`2.10` > `2.9`); `None` when a part is not a plain
 /// number in both, where only PEP 440 could say (`2.0rc1`).
 fn compare_versions(a: &str, b: &str) -> Option<Ordering> {
-    let parts = |v: &str| -> Option<Vec<u64>> { v.split('.').map(|p| p.parse().ok()).collect() };
-    let (mut a, mut b) = (parts(a)?, parts(b)?);
-    let len = a.len().max(b.len());
-    a.resize(len, 0);
-    b.resize(len, 0);
-    Some(a.cmp(&b))
+    Some(Pep440::parse(a)?.cmp(&Pep440::parse(b)?))
+}
+
+/// A PyPI version as PEP 440 orders it: `1.0.dev1 < 1.0a1 < 1.0b2 < 1.0rc1 < 1.0 < 1.0.post1`.
+/// A local label (`+cpu`) is ignored: it never decides whether a package went down.
+#[derive(Debug, PartialEq, Eq)]
+struct Pep440 {
+    epoch: u64,
+    release: Vec<u64>,
+    /// `a` = 0, `b` = 1, `rc` = 2, and its number.
+    pre: Option<(u8, u64)>,
+    post: Option<u64>,
+    dev: Option<u64>,
+}
+
+impl Pep440 {
+    fn parse(text: &str) -> Option<Pep440> {
+        let lower = text.trim().to_ascii_lowercase();
+        let v = lower.strip_prefix('v').unwrap_or(&lower);
+        let v = v.split('+').next()?;
+        let (epoch, v) = match v.split_once('!') {
+            Some((e, rest)) => (e.parse().ok()?, rest),
+            None => (0, v),
+        };
+        let end = v
+            .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+            .unwrap_or(v.len());
+        let (nums, mut rest) = v.split_at(end);
+        let nums = nums.strip_suffix('.').unwrap_or(nums);
+        let release: Vec<u64> = nums
+            .split('.')
+            .map(|p| p.parse().ok())
+            .collect::<Option<_>>()?;
+        let mut version = Pep440 {
+            epoch,
+            release,
+            pre: None,
+            post: None,
+            dev: None,
+        };
+        while !rest.is_empty() {
+            rest = rest.trim_start_matches(['.', '-', '_']);
+            if rest.is_empty() {
+                return None;
+            }
+            // `1.0-1` is the old spelling of `1.0.post1`.
+            if rest.as_bytes()[0].is_ascii_digit() {
+                let (n, tail) = number(rest)?;
+                version.post.replace(n).is_none().then_some(())?;
+                rest = tail;
+                continue;
+            }
+            let word_end = rest
+                .find(|c: char| !c.is_ascii_alphabetic())
+                .unwrap_or(rest.len());
+            let (word, tail) = rest.split_at(word_end);
+            let tail = tail.trim_start_matches(['.', '-', '_']);
+            let (n, tail) = number(tail).unwrap_or((0, tail));
+            rest = tail;
+            match word {
+                "a" | "alpha" => version.pre = Some((0, n)),
+                "b" | "beta" => version.pre = Some((1, n)),
+                "c" | "rc" | "pre" | "preview" => version.pre = Some((2, n)),
+                "post" | "rev" | "r" => version.post = Some(n),
+                "dev" => version.dev = Some(n),
+                _ => return None,
+            }
+        }
+        while version.release.len() > 1 && version.release.last() == Some(&0) {
+            version.release.pop();
+        }
+        Some(version)
+    }
+
+    /// The part after the release, ordered as PEP 440 says: a bare `.dev` sorts before the
+    /// pre-releases, a final release after them, `.post` after the final release.
+    fn suffix_key(&self) -> (i8, (u8, u64), i8, u64, i8, u64) {
+        let pre = match (self.pre, self.post, self.dev) {
+            (None, None, Some(_)) => (-1, (0, 0)),
+            (None, ..) => (1, (0, 0)),
+            (Some(p), ..) => (0, p),
+        };
+        let post = self.post.map_or((-1, 0), |n| (0, n));
+        let dev = self.dev.map_or((1, 0), |n| (0, n));
+        (pre.0, pre.1, post.0, post.1, dev.0, dev.1)
+    }
+}
+
+fn number(s: &str) -> Option<(u64, &str)> {
+    let end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+    let (n, rest) = s.split_at(end);
+    Some((n.parse().ok()?, rest))
+}
+
+impl Ord for Pep440 {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.epoch
+            .cmp(&other.epoch)
+            .then_with(|| self.release.cmp(&other.release))
+            .then_with(|| self.suffix_key().cmp(&other.suffix_key()))
+    }
+}
+
+impl PartialOrd for Pep440 {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn versions_order_as_pep_440() {
+        let ascending = [
+            "1.0.dev1",
+            "1.0a1",
+            "1.0a2.dev1",
+            "1.0a2",
+            "1.0b1",
+            "1.0rc1",
+            "1.0rc2",
+            "1.0",
+            "1.0.post1.dev1",
+            "1.0.post1",
+            "1.0.1",
+            "1.1",
+            "1.10",
+            "2!0.1",
+        ];
+        for pair in ascending.windows(2) {
+            assert_eq!(
+                compare_versions(pair[0], pair[1]),
+                Some(Ordering::Less),
+                "{} < {}",
+                pair[0],
+                pair[1]
+            );
+            assert_eq!(compare_versions(pair[1], pair[0]), Some(Ordering::Greater));
+        }
+        // Spellings and padding that mean the same version.
+        for (a, b) in [
+            ("1.0", "1.0.0"),
+            ("1.0rc1", "1.0.RC1"),
+            ("1.0-rc.1", "1.0c1"),
+            ("1.0-1", "1.0.post1"),
+            ("v1.0beta", "1.0b0"),
+            ("1.0+cpu", "1.0"),
+        ] {
+            assert_eq!(compare_versions(a, b), Some(Ordering::Equal), "{a} = {b}");
+        }
+        assert_eq!(compare_versions("1.0", "not a version"), None);
+        assert_eq!(compare_versions("1.0rc", "1.0rc0"), Some(Ordering::Equal));
+    }
+
+    #[test]
+    fn a_release_candidate_after_the_release_is_a_downgrade() {
+        let change = |old: &str, new: &str| PackageChange {
+            name: "x".into(),
+            old: Some(old.into()),
+            new: Some(new.into()),
+        };
+        assert!(change("1.0", "1.0rc1").downgraded());
+        assert!(change("2.0.post1", "2.0").downgraded());
+        assert!(!change("1.0rc1", "1.0").downgraded());
+        assert!(!change("1.0rc1", "1.0rc2").downgraded());
+    }
 
     const PYPROJECT_TEMPLATE: &str = r#"[project]
 name = "report"
@@ -742,6 +899,7 @@ PERMISSIONS
     fn versions_compare_by_number() {
         assert_eq!(compare_versions("2.10", "2.9"), Some(Ordering::Greater));
         assert_eq!(compare_versions("1.0", "1.0.0"), Some(Ordering::Equal));
-        assert_eq!(compare_versions("2.0rc1", "1.0"), None);
+        assert_eq!(compare_versions("2.0rc1", "1.0"), Some(Ordering::Greater));
+        assert_eq!(compare_versions("2.0-unknown", "1.0"), None);
     }
 }
