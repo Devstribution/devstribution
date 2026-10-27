@@ -16,6 +16,7 @@ const COMMANDS: &[&str] = &[
     "cleanup_preview",
     "cleanup_runs",
     "cleanup_log",
+    "diagnostics",
     "set_secret",
     "clear_secret",
     "settings",

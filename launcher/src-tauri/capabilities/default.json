@@ -25,6 +25,7 @@
     "allow-cleanup-preview",
     "allow-cleanup-runs",
     "allow-cleanup-log",
+    "allow-diagnostics",
     "allow-set-secret",
     "allow-clear-secret",
     "allow-settings",

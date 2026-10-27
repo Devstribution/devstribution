@@ -28,6 +28,10 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 
 ### Added
 
+- Settings has an About block (version, licence, and the software inside devstribution with its
+  licences) and a "Copy diagnostics" button: versions, installed apps, the latest runs and the state
+  of the run journal, as text for a bug report or IT. It holds no secrets, inputs, results or keys,
+  and writes your home and data folders as `~` and `<data>`.
 - Settings → Storage → "Clean up…" removes the results and logs of old runs to free room. It shows
   how much it frees first (by age and app) and asks before deleting. The runs stay in Activity,
   marked as cleaned, unless you also choose to remove them; folders you chose for an app are never

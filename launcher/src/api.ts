@@ -300,6 +300,8 @@ export interface Api {
   cleanupPreview(olderThanDays: number | null, appId: string | null, removeRecords: boolean): Promise<CleanupPlan>;
   cleanupRuns(runIds: string[], removeRecords: boolean): Promise<CleanupResult>;
   cleanupLog(): Promise<JournalReport>;
+  /** Plain text for a bug report: versions, apps, the latest runs. No secrets or results. */
+  diagnostics(): Promise<string>;
   setSecret(id: string, name: string, value: string): Promise<void>;
   clearSecret(id: string, name: string): Promise<void>;
   settings(): Promise<Settings>;
@@ -365,6 +367,7 @@ async function tauriApi(): Promise<Api> {
     cleanupPreview: (olderThanDays, appId, removeRecords) => invoke("cleanup_preview", { olderThanDays, appId, removeRecords }),
     cleanupRuns: (runIds, removeRecords) => invoke("cleanup_runs", { runIds, removeRecords }),
     cleanupLog: () => invoke("cleanup_log"),
+    diagnostics: () => invoke("diagnostics"),
     setSecret: (id, name, value) => invoke("set_secret", { id, name, value }),
     clearSecret: (id, name) => invoke("clear_secret", { id, name }),
     settings: () => invoke("settings"),

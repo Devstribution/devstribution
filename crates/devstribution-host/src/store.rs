@@ -1465,6 +1465,105 @@ impl Store {
         }
     }
 
+    /// A plain-text summary for a bug report or IT: versions, installed apps, the latest runs
+    /// and the state of the journal. No secrets, inputs, results or keys; the user's home and
+    /// data folders are written as `~` and `<data>`. A failed run's first error line is
+    /// included, and that is text the app chose, so the user should read it before sending.
+    pub fn diagnostics(&self, launcher_version: &str, uv_version: Option<&str>) -> String {
+        let root = self.paths.root.display().to_string();
+        let home = dirs::home_dir().map(|h| h.display().to_string());
+        let redact = |text: &str| {
+            let mut out = text.to_string();
+            // The data folder is usually inside the home folder: replace it first.
+            for (from, to) in [(Some(root.clone()), "<data>"), (home.clone(), "~")] {
+                if let Some(from) = from.filter(|f| !f.is_empty()) {
+                    out = out.replace(&from, to).replace(&from.replace('\\', "/"), to);
+                }
+            }
+            out
+        };
+        let mut out = String::from("devstribution diagnostics\n");
+        out += &format!(
+            "Launcher {launcher_version} on {}, {} mode\n",
+            current_platform(),
+            if self.policy.is_some() {
+                "managed"
+            } else {
+                "free"
+            }
+        );
+        out += &format!("{}\n", uv_version.unwrap_or("uv not found"));
+        out += &format!("Taken on {} (UTC)\n", date(now_secs()));
+
+        match self.installed() {
+            Ok(apps) => {
+                out += &format!("\nApps ({})\n", apps.len());
+                for a in apps {
+                    out += &format!(
+                        "  {} {} ({}){}\n",
+                        a.record.id,
+                        a.record.version,
+                        a.manifest.kind.as_str(),
+                        if a.record.quarantine.is_some() {
+                            ", stopped by the guard"
+                        } else {
+                            ""
+                        }
+                    );
+                }
+            }
+            Err(e) => out += &format!("\nApps: could not be read: {}\n", redact(&format!("{e:#}"))),
+        }
+
+        out += "\nLatest runs\n";
+        match self.runs(None, 10) {
+            Ok(runs) if runs.is_empty() => out += "  none\n",
+            Ok(runs) => {
+                for r in runs {
+                    let status = serde_json::to_value(r.status)
+                        .ok()
+                        .and_then(|v| v.as_str().map(String::from))
+                        .unwrap_or_default();
+                    out += &format!(
+                        "  {} {status} {} {} ms{}\n",
+                        date(r.started_at),
+                        r.app_id,
+                        r.duration_ms,
+                        if r.output_removed.is_some() {
+                            ", results cleaned up"
+                        } else {
+                            ""
+                        }
+                    );
+                    if let Some(line) = r.error.as_deref().and_then(|e| e.lines().next()) {
+                        let line: String = line.chars().take(160).collect();
+                        out += &format!("    {}\n", redact(&line));
+                    }
+                    for hit in &r.guard {
+                        out += &format!("    guard: {}\n", redact(&hit.message));
+                    }
+                }
+            }
+            Err(e) => out += &format!("  could not be read: {}\n", redact(&format!("{e:#}"))),
+        }
+
+        let j = self.journal_report();
+        out += "\nJournal\n";
+        out += &match j.broken_at {
+            Some(line) => format!("  broken at line {line} of {}\n", j.lines + 1),
+            None => format!("  {} lines, adding up\n", j.lines),
+        };
+        if !j.changed.is_empty() || !j.missing.is_empty() {
+            out += &format!(
+                "  {} run records changed, {} run folders missing\n",
+                j.changed.len(),
+                j.missing.len()
+            );
+        }
+        out += &format!("  {} cleanups\n", j.cleanups.len());
+        out
+    }
+
     pub fn stats(&self, days: u32) -> Result<Stats> {
         let now = now_secs();
         let since = now.saturating_sub(u64::from(days) * 86_400);
@@ -1807,6 +1906,30 @@ mod tests {
         assert!(report.changed.is_empty() && report.missing.is_empty());
         assert_eq!(report.cleanups.len(), 1);
         assert_eq!(report.cleanups[0].data["runs"][0]["file_count"], 2);
+    }
+
+    #[test]
+    fn diagnostics_say_what_happened_and_hide_paths() {
+        let (dir, store) = store();
+        add_run(&store, "20260101-000000-hello-aa", RunStatus::Error, 1, 1);
+        let mut record = store.run("20260101-000000-hello-aa").unwrap();
+        record.error = Some(format!(
+            "FileNotFoundError: {}\\secret.xlsx\nsecond line",
+            dir.path().display()
+        ));
+        store.save_run(&record).unwrap();
+
+        let text = store.diagnostics("9.9.9", Some("uv 1.2.3"));
+        assert!(text.contains("Launcher 9.9.9"));
+        assert!(text.contains("uv 1.2.3"));
+        assert!(text.contains("error alice/hello"), "{text}");
+        assert!(text.contains("<data>"), "{text}");
+        assert!(!text.contains(&dir.path().display().to_string()), "{text}");
+        assert!(
+            !text.contains("second line"),
+            "only the first line of an error"
+        );
+        assert!(text.contains("adding up"));
     }
 
     #[test]

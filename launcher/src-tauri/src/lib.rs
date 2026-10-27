@@ -612,6 +612,17 @@ async fn settings(app: AppHandle) -> CmdResult<SettingsView> {
     .await
 }
 
+/// The text of "Copy diagnostics" (see `Store::diagnostics`).
+#[tauri::command]
+async fn diagnostics(app: AppHandle) -> CmdResult<String> {
+    blocking(move || {
+        Ok(state(&app)
+            .store
+            .diagnostics(env!("CARGO_PKG_VERSION"), uv::version().as_deref()))
+    })
+    .await
+}
+
 /// Saves a `.trust` file for the author of a package the policy refused, for the user to send
 /// to IT ("ask your IT to trust X"). The backend asks where to save it, so the page cannot
 /// choose a path; returns whether a file was written.
@@ -851,6 +862,7 @@ pub fn run() {
             cleanup_preview,
             cleanup_runs,
             cleanup_log,
+            diagnostics,
             set_secret,
             clear_secret,
             settings,

@@ -1,7 +1,7 @@
-import { X, Check, Pipette, FolderOpen, Trash2 } from "lucide";
+import { X, Check, Pipette, FolderOpen, Trash2, ClipboardCopy } from "lucide";
 import type { Ctx } from "../main";
 import { openCleanup } from "./cleanup";
-import type { Policy } from "../api";
+import type { Policy, Settings } from "../api";
 import { h, icon, clear, relTime, toast, errorText } from "../ui";
 import { ACCENTS, DEFAULT_LOOK, textOn, type Look, type Theme, type StatusColours } from "../look";
 
@@ -100,8 +100,49 @@ export function toggleSettings(ctx: Ctx) {
       h("div", { class: "settings-group" },
         h("span", { class: "section-label" }, "Uninstall"),
         h("button", { class: "btn small danger self-start", onclick: () => uninstallLauncher(ctx) }, "Uninstall devstribution…")),
-      h("div", { class: "about" }, `devstribution ${s.version} · ${s.uv_version ?? "uv not found"} · ${s.platform} · MIT or Apache-2.0`));
+      aboutGroup(ctx, s));
   }).catch((e) => toast(errorText(e), "error"));
+}
+
+/** What ships inside devstribution, and under which licence. The Rust libraries are in Cargo.lock. */
+const COMPONENTS: [string, string][] = [
+  ["uv (Astral): sets up each app's Python", "MIT or Apache-2.0"],
+  ["Tauri and the Rust libraries it builds on", "MIT or Apache-2.0, and others: see Cargo.lock"],
+  ["Microsoft Edge WebView2: draws this window", "Microsoft's licence; installed with Windows"],
+  ["Manrope, the typeface", "SIL Open Font Licence 1.1"],
+  ["Lucide, the icons", "ISC"],
+  ["Python: downloaded by uv when an app is first set up", "PSF licence"],
+];
+
+/** Copies text; the webview allows it from a click. */
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const box = h("textarea", { value: text, style: "position:fixed;opacity:0" }) as HTMLTextAreaElement;
+    document.body.appendChild(box);
+    box.select();
+    const ok = document.execCommand("copy");
+    box.remove();
+    if (!ok) throw new Error("the clipboard is not available");
+  }
+}
+
+function aboutGroup(ctx: Ctx, s: Settings) {
+  const copy = async () => {
+    try {
+      await copyText(await ctx.api.diagnostics());
+      toast("Copied. Read it before you send it: it has no secrets, but it lists your apps and the first line of each failed run’s error.", "ok");
+    } catch (e) { toast(errorText(e), "error"); }
+  };
+  return h("div", { class: "settings-group" },
+    h("span", { class: "section-label" }, "About"),
+    h("div", { class: "small soft-text" }, `devstribution ${s.version} · ${s.uv_version ?? "uv not found"} · ${s.platform}`),
+    h("div", { class: "small soft-text" }, "Free software, MIT or Apache-2.0: github.com/Devstribution/devstribution"),
+    h("details", { class: "disclosure" }, h("summary", null, "Software inside devstribution"),
+      h("dl", { class: "kv" }, COMPONENTS.map(([name, licence]) => [h("dt", null, name), h("dd", null, licence)]))),
+    h("button", { class: "btn small self-start", onclick: copy }, icon(ClipboardCopy, 14), "Copy diagnostics"),
+    h("div", { class: "muted tiny" }, "For a bug report or your IT: versions, your apps and the latest runs. No secrets, inputs or results."));
 }
 
 /** Managed mode: the policy IT set, and the authors it approves. */
