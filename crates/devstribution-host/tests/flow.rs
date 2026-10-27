@@ -622,6 +622,78 @@ fn guard_stop_quarantines_until_allowed() {
     assert!(result.guard.iter().any(|h| h.rule == "allowed"));
 }
 
+/// Another Python the app starts runs under the guard too: what it does stops the whole run and
+/// quarantines the app, as if the app had done it.
+#[test]
+fn child_pythons_run_under_the_guard() {
+    const CHILD: &str = r#"
+import subprocess, sys
+
+def run(name: str, ctx) -> dict:
+    key = ctx.output_dir.parent / "home" / ".ssh" / "id_ed25519"
+    subprocess.run([sys.executable, "-c", "import sys; open(sys.argv[1], 'rb').read()", str(key)])
+    import time
+    time.sleep(20)
+    out = ctx.output_dir / "greeting.txt"
+    out.write_text("hi")
+    return {"greeting": out}
+"#;
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Store::open(Paths {
+        root: tmp.path().join("home"),
+    })
+    .unwrap();
+    install_app(&store, tmp.path(), CHILD);
+
+    let runner_dir = runner::install(&store.paths).unwrap();
+    let (spec, mut record) = store
+        .prepare_run("alice/hello", &Map::new(), &runner_dir)
+        .unwrap();
+    // A saved key, where the app looks for it (made here: the app itself may not write it).
+    let ssh = spec.run_dir.join("home").join(".ssh");
+    fs::create_dir_all(&ssh).unwrap();
+    fs::write(ssh.join("id_ed25519"), "key").unwrap();
+    let started = std::time::Instant::now();
+    let result = run::start(spec, Arc::new(|_| {})).unwrap().wait();
+    store.finish_run(&mut record, &result).unwrap();
+    let stop = result.guard_stop().expect("the child's stop ends the run");
+    assert_eq!(stop.rule, "saved-secrets", "{:?}", result.guard);
+    assert!(started.elapsed() < std::time::Duration::from_secs(15));
+    let app = store.app("alice/hello").unwrap();
+    assert_eq!(app.record.quarantine.unwrap().hit.rule, "saved-secrets");
+}
+
+/// A Python started behind the runner's back (straight through the Windows API, so not
+/// rewritten to start guarded) is found in the Job Object and ends the run.
+#[cfg(windows)]
+#[test]
+fn job_object_stops_pythons_outside_the_guard() {
+    const SNEAKY: &str = r#"
+import ctypes, sys, time
+
+def run(name: str, ctx) -> dict:
+    command = f'"{sys.executable}" -c "import time; time.sleep(30)"'
+    ctypes.windll.kernel32.WinExec(command.encode("mbcs"), 0)
+    time.sleep(20)
+    out = ctx.output_dir / "greeting.txt"
+    out.write_text("hi")
+    return {"greeting": out}
+"#;
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Store::open(Paths {
+        root: tmp.path().join("home"),
+    })
+    .unwrap();
+    install_app(&store, tmp.path(), SNEAKY);
+    let started = std::time::Instant::now();
+    let result = run_recorded(&store).unwrap();
+    let stop = result
+        .guard_stop()
+        .expect("stopped by the Job Object watch");
+    assert_eq!(stop.rule, "unguarded-python", "{:?}", result.guard);
+    assert!(started.elapsed() < std::time::Duration::from_secs(15));
+}
+
 /// A stop that `state.json` cannot record (here a folder where its temporary file goes) still
 /// blocks the app, is saved as soon as the state can be written, and the run is recorded.
 #[test]

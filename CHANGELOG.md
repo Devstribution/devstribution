@@ -23,6 +23,8 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
   before they are moved into place.
 - The launcher ends only processes Windows started as COM servers, never a program the user
   opened.
+- Another Python an app starts (`subprocess`, `multiprocessing`) runs under the runtime guard
+  too, and a stop there ends the run. A Python started any other way ends the run.
 - The code scan reads names and strings as Python does (fullwidth letters, `\x` escapes) and
   catches calls passed around as values or reached through `getattr`.
 

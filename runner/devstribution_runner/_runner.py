@@ -41,6 +41,7 @@ import os
 import runpy
 import sys
 import threading
+import time
 import traceback
 import _thread
 from pathlib import Path
@@ -175,7 +176,11 @@ def main() -> int:
     devstribution_runner.ctx = ctx
 
     # Last thing before app code: from here on, what the app does is checked.
-    guard = _guard.install(channel.emit, _guard_config(start, ctx))
+    config = _guard_config(start, ctx)
+    children = _ChildReports.prepare(config, channel.emit)
+    guard = _guard.install(channel.emit, config)
+    if children is not None and guard is not None:
+        children.start(guard)
     _load_site(channel.emit)
 
     finished = threading.Event()
@@ -205,10 +210,75 @@ def main() -> int:
         result, code = {"type": "result", "status": "error", "error": error, "traceback": tb}, 1
     finally:
         finished.set()
+    if children is not None:
+        children.forward()
     if guard is not None:
         guard.report_files()
     channel.emit(result)
     return code
+
+
+class _ChildReports:
+    """Other Pythons the app starts run under the guard too (`_child.py`). The runner writes
+    their settings to the launcher's `child_dir`, which the guard seals (the app can read it,
+    not change it), and passes what their guards report on to the launcher: a stop in a child
+    ends the run like one in the app."""
+
+    def __init__(self, report: str, emit: Callable[[Dict[str, Any]], None]) -> None:
+        self._report = report
+        self._emit = emit
+        self._offset = 0
+        self._lock = threading.Lock()
+        self._guard: Any = None
+
+    @classmethod
+    def prepare(cls, config: Dict[str, Any], emit: Callable[[Dict[str, Any]], None]) -> "Any":
+        folder = config.pop("child_dir", None)
+        if not folder or not config.get("enabled", True):
+            return None
+        os.makedirs(folder, exist_ok=True)
+        report = os.path.join(folder, "children.jsonl")
+        settings = os.path.join(folder, "config.json")
+        config["child"] = {
+            # As the launcher named the runner's folder (it checks the command line too).
+            "script": os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "child.py"),
+            "config": settings,
+            "report": report,
+        }
+        config["sealed"] = list(config.get("sealed") or ()) + [folder]
+        with open(report, "w", encoding="utf-8"):
+            pass
+        with open(settings, "w", encoding="utf-8") as f:
+            json.dump(config, f)
+        return cls(report, emit)
+
+    def start(self, guard: Any) -> None:
+        self._guard = guard
+        threading.Thread(target=self._watch, daemon=True).start()
+
+    def _watch(self) -> None:
+        while True:
+            self.forward()
+            time.sleep(0.1)
+
+    def forward(self) -> None:
+        """Passes on the complete lines written since the last call."""
+        with self._lock, self._guard.unchecked():
+            try:
+                with open(self._report, "rb") as f:
+                    f.seek(self._offset)
+                    data = f.read()
+            except OSError:
+                return
+            end = data.rfind(b"\n") + 1
+            self._offset += end
+            for line in data[:end].splitlines():
+                try:
+                    message = json.loads(line.decode("utf-8"))
+                except ValueError:
+                    continue
+                if isinstance(message, dict) and message.get("type") == "guard":
+                    self._emit(message)
 
 
 def _guard_config(start: Dict[str, Any], ctx: Context) -> Dict[str, Any]:

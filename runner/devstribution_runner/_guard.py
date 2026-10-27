@@ -18,14 +18,22 @@ acts on what it sees:
 
 Files the user chose through the app's inputs are the app's to read and change.
 
+Another Python the app starts (`subprocess.run([sys.executable, ...])`, `multiprocessing`) is
+started through `child.py` instead, which installs this guard with the run's settings before any
+of its code runs; its reports reach the runner through a file the app cannot change
+(`_child.py`). A Python started any other way (`os.system`, a shell, a second runner) is stopped.
+
 The hook runs inside the app's own process, so code that patches the interpreter's memory
 (through ctypes) can get past it. The launcher therefore also checks every process that appears
 in the run's Job Object, which the app cannot hide; see `_process_rules.json`.
 """
 
+import contextlib
 import ipaddress
 import json
 import os
+import re
+import subprocess
 import sys
 import tempfile
 import threading
@@ -208,6 +216,13 @@ class Guard:
         self._observed: Dict[str, int] = {}
         self._key_paths: Dict[int, str] = {}
         self._own_names = {n.lower() for n in (os.environ.get("COMPUTERNAME"),) if n}
+        # Other Pythons the app starts run `child.py` with the settings file `config`.
+        child = config.get("child") or {}
+        self._child_script: Optional[str] = child.get("script")
+        self._child_config: Optional[str] = child.get("config")
+        # The runner's own files the app may read but never change: the child settings.
+        self._sealed = _folders(config.get("sealed"))
+        self._runner_start = _normal(str(Path(__file__).resolve().parent.parent / "bootstrap.py"))
 
         hosts = [_host_entry(h) for h in config.get("network") or ()]
         self._network_any = "*" in hosts
@@ -264,6 +279,7 @@ class Guard:
             "os.truncate": self._on_truncate,
             "ctypes.dlopen": self._on_dlopen,
             "subprocess.Popen": self._on_popen,
+            "_winapi.CreateProcess": self._on_create_process,
             "os.system": self._on_command,
             "os.startfile": self._on_startfile,
             "os.startfile/2": self._on_startfile,
@@ -277,6 +293,75 @@ class Guard:
 
     def install(self) -> None:
         sys.addaudithook(self._hook)
+        if self._child_script and self._child_config:
+            self._start_pythons_guarded()
+
+    @contextlib.contextmanager
+    def unchecked(self):
+        """For the runner's own work while the app runs (reports written to a file)."""
+        busy = getattr(self._local, "busy", False)
+        self._local.busy = True
+        try:
+            yield
+        finally:
+            self._local.busy = busy
+
+    # -- other Pythons ---------------------------------------------------------------------
+
+    def guarded_command(self, argv: List[str]) -> List[str]:
+        """`python [options] <what runs>` as `python -I -S -B [options] child.py <settings>
+        <what runs>`: the same Python, with this guard installed before what runs."""
+        options, rest = split_python_options(list(argv[1:]))
+        return [argv[0], "-I", "-S", "-B", *options, self._child_script, self._child_config, *rest]
+
+    def _is_guarded(self, command: str) -> bool:
+        text = normalize_command(command).replace("/", "\\")
+        return _normal(self._child_script) in text and _normal(self._child_config) in text
+
+    def _start_pythons_guarded(self) -> None:
+        """Every way the standard library starts a process goes through one function: wrapped,
+        so that a Python interpreter starts guarded. On Windows that is `_winapi.CreateProcess`
+        (`subprocess` and `multiprocessing`), elsewhere `subprocess`'s `_execute_child`."""
+        guard = self
+        if sys.platform == "win32":
+            import _winapi
+
+            create = _winapi.CreateProcess
+
+            def create_process(application, command, *rest):
+                argv = split_windows_command(command or "")
+                program = application or (argv[0] if argv else "")
+                if argv and is_python(program) and not guard._is_guarded(command):
+                    command = subprocess.list2cmdline(guard.guarded_command(argv))
+                return create(application, command, *rest)
+
+            _winapi.CreateProcess = create_process
+        else:
+            execute = subprocess.Popen._execute_child
+
+            def execute_child(popen, args, executable, *rest, **kwargs):
+                # (preexec_fn, close_fds, pass_fds, cwd, env, startupinfo, creationflags, shell, ...)
+                shell = rest[7] if len(rest) > 7 else kwargs.get("shell", False)
+                argv = [args] if isinstance(args, (str, bytes, os.PathLike)) else list(args)
+                program = executable or (argv[0] if argv else "")
+                if argv and not shell and is_python(program):
+                    argv = guard.guarded_command([os.fsdecode(a) for a in argv])
+                    args = argv
+                return execute(popen, args, executable, *rest, **kwargs)
+
+            subprocess.Popen._execute_child = execute_child
+
+    def _check_runner(self, command: str) -> None:
+        """A second runner, which the app would feed settings of its own, is never started."""
+        if self._runner_start in normalize_command(command).replace("/", "\\"):
+            self._stop("unguarded-python", "tried to start devstribution's runner itself", command)
+
+    def _check_python(self, command: str, program: Any) -> None:
+        """A Python that will not run under this guard is stopped: started through a shell,
+        `os.system` or `os.spawn*` (which cannot be rewritten), or a second runner."""
+        self._check_runner(command)
+        if self._child_script and is_python(program) and not self._is_guarded(command):
+            self._stop("unguarded-python", "started Python in a way devstribution cannot check", command)
 
     # The hook sees every audited event of the process: return at once for the others, and
     # never act on events the guard itself causes (its own name lookups).
@@ -458,6 +543,9 @@ class Guard:
         real = _normal(native) if native else path
         if real.startswith(_DEVICES):
             return
+        if _inside_any(real, self._sealed) or _inside_any(path, self._sealed):
+            self._stop("devstribution-files", "tried to change devstribution or an installed app", real)
+            return
         if _inside_any(real, self._output):
             where = "output"
         elif _inside_any(real, self._own):
@@ -586,20 +674,36 @@ class Guard:
             parts = list(argv or ())
         if executable is not None:
             parts.insert(0, executable)
-        self._check_command(" ".join(_text(p) for p in parts))
+        command = " ".join(_text(p) for p in parts)
+        # A Python started here is rewritten to start guarded (`_start_pythons_guarded`).
+        self._check_runner(command)
+        self._check_command(command)
+
+    def _on_create_process(self, args: tuple) -> None:
+        # Windows, after `subprocess` and the wrapper above: the command line as it will run.
+        application, command = args[0], _text(args[1] or "")
+        argv = split_windows_command(command)
+        self._check_python(command, application or (argv[0] if argv else ""))
 
     def _on_command(self, args: tuple) -> None:
-        self._check_command(_text(args[0]))
+        command = _text(args[0])
+        words = split_windows_command(command) if os.name == "nt" else command.split()
+        self._check_python(command, words[0] if words else "")
+        self._check_command(command)
 
     def _on_startfile(self, args: tuple) -> None:
         extra = args[2] if len(args) > 2 and isinstance(args[2], str) else ""
         self._check_command(f"{_text(args[0])} {extra}".strip())
 
     def _on_exec(self, args: tuple) -> None:
-        self._check_command(" ".join(_text(p) for p in (args[1] or [args[0]])))
+        command = " ".join(_text(p) for p in (args[1] or [args[0]]))
+        self._check_python(command, args[0])
+        self._check_command(command)
 
     def _on_spawn(self, args: tuple) -> None:
-        self._check_command(" ".join(_text(p) for p in (args[2] or [args[1]])))
+        command = " ".join(_text(p) for p in (args[2] or [args[1]]))
+        self._check_python(command, args[1])
+        self._check_command(command)
 
     # -- native and hidden code ------------------------------------------------------------
 
@@ -626,6 +730,97 @@ class Guard:
         if caller.startswith(("<frozen importlib", "<frozen zipimport")):
             return
         self._stop("hidden-code", "loaded hidden compiled code", caller or "marshal")
+
+
+_PYTHON_PROGRAM = re.compile(r"(python|pythonw|py|pyw)(\d+(\.\d+)*)?(\.exe)?")
+
+
+def is_python(program: Any) -> bool:
+    """Whether a program is a Python interpreter (or the `py` launcher), by its file name."""
+    name = _text(program).strip().strip('"').replace("/", "\\").rsplit("\\", 1)[-1].lower()
+    return bool(_PYTHON_PROGRAM.fullmatch(name))
+
+
+def split_windows_command(command: str) -> List[str]:
+    """A command line split as Python and the C runtime split it on Windows."""
+    args: List[str] = []
+    i, n = 0, len(command)
+    while True:
+        while i < n and command[i] in " \t":
+            i += 1
+        if i >= n:
+            return args
+        arg: List[str] = []
+        quoted = False
+        while i < n:
+            c = command[i]
+            if c == "\\":
+                j = i
+                while j < n and command[j] == "\\":
+                    j += 1
+                if j < n and command[j] == '"':
+                    arg.append("\\" * ((j - i) // 2))
+                    if (j - i) % 2:
+                        arg.append('"')
+                        j += 1
+                else:
+                    arg.append("\\" * (j - i))
+                i = j
+            elif c == '"':
+                if quoted and i + 1 < n and command[i + 1] == '"':
+                    arg.append('"')
+                    i += 2
+                else:
+                    quoted = not quoted
+                    i += 1
+            elif c in " \t" and not quoted:
+                break
+            else:
+                arg.append(c)
+                i += 1
+        args.append("".join(arg))
+
+
+#: Python's options that take a value, as a separate word or attached (`-Werror`).
+_VALUE_OPTIONS = "WX"
+
+
+def split_python_options(args: List[str]) -> "tuple[List[str], List[str]]":
+    """The interpreter's options, and what runs: `-c code ...`, `-m module ...`, a script and its
+    arguments, `-` or nothing (standard input)."""
+    options: List[str] = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--":
+            return options, args[i + 1 :]
+        if arg == "-" or not arg.startswith("-"):
+            return options, args[i:]
+        if arg.startswith("--"):
+            options.append(arg)
+            if arg == "--check-hash-based-pycs" and i + 1 < len(args):
+                options.append(args[i + 1])
+                i += 1
+            i += 1
+            continue
+        for j in range(1, len(arg)):
+            letter = arg[j]
+            if letter in "cm":
+                if j > 1:
+                    options.append(arg[:j])
+                attached = arg[j + 1 :]
+                rest = args[i + 1 :]
+                return options, ["-" + letter] + ([attached] if attached else []) + rest
+            if letter in _VALUE_OPTIONS:
+                options.append(arg)
+                if j == len(arg) - 1 and i + 1 < len(args):
+                    options.append(args[i + 1])
+                    i += 1
+                break
+        else:
+            options.append(arg)
+        i += 1
+    return options, []
 
 
 def _text(value: Any) -> str:

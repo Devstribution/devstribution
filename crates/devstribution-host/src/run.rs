@@ -240,8 +240,15 @@ fn start_message(spec: &RunSpec) -> Value {
             "own": [spec.run_dir, spec.pycache_dir],
             "protected": [spec.data_dir],
             "private": [spec.data_dir.join("runs")],
+            "child_dir": child_dir(&spec.run_dir),
         },
     })
+}
+
+/// Where the runner puts the settings and reports of the other Pythons the app starts: a folder
+/// the guard seals (`runner/devstribution_runner/_child.py`).
+fn child_dir(run_dir: &Path) -> PathBuf {
+    run_dir.join("guard")
 }
 
 enum Control {
@@ -379,8 +386,23 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
     {
         let report = report.clone();
         let allowed = spec.guard_allow.clone();
+        let pythons = guard::PythonCheck::new(
+            &spec.runner_dir,
+            &child_dir(&spec.run_dir).join("config.json"),
+        );
         job.watch(child.id(), move |event| match event {
             JobEvent::NewProcess { command } => {
+                // Another Python the guard is not in: started through a shell, `ctypes` or
+                // the `py` launcher, which the runner could not rewrite.
+                if pythons.outside_guard(&command) {
+                    let allowed = allowed.iter().any(|r| r == "unguarded-python");
+                    report(GuardHit {
+                        action: if allowed { "observe" } else { "stop" }.into(),
+                        rule: "unguarded-python".into(),
+                        message: "started Python in a way devstribution cannot check".into(),
+                        detail: command.chars().take(500).collect(),
+                    });
+                }
                 if let Some(rule) = guard::match_process(&command, guard::process_rules()) {
                     let allowed = allowed.contains(&rule.id);
                     report(GuardHit {

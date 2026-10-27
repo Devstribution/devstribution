@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from devstribution_runner import _guard  # noqa: E402
-from test_runner import RunnerBase  # noqa: E402
+from test_runner import BOOTSTRAP, RunnerBase  # noqa: E402
 
 STOPPED = _guard.STOP_EXIT_CODE
 
@@ -248,6 +248,79 @@ class GuardTest(RunnerBase):
             """,
             "other-app-data",
             guard={"private": [str(self.root / "runs")]},
+        )
+
+    # -- other Pythons the app starts ---------------------------------------------------------
+
+    def child_settings(self):
+        """The guard settings with the folder the launcher gives for child Pythons."""
+        return {"child_dir": str(self.root / "run" / "guard")}
+
+    def test_child_python_runs_under_the_guard(self):
+        key = self.root / "home" / ".ssh" / "id_ed25519"
+        key.parent.mkdir(parents=True)
+        key.write_text("key")
+        code, messages, stderr = self.run_guarded(
+            f"""
+            import subprocess, sys
+            ok = subprocess.run([sys.executable, "-c", "import sys; print(6 * 7, sys.argv[1:])", "a"],
+                                capture_output=True, text=True)
+            stolen = subprocess.run([sys.executable, "-c", "import sys; open(sys.argv[1], 'rb').read()",
+                                     {str(key)!r}])
+            return {{"v": ok.stdout.strip() + " " + str(stolen.returncode)}}
+            """,
+            self.child_settings(),
+        )
+        self.assertEqual(code, 0, (messages, stderr))
+        self.assertEqual(messages[-1]["outputs"]["v"], f"42 ['a'] {STOPPED}", messages)
+        stops = self.guard_messages(messages, "stop")
+        self.assertEqual([s["rule"] for s in stops], ["saved-secrets"], messages)
+        self.assertIn("child", stops[0])
+        self.assertTrue(stops[0]["detail"].endswith("id_ed25519"), stops)
+
+    def test_child_scripts_and_modules(self):
+        (self.app / "helper.py").write_text("import sys\nprint('helper', *sys.argv[1:])\n")
+        code, messages, stderr = self.run_guarded(
+            f"""
+            import subprocess, sys
+            app = {str(self.app)!r}
+            script = subprocess.run([sys.executable, "-u", app + "/helper.py", "x"],
+                                    capture_output=True, text=True)
+            module = subprocess.run([sys.executable, "-m", "helper", "y"], cwd=app,
+                                    capture_output=True, text=True)
+            return {{"v": script.stdout.strip() + "|" + module.stdout.strip() + "|" + module.stderr}}
+            """,
+            self.child_settings(),
+        )
+        self.assertEqual(code, 0, (messages, stderr))
+        self.assertEqual(messages[-1]["outputs"]["v"], "helper x|helper y|", messages)
+
+    def test_python_through_a_shell_is_stopped(self):
+        self.assert_stopped(
+            """
+            import os, sys
+            os.system(f'"{sys.executable}" -c pass')
+            """,
+            "unguarded-python",
+            guard=self.child_settings(),
+        )
+
+    def test_a_second_runner_is_stopped(self):
+        self.assert_stopped(
+            f"""
+            import subprocess, sys
+            subprocess.run([sys.executable, "-I", "-S", {str(BOOTSTRAP)!r}])
+            """,
+            "unguarded-python",
+            guard=self.child_settings(),
+        )
+
+    def test_child_settings_cannot_be_changed(self):
+        settings = self.root / "run" / "guard" / "config.json"
+        self.assert_stopped(
+            f"open({str(settings)!r}, 'w').write('{{}}')",
+            "devstribution-files",
+            guard=self.child_settings(),
         )
 
     def test_public_ssh_files_are_fine(self):
