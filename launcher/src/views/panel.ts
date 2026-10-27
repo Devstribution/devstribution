@@ -4,7 +4,7 @@ import {
 } from "lucide";
 import type { AppView, GuardHit, Input, RunRecord } from "../api";
 import type { Ctx, LiveRun } from "../main";
-import { h, icon, appIcon, clear, duration, fileName, relTime, statusText, toast, errorText, trustTag, KIND_LABEL } from "../ui";
+import { h, icon, appIcon, clear, duration, fileName, relTime, statusText, toast, progressToast, errorText, trustTag, KIND_LABEL } from "../ui";
 
 /** Values the form starts with: last run's values, else the manifest defaults. */
 function initialValues(app: AppView): Record<string, unknown> {
@@ -24,7 +24,10 @@ function missingRequired(app: AppView, values: Record<string, unknown>): Input[]
 async function startRun(ctx: Ctx, app: AppView, values: Record<string, unknown>): Promise<LiveRun | null> {
   for (const s of app.secrets.filter((x) => !x.set)) {
     const value = await askSecret(app, s.name);
-    if (value === null) return null;
+    if (value === null) {
+      toast(`${app.title} was not started: it needs “${s.name}”.`);
+      return null;
+    }
     await ctx.api.setSecret(app.id, s.name, value);
     s.set = true;
   }
@@ -292,6 +295,7 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
             h("div", { class: "secret-row" }, icon(KeyRound, 16),
               h("div", { class: "grow" }, h("div", { class: "strong" }, s.name), h("div", { class: "s" }, s.set ? "Saved in the credential store" : "Asked at the next run")),
               s.set ? h("button", { class: "btn small", onclick: async () => {
+                if (!await ctx.api.ask(`Forget “${s.name}”? ${app.title} will ask for it again at the next run.`, "Forget secret", "Forget")) return;
                 await ctx.api.clearSecret(app.id, s.name);
                 toast(`“${s.name}” removed`);
                 close();
@@ -329,8 +333,9 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
         icon(ctx.pins.has(app.id) ? PinOff : Pin, 16), ctx.pins.has(app.id) ? "Unpin from sidebar" : "Pin to sidebar"),
       h("button", { role: "menuitem", onclick: async () => {
         menu.hidden = true;
-        toast("Rebuilding the environment…");
-        try { await ctx.api.repair(app.id); toast("Repaired: the environment was rebuilt", "ok"); } catch (e) { toast(errorText(e), "error"); }
+        const progress = progressToast("Rebuilding the environment…");
+        const off = await ctx.api.onInstallStep((e) => { if (e.key === app.id) progress.update(e.message); });
+        try { await ctx.api.repair(app.id); progress.end(); toast("Repaired: the environment was rebuilt", "ok"); } catch (e) { progress.end(); toast(errorText(e), "error"); } finally { off(); }
       } }, icon(Wrench, 16), "Repair"),
       h("button", { role: "menuitem", class: "danger", onclick: () => uninstall() }, icon(Trash2, 16), "Uninstall"));
     drawMenu();

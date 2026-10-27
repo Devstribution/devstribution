@@ -19,11 +19,23 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 
 ### Fixed
 
+- The launcher says what happened instead of staying quiet: an empty launcher says "No apps yet";
+  opening or dropping several packages says only the first is installed; cancelling the secret
+  prompt says the app was not started; "Forget" asks before removing a secret; Repair shows each
+  step; a run with no log file says so, instead of looking like one the app left empty.
 - The update comparison orders package versions like `1.0rc1`, `1.0.post1` and `1.0.dev1` the way
   PEP 440 does, so a downgrade to a pre-release is marked "older" (it was only for plain numbers).
 
 ### Added
 
+- Settings has an About block (version, licence, where the log is, and the software inside
+  devstribution with its licences; "Open all licence texts" opens `THIRD-PARTY-NOTICES.txt`, which
+  the installer ships) and a "Copy diagnostics" button: versions, installed apps, the latest runs,
+  the state of the run journal and the end of the launcher's log, as text for a bug report or IT.
+  It holds no secrets, inputs, results or keys, and writes your home and data folders as `~` and
+  `<data>`.
+- The launcher keeps a log, `logs\launcher.log` in the data folder (about 512 KB, then one older
+  file): when it starts, commands that failed, panics, and runs that could not be recorded.
 - Settings → Storage → "Clean up…" removes the results and logs of old runs to free room. It shows
   how much it frees first (by age and app) and asks before deleting. The runs stay in Activity,
   marked as cleaned, unless you also choose to remove them; folders you chose for an app are never

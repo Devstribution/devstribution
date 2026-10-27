@@ -40,11 +40,15 @@ What a stranger downloading it meets first, and what the SignPath application ne
 3. ☐ **A code signing policy** (README or its own page), as SignPath projects publish: who may
    approve a signed release, the attribution to SignPath, and what the launcher sends over the
    network (nothing of ours: uv, Python and packages, later the revocation list).
-4. ☐ **An About page**: version, licences of bundled software, where the data folder is
-   (section 7).
+4. ☑ **An About page**: version, licences of bundled software, where the data folder is
+   (section 7). 27 October: in Settings, with the licence texts of everything shipped
+   (`THIRD-PARTY-NOTICES.txt`, made by `scripts/third_party_notices.py`, shipped with the installer).
 5. ☐ **Error messages reviewed end to end**: every failure says what happened and what to do,
    and a launcher that fails to start shows an error screen, not a blank window (section 7).
-6. ☐ **"Copy diagnostics"**: logs a user can find and send, without secrets in them (section 8).
+6. ☑ **"Copy diagnostics"**: logs a user can find and send, without secrets in them (section 8).
+   27 October: the launcher writes `logs\launcher.log` (starts, failed commands, panics), Settings
+   shows where, and "Copy diagnostics" puts versions, apps, the latest runs and the end of that log
+   on the clipboard.
 7. ☐ **Docs for app authors, the basics**: from `devstribution init` to a delivered `.dsapp`
    (section 8).
 8. ☐ **On GitHub (repository owner)**: private vulnerability reporting on (`SECURITY.md` points to
@@ -52,7 +56,7 @@ What a stranger downloading it meets first, and what the SignPath application ne
 9. ☐ **Apply to SignPath Foundation**, with the release linked. If refused (the project is young),
    Certum's open-source certificate is the fallback.
 10. ☐ **The install dialog can be cancelled** (button and Escape) while it inspects or installs.
-11. ☐ **No silent behaviour** (section 7):
+11. ☑ **No silent behaviour** (section 7; 27 October):
     - an empty launcher says "No apps yet", not "No app matches these filters" and "All 0 apps";
     - dropping several packages says only the first is installed;
     - cancelling the secret prompt says the run was cancelled;

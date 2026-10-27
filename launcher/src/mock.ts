@@ -370,10 +370,10 @@ export function mockApi(): Api {
       return structuredClone(app);
     },
     async uninstall(id) { const i = apps.findIndex((a) => a.id === id); if (i >= 0) apps.splice(i, 1); },
-    async repair() {
+    async repair(id) {
       for (const m of ["Rebuilding the Python environment", "Installed 3 packages in 31ms", "Ready"]) {
         await sleep(400);
-        stepListeners.forEach((l) => l({ key: "repair", step: m === "Ready" ? "ready" : "environment", message: m }));
+        stepListeners.forEach((l) => l({ key: id, step: m === "Ready" ? "ready" : "environment", message: m }));
       }
     },
     async startRun(id, inputs) {
@@ -441,6 +441,7 @@ export function mockApi(): Api {
     },
     async openOutput() {},
     async openDataFolder() {},
+    async openNotices() {},
     async cleanupPreview(olderThanDays, appId, removeRecords) {
       const cutoff = olderThanDays === null ? Infinity : now() - olderThanDays * DAY;
       const list = runs
@@ -456,6 +457,11 @@ export function mockApi(): Api {
       cleanups.unshift({ seq: cleanups.length, at: now(), kind: "cleanup", hash: "", data: { runs: hit.map((r) => ({ run_id: r.id, app_id: r.app_id, bytes: 0, file_count: 2, record_removed: removeRecords })), bytes, remove_records: removeRecords } });
       return { runs: hit.length, bytes, failed: [] };
     },
+    async diagnostics() {
+      return ["devstribution diagnostics", "Launcher 0.2.0 on windows, free mode", "uv 0.9.0", "", `Apps (${apps.length})`,
+        ...apps.map((a) => `  ${a.id} ${a.version} (${a.kind})`), "", "Latest runs",
+        ...runs.slice(0, 10).map((r) => `  ${new Date(r.started_at * 1000).toISOString().slice(0, 10)} ${r.status} ${r.app_id} ${r.duration_ms} ms`), "", "Journal", `  ${runs.length} lines, adding up`, "  0 cleanups", ""].join("\n");
+    },
     async cleanupLog() { return { file: "C:\\Users\\edo\\AppData\\Local\\devstribution\\state\\journal.jsonl", lines: runs.length + cleanups.length, changed: [], missing: [], cleanups }; },
     async setSecret(id, name) { const a = apps.find((x) => x.id === id); const s = a?.secrets.find((x) => x.name === name); if (s) s.set = true; },
     async clearSecret(id, name) { const a = apps.find((x) => x.id === id); const s = a?.secrets.find((x) => x.name === name); if (s) s.set = false; },
@@ -463,6 +469,7 @@ export function mockApi(): Api {
       return {
         version: "0.1.0",
         data_dir: "C:\\Users\\edo\\AppData\\Local\\devstribution",
+        log_file: "C:\\Users\\edo\\AppData\\Local\\devstribution\\logs\\launcher.log",
         platform: "windows",
         mode: MANAGED ? "managed" : "free",
         policy: MANAGED ? MANAGED_POLICY : null,

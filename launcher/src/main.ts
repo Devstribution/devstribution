@@ -3,7 +3,7 @@ import "./style.css";
 
 import { House, LayoutGrid, History, Settings as SettingsIcon, Upload, Play } from "lucide";
 import { createApi, type Api, type AppView, type RunEvent, type RunResult } from "./api";
-import { h, icon, appIcon, clear, toast, errorText } from "./ui";
+import { h, icon, appIcon, clear, fileName, toast, errorText } from "./ui";
 import { homeView } from "./views/home";
 import { appsView } from "./views/apps";
 import { activityView } from "./views/activity";
@@ -216,6 +216,10 @@ async function boot() {
   await api.onRunNotRecorded((message) => { toast(message, "error"); });
 
   // ---------- opening .dsapp files: association, second launch, drag and drop ----------
+  /** One package is installed at a time: say which, and that the others are not. */
+  const onlyFirst = (paths: string[]) => {
+    if (paths.length > 1) toast(`Installing ${fileName(paths[0])} only. Open the other ${paths.length - 1 === 1 ? "package" : `${paths.length - 1} packages`} one at a time, after this one.`);
+  };
   const dropOverlay = h("div", { class: "drop-overlay", hidden: true },
     h("div", null, icon(Upload, 40), "Drop to install"));
   document.body.appendChild(dropOverlay);
@@ -224,11 +228,11 @@ async function boot() {
     const dsapps = e.paths.filter((p) => /\.(dsapp|zip)$/i.test(p));
     dropOverlay.hidden = !(e.type === "over" && (dsapps.length > 0 || e.paths.length === 0));
     if (e.type === "drop") {
-      if (dsapps.length) ctx.install(dsapps[0]);
+      if (dsapps.length) { ctx.install(dsapps[0]); onlyFirst(dsapps); }
       else if (e.paths.length) toast("Only .dsapp files (or a .dsapp renamed to .zip) can be installed", "error");
     }
   });
-  await api.onOpenFiles((paths) => { if (paths[0]) ctx.install(paths[0]); });
+  await api.onOpenFiles((paths) => { if (paths[0]) { ctx.install(paths[0]); onlyFirst(paths); } });
 
   // Ctrl+K: the search on Home.
   document.addEventListener("keydown", (e) => {

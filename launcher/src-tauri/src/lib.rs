@@ -16,7 +16,7 @@ use devstribution_host::store::{
     Quarantine, RunRecord, Stats, Store,
 };
 use devstribution_host::zone::Origin;
-use devstribution_host::{Paths, runner, secrets, uv};
+use devstribution_host::{Paths, applog, runner, secrets, uv};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -78,7 +78,9 @@ const RUNNABLE: &[&str] = &[
 
 fn err(e: impl std::fmt::Display) -> String {
     // `{:#}` keeps anyhow's context chain: "what we were doing: why it failed".
-    format!("{e:#}")
+    let message = format!("{e:#}");
+    applog::write(&format!("a command failed: {message}"));
+    message
 }
 
 #[derive(Serialize)]
@@ -367,6 +369,7 @@ async fn start_run(app: AppHandle, id: String, inputs: Map<String, Value>) -> Cm
                 // Rare (disk full, a file held by an antivirus), and the user must hear of it:
                 // a guard stop that is not recorded only holds while the launcher stays open.
                 if let Err(e) = s.store.finish_run(&mut finished, &result) {
+                    applog::write(&format!("a run could not be recorded: {e:#}"));
                     let _ = app2.emit("run-not-recorded", format!("{e:#}"));
                 }
             }
@@ -399,7 +402,8 @@ async fn list_runs(
 }
 
 #[tauri::command]
-async fn run_log(app: AppHandle, run_id: String) -> CmdResult<String> {
+/// The end of a run's log; `None` when no log file exists (an empty one is `Some("")`).
+async fn run_log(app: AppHandle, run_id: String) -> CmdResult<Option<String>> {
     blocking(move || {
         let record = state(&app).store.run(&run_id)?;
         let log = record
@@ -409,13 +413,13 @@ async fn run_log(app: AppHandle, run_id: String) -> CmdResult<String> {
             .join("app.log");
         // The end of the log only, decoded leniently: it can be large, and not all UTF-8.
         let Ok(mut file) = std::fs::File::open(log) else {
-            return Ok(String::new());
+            return Ok(None);
         };
         let len = file.metadata()?.len();
         file.seek(SeekFrom::Start(len.saturating_sub(200_000)))?;
         let mut bytes = Vec::new();
         file.take(200_000).read_to_end(&mut bytes)?;
-        Ok(String::from_utf8_lossy(&bytes).into_owned())
+        Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
     })
     .await
 }
@@ -573,6 +577,7 @@ impl PolicyView {
 struct SettingsView {
     version: &'static str,
     data_dir: String,
+    log_file: String,
     platform: &'static str,
     mode: &'static str,
     policy: Option<PolicyView>,
@@ -587,6 +592,7 @@ async fn settings(app: AppHandle) -> CmdResult<SettingsView> {
         Ok(SettingsView {
             version: env!("CARGO_PKG_VERSION"),
             data_dir: s.store.paths.root.display().to_string(),
+            log_file: s.store.paths.launcher_log().display().to_string(),
             platform: devstribution_host::store::current_platform(),
             mode: if s.store.policy().is_some() {
                 "managed"
@@ -607,6 +613,17 @@ async fn settings(app: AppHandle) -> CmdResult<SettingsView> {
                 })
                 .collect(),
         })
+    })
+    .await
+}
+
+/// The text of "Copy diagnostics" (see `Store::diagnostics`).
+#[tauri::command]
+async fn diagnostics(app: AppHandle) -> CmdResult<String> {
+    blocking(move || {
+        Ok(state(&app)
+            .store
+            .diagnostics(env!("CARGO_PKG_VERSION"), uv::version().as_deref()))
     })
     .await
 }
@@ -675,6 +692,24 @@ async fn cleanup_runs(
 #[tauri::command]
 async fn cleanup_log(app: AppHandle) -> CmdResult<JournalReport> {
     blocking(move || Ok(state(&app).store.journal_report())).await
+}
+
+/// Opens the licences of what ships inside the launcher (the installer puts the file beside it).
+#[tauri::command]
+async fn open_notices(app: AppHandle) -> CmdResult<()> {
+    blocking(move || {
+        let file = app.path().resolve(
+            "THIRD-PARTY-NOTICES.txt",
+            tauri::path::BaseDirectory::Resource,
+        )?;
+        let file = dunce::canonicalize(file).map_err(|_| {
+            anyhow::anyhow!("the licence file is not part of this build of devstribution")
+        })?;
+        app.opener()
+            .open_path(file.to_string_lossy(), None::<&str>)?;
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -763,6 +798,16 @@ fn restrict_dll_search() {}
 /// only one running (a second launch must not touch the first one's data).
 fn open_store() -> anyhow::Result<Store> {
     let paths = Paths::from_env()?;
+    applog::init(paths.launcher_log());
+    applog::write(&format!(
+        "devstribution {} starting",
+        env!("CARGO_PKG_VERSION")
+    ));
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        applog::write(&format!("panic: {info}"));
+        previous(info);
+    }));
     paths.migrate_old_location()?;
     if !cfg!(debug_assertions) {
         // A release launcher uses only the uv it ships, which was pinned and hash-checked when
@@ -824,6 +869,7 @@ pub fn run() {
             }
             Err(e) => {
                 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+                applog::write(&format!("devstribution cannot start: {e:#}"));
                 app.dialog()
                     .message(format!("devstribution cannot start.\n\n{e:#}"))
                     .kind(MessageDialogKind::Error)
@@ -847,9 +893,11 @@ pub fn run() {
             run_log,
             open_output,
             open_data_folder,
+            open_notices,
             cleanup_preview,
             cleanup_runs,
             cleanup_log,
+            diagnostics,
             set_secret,
             clear_secret,
             settings,
