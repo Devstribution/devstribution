@@ -10,6 +10,23 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-27
+
+A hardening release from a scan of the whole codebase. Still a preview, **not code-signed yet**.
+
+### Changed
+
+These can change what an existing app does: try yours with this version before updating other
+PCs to it.
+
+- Apps get only an allowed list of environment variables (see Security below). An app that read
+  a token or setting from the user's environment must get it another way, for example from a
+  secret saved in the launcher.
+- Python runs isolated (`-I -S`): the user's own site-packages and `PYTHON*` variables are
+  ignored.
+- An app that starts Python through a shell, `os.system`, `os.spawn*` or the `py` launcher is
+  stopped. Start it with `subprocess` and `sys.executable` instead, which runs under the guard.
+
 ### Security
 
 - Apps no longer see the launcher's whole environment: only Windows' own variables, the user's
@@ -70,5 +87,6 @@ warns before the installer runs, and it is not meant for company PCs yet.
 - Not yet tried on a locked-down company PC or behind a company proxy.
 - The launcher does not update itself: install a newer version over it.
 
-[Unreleased]: https://github.com/Devstribution/devstribution/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Devstribution/devstribution/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Devstribution/devstribution/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Devstribution/devstribution/releases/tag/v0.1.0
