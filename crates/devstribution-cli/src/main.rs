@@ -84,7 +84,8 @@ enum Command {
         no_password: bool,
     },
     /// Scan an app folder or a .dsapp for code worth a second look (network, programs, hidden
-    /// code, malware-like behaviour). Exits with 1 when something looks like malware
+    /// code, malware-like behaviour). Exits with 1 when something looks like malware, and with 2
+    /// when the target could not be read
     Scan {
         /// App folder or .dsapp file (default: current folder)
         #[arg(default_value = ".")]
@@ -95,7 +96,7 @@ enum Command {
     },
     /// Show what changed between two versions of an app: permissions, code scan findings,
     /// packages and files (app folders or .dsapp files). Exits with 1 when the new version adds
-    /// something that looks like malware
+    /// something that looks like malware, and with 2 when a version could not be read
     Diff {
         /// The version you know (app folder or .dsapp file)
         old: PathBuf,
@@ -144,6 +145,9 @@ enum TrustCommand {
         /// Output file (default: `<namespace>.trust`)
         #[arg(long, short)]
         out: Option<PathBuf>,
+        /// Replace the output file if it exists, without asking
+        #[arg(long, short)]
+        force: bool,
     },
     /// Show what a .trust file approves: namespace and key fingerprints
     Show { file: PathBuf },
@@ -151,6 +155,13 @@ enum TrustCommand {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    // `scan` and `diff` are what CI runs on packages it did not make: 1 means "danger found", so
+    // "could not read it" needs a code of its own (2, which is also what a usage error exits with).
+    let read_error_code = if matches!(cli.command, Command::Scan { .. } | Command::Diff { .. }) {
+        2
+    } else {
+        1
+    };
     let result = match cli.command {
         Command::Init {
             dir,
@@ -193,8 +204,9 @@ fn main() -> ExitCode {
                     name,
                     contact,
                     out,
+                    force,
                 },
-        } => trust::export(namespace, key, from_package, name, contact, out).map(|_| 0),
+        } => trust::export(namespace, key, from_package, name, contact, out, force).map(|_| 0),
         Command::Trust {
             command: TrustCommand::Show { file },
         } => trust::show(&file).map(|_| 0),
@@ -203,7 +215,7 @@ fn main() -> ExitCode {
         Ok(code) => ExitCode::from(code),
         Err(err) => {
             eprintln!("error: {err:#}");
-            ExitCode::FAILURE
+            ExitCode::from(read_error_code)
         }
     }
 }

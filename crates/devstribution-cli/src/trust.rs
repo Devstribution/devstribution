@@ -1,6 +1,7 @@
 //! `trust export` and `trust show`: the `.trust` files IT approves authors with.
 
 use std::fs;
+use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -18,6 +19,7 @@ pub fn export(
     name: Option<String>,
     contact: Option<String>,
     out: Option<PathBuf>,
+    force: bool,
 ) -> Result<()> {
     let (namespace, key_text) = match (from_package, namespace) {
         (Some(pkg), ns) => {
@@ -51,6 +53,9 @@ pub fn export(
     author.name = name;
     author.contact = contact;
     let out = out.unwrap_or_else(|| PathBuf::from(format!("{namespace}.trust")));
+    if !force && out.exists() && !confirm_overwrite(&out)? {
+        bail!("{} was left as it is", out.display());
+    }
     fs::write(&out, author.to_file()).with_context(|| format!("writing {}", out.display()))?;
     println!("Trust file for `{namespace}` written to {}", out.display());
     for fp in author.fingerprints() {
@@ -61,6 +66,22 @@ pub fn export(
          fingerprint through another channel, so they can check the file is really yours."
     );
     Ok(())
+}
+
+/// Asks before replacing a file IT may already have been given. Without a terminal to ask on
+/// (CI, a pipe) the answer is no, and `--force` is the way to say yes.
+fn confirm_overwrite(path: &Path) -> Result<bool> {
+    if !io::stdin().is_terminal() {
+        bail!(
+            "{} already exists; use --force to replace it",
+            path.display()
+        );
+    }
+    eprint!("{} already exists. Replace it? [y/N] ", path.display());
+    io::stderr().flush()?;
+    let mut answer = String::new();
+    io::stdin().lock().read_line(&mut answer)?;
+    Ok(matches!(answer.trim(), "y" | "Y" | "yes" | "Yes"))
 }
 
 /// Prints what a `.trust` file approves, for IT to check before listing it.

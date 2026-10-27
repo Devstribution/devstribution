@@ -134,10 +134,12 @@ company evaluates devstribution: IT asks for both.
     (today "ended without a result");
   - the update screen shows a changed title or icon, and compares versions like `1.0rc1`;
   - other languages; an accessible version of the runs chart.
-- **CLI**: separate exit codes for "danger found" and "could not read the package"; `verify`
-  shows the scan and can check against a `.trust` file; `trust export` asks before overwriting.
-- **Contributors**: `CONTRIBUTING.md` (with section 8's contributor guide), issue and PR
-  templates.
+- **CLI**: `verify` shows the scan and can check against a `.trust` file. (☑ 27 October:
+  `scan` and `diff` exit 2 when the package cannot be read, 1 for danger; `trust export` asks
+  before overwriting, `--force` skips the question.)
+- **Contributors**: the contributor guide that section 8 plans, folded from `HANDOFF.md` and
+  `status_quo.md` after the first release. (☑ 27 October: `CONTRIBUTING.md`, issue and PR
+  templates.)
 - **Phase 2 of the plan**: the rest of managed mode (the per-machine service and installs in
   Program Files, an ADMX template, IT countersignatures), the catalog with GitHub namespace
   verification and a "known publisher" hint, `devstribution://` links, the `background` app kind,
@@ -346,7 +348,7 @@ The scan read only the package's own Python files. Extend it where attackers act
   native code, code built at run time) and flags what looks like malware (hidden code, starting
   with Windows, reading browser passwords, switching off the antivirus, injecting into
   processes). Undeclared network or SAP use is a warning. The same scan warns in `pack` and runs
-  as `devstribution scan` (exit code 1 on danger, `--json` for CI).
+  as `devstribution scan` (exit code 1 on danger, 2 when the target cannot be read, `--json` for CI).
 - ◐ Uninstall easy to find (report: Launcher UX 1): now in every app panel's ⋯ menu, next to Pin and
   Repair; check with users whether that is enough.
 - ☑ Results in "a folder the user chose", so stateful apps get an "Open" button (report:

@@ -10,6 +10,17 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 
 ## [Unreleased]
 
+### Changed
+
+- `devstribution scan` and `devstribution diff` exit with 2 when a package could not be read, so
+  CI can tell it from 1, "danger found". Their other behaviour is unchanged.
+- `devstribution trust export` asks before replacing an existing file. Without a terminal to ask
+  on (CI, a pipe) it refuses; `--force` replaces it.
+
+### Added
+
+- `CONTRIBUTING.md`, and issue and pull request templates.
+
 ## [0.2.0] - 2026-10-27
 
 A hardening release from a scan of the whole codebase. Still a preview, **not code-signed yet**.
