@@ -12,7 +12,8 @@ use devstribution_core::manifest::{Input, Output, Permissions};
 use devstribution_host::policy::{self, Policy, ScanDanger};
 use devstribution_host::run::{self, RunEvent};
 use devstribution_host::store::{
-    InstallStep, InstalledApp, PendingInstall, Quarantine, RunRecord, Stats, Store,
+    CleanupPlan, CleanupResult, InstallStep, InstalledApp, JournalReport, PendingInstall,
+    Quarantine, RunRecord, Stats, Store,
 };
 use devstribution_host::zone::Origin;
 use devstribution_host::{Paths, runner, secrets, uv};
@@ -433,6 +434,11 @@ async fn open_output(
 ) -> CmdResult<()> {
     blocking(move || {
         let record = state(&app).store.run(&run_id)?;
+        if record.output_removed.is_some() {
+            return Err(anyhow::anyhow!(
+                "this run's results were removed by a cleanup"
+            ));
+        }
         // `dunce` gives `C:\...` rather than `\\?\C:\...`, which Explorer cannot always open.
         let output_dir = dunce::canonicalize(&record.output_dir)?;
         let target = match path {
@@ -640,6 +646,37 @@ async fn save_trust_request(app: AppHandle, token: String) -> CmdResult<bool> {
 
 /// Opens devstribution's data folder in the file manager, for support and for IT. It takes no
 /// path: the only folder it can open is the launcher's own root, whatever the page asks.
+/// What a cleanup would remove: nothing is deleted by asking.
+#[tauri::command]
+async fn cleanup_preview(
+    app: AppHandle,
+    older_than_days: Option<u32>,
+    app_id: Option<String>,
+    remove_records: bool,
+) -> CmdResult<CleanupPlan> {
+    blocking(move || {
+        state(&app)
+            .store
+            .cleanup_plan(older_than_days, app_id.as_deref(), remove_records)
+    })
+    .await
+}
+
+/// Removes the results of the runs the user confirmed, by id: the page never names a path.
+#[tauri::command]
+async fn cleanup_runs(
+    app: AppHandle,
+    run_ids: Vec<String>,
+    remove_records: bool,
+) -> CmdResult<CleanupResult> {
+    blocking(move || state(&app).store.cleanup(&run_ids, remove_records)).await
+}
+
+#[tauri::command]
+async fn cleanup_log(app: AppHandle) -> CmdResult<JournalReport> {
+    blocking(move || Ok(state(&app).store.journal_report())).await
+}
+
 #[tauri::command]
 async fn open_data_folder(app: AppHandle) -> CmdResult<()> {
     blocking(move || {
@@ -810,6 +847,9 @@ pub fn run() {
             run_log,
             open_output,
             open_data_folder,
+            cleanup_preview,
+            cleanup_runs,
+            cleanup_log,
             set_secret,
             clear_secret,
             settings,

@@ -1,6 +1,6 @@
 // Demo backend for previewing the UI in a browser. Nothing here runs in the real launcher.
 
-import type { Api, AppView, PendingInstall, Policy, RunEvent, RunRecord, Settings, StepEvent, Stats, Trust } from "./api";
+import type { Api, AppView, JournalEntry, PendingInstall, Policy, RunEvent, RunRecord, Settings, StepEvent, Stats, Trust } from "./api";
 
 const now = () => Math.floor(Date.now() / 1000);
 const DAY = 86_400;
@@ -193,6 +193,7 @@ function demoRuns(): RunRecord[] {
 }
 
 let runs = demoRuns();
+const cleanups: JournalEntry[] = [];
 
 function stats(): Stats {
   const per_day = [] as Stats["per_day"];
@@ -440,6 +441,22 @@ export function mockApi(): Api {
     },
     async openOutput() {},
     async openDataFolder() {},
+    async cleanupPreview(olderThanDays, appId, removeRecords) {
+      const cutoff = olderThanDays === null ? Infinity : now() - olderThanDays * DAY;
+      const list = runs
+        .filter((r) => r.status !== "running" && r.started_at <= cutoff && (!appId || r.app_id === appId) && (removeRecords || !r.output_removed))
+        .map((r) => ({ run_id: r.id, app_id: r.app_id, app_title: r.app_title, started_at: r.started_at, status: r.status, bytes: r.output_removed ? 0 : 40_000 + (r.started_at % 9) * 310_000 }));
+      return { runs: list, bytes: list.reduce((n, r) => n + r.bytes, 0) };
+    },
+    async cleanupRuns(ids, removeRecords) {
+      const hit = runs.filter((r) => ids.includes(r.id));
+      const bytes = hit.reduce((n, r) => n + (r.output_removed ? 0 : 40_000 + (r.started_at % 9) * 310_000), 0);
+      if (removeRecords) runs = runs.filter((r) => !ids.includes(r.id));
+      else hit.forEach((r) => { r.output_removed = now(); });
+      cleanups.unshift({ seq: cleanups.length, at: now(), kind: "cleanup", hash: "", data: { runs: hit.map((r) => ({ run_id: r.id, app_id: r.app_id, bytes: 0, file_count: 2, record_removed: removeRecords })), bytes, remove_records: removeRecords } });
+      return { runs: hit.length, bytes, failed: [] };
+    },
+    async cleanupLog() { return { file: "C:\\Users\\edo\\AppData\\Local\\devstribution\\state\\journal.jsonl", lines: runs.length + cleanups.length, changed: [], missing: [], cleanups }; },
     async setSecret(id, name) { const a = apps.find((x) => x.id === id); const s = a?.secrets.find((x) => x.name === name); if (s) s.set = true; },
     async clearSecret(id, name) { const a = apps.find((x) => x.id === id); const s = a?.secrets.find((x) => x.name === name); if (s) s.set = false; },
     async settings(): Promise<Settings> {

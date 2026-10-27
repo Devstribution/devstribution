@@ -2,6 +2,7 @@
 //! `devstribution dev` runs apps exactly as the launcher does.
 
 pub mod guard;
+pub mod journal;
 pub mod paths;
 pub mod policy;
 pub mod run;

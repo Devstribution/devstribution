@@ -28,7 +28,7 @@ function details(ctx: Ctx, r: RunRecord) {
           h("div", { class: "output-text" }, h("div", { class: "label" }, k), h("div", { class: "mono" }, typeof v === "string" ? v : JSON.stringify(v))))) : null,
         h("div", { class: "section-label" }, "Log"), log),
       h("div", { class: "modal-foot" },
-        h("button", { class: "btn", onclick: () => ctx.api.openOutput(r.id, null, false).catch((e) => toast(errorText(e), "error")) }, icon(FolderOpen, 16), "Open result folder"),
+        r.output_removed ? h("span", { class: "muted small grow" }, "Results removed by a cleanup") : h("button", { class: "btn", onclick: () => ctx.api.openOutput(r.id, null, false).catch((e) => toast(errorText(e), "error")) }, icon(FolderOpen, 16), "Open result folder"),
         h("button", { class: "btn primary", onclick: () => { close(); ctx.openApp(r.app_id); } }, "Open the app"))));
   document.body.appendChild(overlay);
 }

@@ -130,8 +130,9 @@ company evaluates devstribution: IT asks for both.
   - plainer trust wording on the main screens (no "namespace", key IDs or "Free mode ·
     signatures checked"), and a first-run explanation of publishers and trust;
   - Settings: stop trusting a publisher (☑ 27 October: "Open folder" for the data folder);
-  - run folders pruned after a while; one run at a time per app; table results over 16 KB
-    (today "ended without a result");
+  - run folders pruned after a while (☑ 27 October as a choice, not automatic: Settings → Storage →
+    "Clean up…" removes old results after showing the size, and keeps the runs in Activity); one run
+    at a time per app; table results over 16 KB (today "ended without a result");
   - the update screen shows a changed title or icon (☑ 27 October: it compares package versions
     like `1.0rc1` the way PEP 440 orders them);
   - other languages; an accessible version of the runs chart.
