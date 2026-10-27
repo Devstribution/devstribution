@@ -16,6 +16,10 @@ managed mode are built, so the work left is sorted into three stages instead of 
 - **[B. Signed 1.0](#b-before-a-signed-10)**: what has to hold before our signature goes on it.
 - **[C. After 1.0](#c-after-10)**: wanted, but nothing about 1.0 depends on it.
 
+*27 October 2026:* a scan of the whole codebase. What broke a promise the docs already made was
+fixed in 0.2.0 ([`security.md`](security.md), "Codebase scan"); the rest is sorted into the
+stages below (A10–A13, B11–B14, C).
+
 *Earlier revision, 23 October 2026:* making the platform safe enough for IT to allow moved before
 1.0: the runtime guard (section 4), the deeper scan (section 5) and a first managed mode
 (section 10), all planned for after 1.0 before.
@@ -27,18 +31,19 @@ item went. Status: ☐ to do · ◐ in progress · ☑ done
 
 What a stranger downloading it meets first, and what the SignPath application needs. Small items.
 
-1. ☐ **A release workflow in CI** (GitHub Actions): builds the NSIS installer and the CLI on
+1. ☑ **A release workflow in CI** (GitHub Actions): builds the NSIS installer and the CLI on
    Windows from a tag and attaches them to a GitHub release, with checksums. Signing is added to
    the same workflow later (SignPath signs CI builds, not ones made on a PC).
-2. ☐ **Versioning, changelog and release notes**, then `v0.1.0` published as a pre-release.
-   SmartScreen warns about the unsigned installer; the release notes say so.
+2. ☑ **Versioning, changelog and release notes**, then `v0.1.0` published as a pre-release.
+   SmartScreen warns about the unsigned installer; the release notes say so. How a release is
+   made: [`releasing.md`](releasing.md).
 3. ☐ **A code signing policy** (README or its own page), as SignPath projects publish: who may
    approve a signed release, the attribution to SignPath, and what the launcher sends over the
    network (nothing of ours: uv, Python and packages, later the revocation list).
 4. ☐ **An About page**: version, licences of bundled software, where the data folder is
    (section 7).
-5. ☐ **Error messages reviewed end to end**: every failure says what happened and what to do
-   (section 7).
+5. ☐ **Error messages reviewed end to end**: every failure says what happened and what to do,
+   and a launcher that fails to start shows an error screen, not a blank window (section 7).
 6. ☐ **"Copy diagnostics"**: logs a user can find and send, without secrets in them (section 8).
 7. ☐ **Docs for app authors, the basics**: from `devstribution init` to a delivered `.dsapp`
    (section 8).
@@ -46,6 +51,23 @@ What a stranger downloading it meets first, and what the SignPath application ne
    it), two-factor authentication for everyone with write access.
 9. ☐ **Apply to SignPath Foundation**, with the release linked. If refused (the project is young),
    Certum's open-source certificate is the fallback.
+10. ☐ **The install dialog can be cancelled** (button and Escape) while it inspects or installs.
+11. ☐ **No silent behaviour** (section 7):
+    - an empty launcher says "No apps yet", not "No app matches these filters" and "All 0 apps";
+    - dropping several packages says only the first is installed;
+    - cancelling the secret prompt says the run was cancelled;
+    - "Forget" asks before deleting a secret;
+    - repair shows its progress (the events exist);
+    - a missing log looks different from an empty one.
+12. ☐ **Keyboard and screen reader basics** (section 7):
+    - dialogs keep focus inside, give it back when they close, and are marked `aria-modal`;
+    - the segmented controls keep focus on click, and the `⋯` menu takes arrow keys and Escape;
+    - run progress and install steps are announced;
+    - error toasts stay until closed;
+    - motion follows `prefers-reduced-motion`.
+13. ☐ **Docs that match the release**: `README.md` ("pre-alpha") and `SECURITY.md` ("no release
+    yet") predate v0.1.0; the test counts in `status_quo.md`; `tauri.conf.json` still lists
+    Linux and macOS bundles.
 
 ## B. Before a signed 1.0
 
@@ -73,7 +95,19 @@ What has to hold before our signature goes on it, roughly in this order.
 9. ☐ **An "update available" path** for apps: a newer `.dsapp` already updates in place with the
    diff (section 6).
 10. ☐ **Security review again** for what changed since the last one (guard file rules, managed
-    mode, updates), as section 8 asks before each such release.
+    mode, updates), as section 8 asks before each such release. Weaknesses still open from the
+    October scan are tracked privately until fixed, as `SECURITY.md` asks reporters to send them.
+11. ☐ **`state.json` survives a crash**: written to disk before the rename, with a backup the
+    launcher recovers from. Today a damaged file blocks every operation.
+12. ☐ **uv can be stopped**: a timeout and Cancel during installs, and uv inside a Job Object
+    like runs, so a stalled proxy cannot leave the install screen stuck (with B1).
+13. ☐ **Release workflow hardened**: runs only from `main` after CI has passed, attests
+    `SHA256SUMS.txt` (GitHub artifact attestations), says plainly what the checksums prove, and
+    `releasing.md` lists refreshing the dependency data (section 5) before each release.
+14. ☐ **CI and tests**: the minimum Rust version (1.90) checked, `cargo-deny`, `npm audit`
+    including dev dependencies, job timeouts, Python 3.10 (the runner's minimum), the examples
+    packed and scanned; tests for the launcher's Rust commands, a TypeScript linter, and a
+    `SAFETY` comment on each `unsafe` block.
 
 ## C. After 1.0
 
@@ -92,6 +126,18 @@ company evaluates devstribution: IT asks for both.
 - **Results shown in the launcher** (section 7): Excel and CSV as tables, images and charts, more
   input types.
 - **Performance** (section 9): measure first; nobody has complained.
+- **Launcher, smaller items** (section 7):
+  - plainer trust wording on the main screens (no "namespace", key IDs or "Free mode ·
+    signatures checked"), and a first-run explanation of publishers and trust;
+  - Settings: open the data folder, stop trusting a publisher;
+  - run folders pruned after a while; one run at a time per app; table results over 16 KB
+    (today "ended without a result");
+  - the update screen shows a changed title or icon, and compares versions like `1.0rc1`;
+  - other languages; an accessible version of the runs chart.
+- **CLI**: separate exit codes for "danger found" and "could not read the package"; `verify`
+  shows the scan and can check against a `.trust` file; `trust export` asks before overwriting.
+- **Contributors**: `CONTRIBUTING.md` (with section 8's contributor guide), issue and PR
+  templates.
 - **Phase 2 of the plan**: the rest of managed mode (the per-machine service and installs in
   Program Files, an ADMX template, IT countersignatures), the catalog with GitHub namespace
   verification and a "known publisher" hint, `devstribution://` links, the `background` app kind,
@@ -175,7 +221,7 @@ The parts that compile on Windows but have never run there. Each gets a result i
   data folder and the apps' secrets.
 - ☑ File association (double-click a `.dsapp`) and single instance, from the installed launcher.
 - ☑ Mark-of-the-Web: a `.dsapp` downloaded with a browser shows "Downloaded from the internet".
-- ☐ A release workflow and a first unsigned release → A1, A2.
+- ☑ A release workflow and a first unsigned release (v0.1.0, 26 October) → A1, A2.
 - ☐ Code signing (SignPath Foundation for open-source projects; Certum's open-source certificate
   as the fallback), so SmartScreen and AppLocker/WDAC see a known publisher: apply → A9, sign in
   CI → B4.
@@ -313,6 +359,8 @@ The scan read only the package's own Python files. Extend it where attackers act
   drop and "Open with". `devstribution://` links (after 1.0) would avoid the renaming.
 - ☐ Error messages reviewed end to end → A5.
 - ☐ About page with version, licences of bundled software, and where the data folder is → A4.
+- ☐ Install dialog cancellable, no silent behaviour, keyboard and screen reader basics → A10–A12;
+  smaller items → C.
 - ☐ **Results shown in the launcher**: preview Excel and CSV outputs as a table, show images and
   charts, without opening another program. With more input types (dates, choices, several
   files), most `form` apps need no window of their own → C.
@@ -324,7 +372,7 @@ The scan read only the package's own Python files. Extend it where attackers act
   [`security.md`](security.md). Repeat before each release that changes these parts → B10.
 - ☑ **`SECURITY.md`**: how to report a vulnerability (privately, through GitHub), what is in
   scope, and what we answer. Turning on private vulnerability reporting → A8.
-- ☐ Versioning, changelog, release notes → A2; `docs/HANDOFF.md` and `status_quo.md` folded into a
+- ☑ Versioning, changelog, release notes → A2. ☐ `docs/HANDOFF.md` and `status_quo.md` folded into a
   contributor guide, after the first release.
 - ☐ Logs a user can find and send (a "Copy diagnostics" button), without secrets in them → A6.
 - ☐ Docs for app authors: from `devstribution init` to a delivered `.dsapp` → A7.
