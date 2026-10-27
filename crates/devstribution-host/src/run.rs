@@ -341,9 +341,12 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
     // `gui` apps run with pythonw.exe; the others write only to pipes, so a console window
     // would stay empty.
     platform::prepare(&mut cmd);
-    let mut child = cmd
-        .spawn()
-        .with_context(|| format!("cannot start {}", spec.python.display()))?;
+    let mut child = cmd.spawn().with_context(|| {
+        format!(
+            "cannot start {}: use Repair on the app, or reinstall it",
+            spec.python.display()
+        )
+    })?;
     // The process starts suspended (Windows): it joins the Job Object before it can start
     // anything, so every process it creates is stopped with the run.
     let job = match platform::Job::assign(&child) {

@@ -14,6 +14,13 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 
 - `devstribution scan` and `devstribution diff` exit with 2 when a package could not be read, so
   CI can tell it from 1, "danger found". Their other behaviour is unchanged.
+- The install window can be cancelled with its button or Escape while the package is checked,
+  and with Escape on the confirmation screen. Once the install has started it cannot be stopped,
+  and the window says so.
+- A launcher that cannot set itself up shows "devstribution could not start", with the reason and
+  "Try again", instead of a blank window. Several messages now say what to do: a damaged
+  `state.json`, an install that is no longer pending, uv failing (usually the internet connection or
+  a proxy), a Python that will not start, the credential store.
 - `devstribution trust export` asks before replacing an existing file. Without a terminal to ask
   on (CI, a pipe) it refuses; `--force` replaces it.
 

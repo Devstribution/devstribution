@@ -43,8 +43,14 @@ What a stranger downloading it meets first, and what the SignPath application ne
 4. ☑ **An About page**: version, licences of bundled software, where the data folder is
    (section 7). 27 October: in Settings, with the licence texts of everything shipped
    (`THIRD-PARTY-NOTICES.txt`, made by `scripts/third_party_notices.py`, shipped with the installer).
-5. ☐ **Error messages reviewed end to end**: every failure says what happened and what to do,
+5. ◐ **Error messages reviewed end to end**: every failure says what happened and what to do,
    and a launcher that fails to start shows an error screen, not a blank window (section 7).
+   27 October: the window shows "devstribution could not start" with the error and "Try again"
+   when it cannot set itself up (also when the first page fails to load), uncaught errors become
+   a message, and the messages a user is most likely to meet say what to do: a damaged
+   `state.json`, a failed save, an install that is no longer pending, uv missing or failing
+   (internet or proxy), a Python that will not start, the credential store. Still to do: the
+   rest of the host's messages and what apps print in their own errors.
 6. ☑ **"Copy diagnostics"**: logs a user can find and send, without secrets in them (section 8).
    27 October: the launcher writes `logs\launcher.log` (starts, failed commands, panics), Settings
    shows where, and "Copy diagnostics" puts versions, apps, the latest runs and the end of that log
@@ -55,7 +61,10 @@ What a stranger downloading it meets first, and what the SignPath application ne
    it), two-factor authentication for everyone with write access.
 9. ☐ **Apply to SignPath Foundation**, with the release linked. If refused (the project is young),
    Certum's open-source certificate is the fallback.
-10. ☐ **The install dialog can be cancelled** (button and Escape) while it inspects or installs.
+10. ◐ **The install dialog can be cancelled** (button and Escape) while it inspects or installs.
+    27 October: Cancel and Escape work while the package is checked, on the confirmation screen
+    and on the finished screen; a package checked after Cancel is discarded. Once the install has
+    started it cannot be stopped, and the dialog says so: stopping uv is B12.
 11. ☑ **No silent behaviour** (section 7; 27 October):
     - an empty launcher says "No apps yet", not "No app matches these filters" and "All 0 apps";
     - dropping several packages says only the first is installed;
@@ -365,7 +374,7 @@ The scan read only the package's own Python files. Extend it where attackers act
   installed launcher.
 - ☑ A `.dsapp` renamed to `.zip` by a download installs too (report: Launcher UX 5): picker, drag and
   drop and "Open with". `devstribution://` links (after 1.0) would avoid the renaming.
-- ☐ Error messages reviewed end to end → A5.
+- ◐ Error messages reviewed end to end → A5 (first pass done).
 - ☐ About page with version, licences of bundled software, and where the data folder is → A4.
 - ☐ Install dialog cancellable, no silent behaviour, keyboard and screen reader basics → A10–A12;
   smaller items → C.

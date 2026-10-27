@@ -95,7 +95,7 @@ pub fn sync(
         .stderr(Stdio::piped())
         .spawn()
         .context(
-            "cannot start uv; install it from https://docs.astral.sh/uv/ or set DEVSTRIBUTION_UV",
+            "cannot start uv, the tool that sets up an app's Python: reinstall devstribution, or ask your IT department whether it is blocked (developers can set DEVSTRIBUTION_UV)",
         )?;
     let mut tail: Vec<String> = Vec::new();
     for line in BufReader::new(child.stderr.take().expect("piped")).lines() {
@@ -113,7 +113,7 @@ pub fn sync(
     let status = child.wait()?;
     if !status.success() {
         bail!(
-            "preparing the Python environment failed:\n{}",
+            "preparing the Python environment failed. This is usually the internet connection or a proxy blocking the download: check it and try again.\n{}",
             tail.join("\n")
         );
     }

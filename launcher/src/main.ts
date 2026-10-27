@@ -1,7 +1,7 @@
 import "@fontsource-variable/manrope";
 import "./style.css";
 
-import { House, LayoutGrid, History, Settings as SettingsIcon, Upload, Play } from "lucide";
+import { House, LayoutGrid, History, Settings as SettingsIcon, Upload, Play, ShieldAlert, RotateCw } from "lucide";
 import { createApi, type Api, type AppView, type RunEvent, type RunResult } from "./api";
 import { h, icon, appIcon, clear, fileName, toast, errorText } from "./ui";
 import { homeView } from "./views/home";
@@ -208,7 +208,9 @@ async function boot() {
       current = view;
       clear(main, view.node);
     } catch (e) {
-      toast(errorText(e), "error");
+      // With nothing drawn yet this would be a blank page: show the failure there.
+      if (current) toast(errorText(e), "error");
+      else clear(main, h("div", { class: "failure-fill" }, failureBox(e)));
     }
   }
   window.addEventListener("hashchange", render);
@@ -255,4 +257,24 @@ async function boot() {
   if (pending[0]) ctx.install(pending[0]);
 }
 
-boot();
+/** The window could not be set up: say so and offer another try, instead of staying blank. */
+function failureBox(e: unknown) {
+  return h("div", { class: "modal startup-error", role: "alert" },
+    h("div", { class: "modal-head center" }, h("div", { class: "modal-icon red" }, icon(ShieldAlert, 26)),
+      h("div", null, h("h2", null, "devstribution could not start"),
+        h("div", { class: "muted" }, "Your apps and their data were not changed."))),
+    h("div", { class: "modal-body" },
+      h("div", { class: "error-box" }, errorText(e)),
+      h("div", { class: "muted small" },
+        "Try again, or restart your computer. If it keeps happening, send launcher.log (in the logs folder of the devstribution data folder) to whoever supports devstribution for you.")),
+    h("div", { class: "modal-foot" }, h("button", { class: "btn primary", onclick: () => location.reload() }, icon(RotateCw, 16), "Try again")));
+}
+
+function startupFailure(e: unknown) {
+  clear(document.getElementById("app")!, failureBox(e));
+}
+
+// A failure nobody caught: say so, rather than a button that does nothing.
+window.addEventListener("unhandledrejection", (ev) => { toast(errorText(ev.reason), "error"); });
+
+boot().catch(startupFailure);

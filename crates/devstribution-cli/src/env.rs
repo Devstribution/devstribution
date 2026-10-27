@@ -28,7 +28,7 @@ pub fn run_uv(args: &[&str], dir: &Path) -> Result<()> {
         .status()
         .map_err(|e| {
             anyhow::anyhow!(
-                "cannot start uv ({e}); install it from https://docs.astral.sh/uv/ or set DEVSTRIBUTION_UV"
+                "cannot start uv ({e}): install it from https://docs.astral.sh/uv/ or set DEVSTRIBUTION_UV"
             )
         })?;
     if !status.success() {
