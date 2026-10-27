@@ -107,7 +107,7 @@ export function toggleSettings(ctx: Ctx) {
 /** What ships inside devstribution, and under which licence. The Rust libraries are in Cargo.lock. */
 const COMPONENTS: [string, string][] = [
   ["uv (Astral): sets up each app's Python", "MIT or Apache-2.0"],
-  ["Tauri and the Rust libraries it builds on", "MIT or Apache-2.0, and others: see Cargo.lock"],
+  ["Tauri and the Rust libraries it builds on", "mostly MIT or Apache-2.0; the full list is in the licence texts"],
   ["Microsoft Edge WebView2: draws this window", "Microsoft's licence; installed with Windows"],
   ["Manrope, the typeface", "SIL Open Font Licence 1.1"],
   ["Lucide, the icons", "ISC"],
@@ -139,8 +139,10 @@ function aboutGroup(ctx: Ctx, s: Settings) {
     h("span", { class: "section-label" }, "About"),
     h("div", { class: "small soft-text" }, `devstribution ${s.version} · ${s.uv_version ?? "uv not found"} · ${s.platform}`),
     h("div", { class: "small soft-text" }, "Free software, MIT or Apache-2.0: github.com/Devstribution/devstribution"),
+    h("div", { class: "muted tiny wrap-anywhere" }, `Log: ${s.log_file}`),
     h("details", { class: "disclosure" }, h("summary", null, "Software inside devstribution"),
-      h("dl", { class: "kv" }, COMPONENTS.map(([name, licence]) => [h("dt", null, name), h("dd", null, licence)]))),
+      h("dl", { class: "kv" }, COMPONENTS.map(([name, licence]) => [h("dt", null, name), h("dd", null, licence)])),
+      h("button", { class: "link small", onclick: () => ctx.api.openNotices().catch((e) => toast(errorText(e), "error")) }, "Open all licence texts")),
     h("button", { class: "btn small self-start", onclick: copy }, icon(ClipboardCopy, 14), "Copy diagnostics"),
     h("div", { class: "muted tiny" }, "For a bug report or your IT: versions, your apps and the latest runs. No secrets, inputs or results."));
 }

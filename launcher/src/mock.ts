@@ -441,6 +441,7 @@ export function mockApi(): Api {
     },
     async openOutput() {},
     async openDataFolder() {},
+    async openNotices() {},
     async cleanupPreview(olderThanDays, appId, removeRecords) {
       const cutoff = olderThanDays === null ? Infinity : now() - olderThanDays * DAY;
       const list = runs
@@ -468,6 +469,7 @@ export function mockApi(): Api {
       return {
         version: "0.1.0",
         data_dir: "C:\\Users\\edo\\AppData\\Local\\devstribution",
+        log_file: "C:\\Users\\edo\\AppData\\Local\\devstribution\\logs\\launcher.log",
         platform: "windows",
         mode: MANAGED ? "managed" : "free",
         policy: MANAGED ? MANAGED_POLICY : null,

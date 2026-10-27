@@ -88,6 +88,11 @@ impl Paths {
         self.root.join("state")
     }
 
+    /// The launcher's own log (`applog`).
+    pub fn launcher_log(&self) -> PathBuf {
+        self.root.join("logs").join("launcher.log")
+    }
+
     /// What the launcher did to the run history (`journal`).
     pub fn journal(&self) -> PathBuf {
         self.state().join("journal.jsonl")

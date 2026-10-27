@@ -265,6 +265,7 @@ export interface Policy {
 export interface Settings {
   version: string;
   data_dir: string;
+  log_file: string;
   platform: string;
   mode: "free" | "managed";
   policy?: Policy | null;
@@ -296,6 +297,8 @@ export interface Api {
   runLog(runId: string): Promise<string | null>;
   openOutput(runId: string, path: string | null, reveal: boolean): Promise<void>;
   openDataFolder(): Promise<void>;
+  /** Opens the licences of the software inside devstribution. */
+  openNotices(): Promise<void>;
   /** What a cleanup would remove. Nothing is deleted by asking. */
   cleanupPreview(olderThanDays: number | null, appId: string | null, removeRecords: boolean): Promise<CleanupPlan>;
   cleanupRuns(runIds: string[], removeRecords: boolean): Promise<CleanupResult>;
@@ -364,6 +367,7 @@ async function tauriApi(): Promise<Api> {
     runLog: (runId) => invoke("run_log", { runId }),
     openOutput: (runId, path, reveal) => invoke("open_output", { runId, path, reveal }),
     openDataFolder: () => invoke("open_data_folder"),
+    openNotices: () => invoke("open_notices"),
     cleanupPreview: (olderThanDays, appId, removeRecords) => invoke("cleanup_preview", { olderThanDays, appId, removeRecords }),
     cleanupRuns: (runIds, removeRecords) => invoke("cleanup_runs", { runIds, removeRecords }),
     cleanupLog: () => invoke("cleanup_log"),

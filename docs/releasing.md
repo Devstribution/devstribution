@@ -26,6 +26,9 @@ behaviour, a patch (0.1.1) only fixes. The package format has its own number (fo
    `## [0.2.0] - <today>`, written for people who use devstribution, not for us. Update the links
    at the bottom.
 2. **Version.** `python scripts/release.py bump 0.2.0`, then `cargo update --workspace`.
+   Then `python scripts/third_party_notices.py`: it rewrites `THIRD-PARTY-NOTICES.txt`, which the
+   installer ships, for the dependency versions of this release (it needs a network connection).
+   Commit the file if it changed.
 3. **Check.** `python scripts/release.py check v0.2.0` must say the versions and the changelog
    agree. Open a PR with these changes and merge it when CI passes.
 4. **Dry run (optional).** Actions → Release → *Run workflow* on `main`: it builds everything

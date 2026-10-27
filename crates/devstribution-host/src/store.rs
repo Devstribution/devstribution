@@ -1561,6 +1561,15 @@ impl Store {
             );
         }
         out += &format!("  {} cleanups\n", j.cleanups.len());
+
+        out += "\nLauncher log (latest lines)\n";
+        let log = crate::applog::tail(&self.paths.launcher_log(), 20);
+        if log.is_empty() {
+            out += "  empty\n";
+        }
+        for line in log {
+            out += &format!("  {}\n", redact(&line));
+        }
         out
     }
 
@@ -1930,6 +1939,7 @@ mod tests {
             "only the first line of an error"
         );
         assert!(text.contains("adding up"));
+        assert!(text.contains("Launcher log"));
     }
 
     #[test]
