@@ -151,7 +151,10 @@ def main() -> int:
         return 3
 
     if start.get("pycache_dir"):
+        # The launcher starts Python with `-B` so the runner's own folder stays as installed;
+        # the app's compiled code goes to its own cache folder.
         sys.pycache_prefix = str(start["pycache_dir"])
+        sys.dont_write_bytecode = False
     else:
         sys.dont_write_bytecode = True
 

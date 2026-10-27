@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::{Read, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -23,7 +23,6 @@ use tauri_plugin_opener::OpenerExt;
 
 struct AppState {
     store: Store,
-    runner_dir: PathBuf,
     /// Serializes changes to installed apps (state.json, app and environment folders).
     write_lock: Mutex<()>,
     runs: Mutex<HashMap<String, Arc<run::RunHandle>>>,
@@ -326,7 +325,10 @@ fn batched_sink(app: &AppHandle, run_id: &str) -> run::EventSink {
 async fn start_run(app: AppHandle, id: String, inputs: Map<String, Value>) -> CmdResult<RunRecord> {
     blocking(move || {
         let s = state(&app);
-        let (spec, record) = s.store.prepare_run(&id, &inputs, &s.runner_dir)?;
+        // The runner is checked against the copy built into the launcher before every run,
+        // not once at start: anything the user runs can write the data folder in between.
+        let runner_dir = runner::install(&s.store.paths)?;
+        let (spec, record) = s.store.prepare_run(&id, &inputs, &runner_dir)?;
         let run_id = record.id.clone();
         let sink = batched_sink(&app, &run_id);
         let handle = match run::start(spec, sink) {
@@ -361,7 +363,11 @@ async fn start_run(app: AppHandle, id: String, inputs: Map<String, Value>) -> Cm
             lock(&s.runs).remove(&finished.id);
             if let Ok(handle) = Arc::try_unwrap(handle) {
                 let result = handle.wait();
-                let _ = s.store.finish_run(&mut finished, &result);
+                // Rare (disk full, a file held by an antivirus), and the user must hear of it:
+                // a guard stop that is not recorded only holds while the launcher stays open.
+                if let Err(e) = s.store.finish_run(&mut finished, &result) {
+                    let _ = app2.emit("run-not-recorded", format!("{e:#}"));
+                }
             }
             let _ = app2.emit("runs-changed", finished.id.clone());
         });
@@ -705,7 +711,7 @@ fn restrict_dll_search() {}
 
 /// The data folder, the runner, and the uv to use: set up once the launcher knows it is the
 /// only one running (a second launch must not touch the first one's data).
-fn open_store() -> anyhow::Result<(Store, PathBuf)> {
+fn open_store() -> anyhow::Result<Store> {
     let paths = Paths::from_env()?;
     paths.migrate_old_location()?;
     if !cfg!(debug_assertions) {
@@ -723,8 +729,9 @@ fn open_store() -> anyhow::Result<(Store, PathBuf)> {
         uv::use_only(uv);
     }
     let store = Store::open(paths)?;
-    let runner_dir = runner::install(&store.paths)?;
-    Ok((store, runner_dir))
+    // Here too, so a data folder the launcher cannot write fails at start.
+    runner::install(&store.paths)?;
+    Ok(store)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -756,10 +763,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| match open_store() {
-            Ok((store, runner_dir)) => {
+            Ok(store) => {
                 app.manage(AppState {
                     store,
-                    runner_dir,
                     write_lock: Mutex::new(()),
                     runs: Mutex::new(HashMap::new()),
                     pending_files: Mutex::new(initial_files),

@@ -213,6 +213,7 @@ async function boot() {
   }
   window.addEventListener("hashchange", render);
   await api.onRunsChanged(() => { ctx.refresh(); });
+  await api.onRunNotRecorded((message) => { toast(message, "error"); });
 
   // ---------- opening .dsapp files: association, second launch, drag and drop ----------
   const dropOverlay = h("div", { class: "drop-overlay", hidden: true },

@@ -223,6 +223,33 @@ class GuardTest(RunnerBase):
     def test_password_database(self):
         self.assert_stopped("open(ctx.output_dir / 'Passwords.kdbx', 'rb')", "saved-secrets")
 
+    def test_moving_a_key_out_reads_it(self):
+        ssh = self.root / "home" / ".ssh"
+        ssh.mkdir(parents=True)
+        (ssh / "id_ed25519").write_text("key")
+        stop = self.assert_stopped(
+            f"""
+            import os
+            os.rename({str(ssh / 'id_ed25519')!r}, ctx.output_dir / 'k.txt')
+            """,
+            "saved-secrets",
+        )
+        self.assertTrue(stop["detail"].endswith("id_ed25519"), stop)
+        self.assertTrue((ssh / "id_ed25519").exists(), "stopped before the move")
+
+    def test_linking_another_runs_results_reads_them(self):
+        other = self.root / "runs" / "other" / "output"
+        other.mkdir(parents=True)
+        (other / "clients.xlsx").write_text("data")
+        self.assert_stopped(
+            f"""
+            import os
+            os.link({str(other / 'clients.xlsx')!r}, ctx.output_dir / 'c.xlsx')
+            """,
+            "other-app-data",
+            guard={"private": [str(self.root / "runs")]},
+        )
+
     def test_public_ssh_files_are_fine(self):
         code, messages, _ = self.run_guarded(
             """

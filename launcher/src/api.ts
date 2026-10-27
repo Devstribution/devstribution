@@ -265,6 +265,8 @@ export interface Api {
   onRunEvents(cb: (runId: string, events: RunEvent[]) => void): Promise<Unlisten>;
   onInstallStep(cb: (e: StepEvent) => void): Promise<Unlisten>;
   onRunsChanged(cb: () => void): Promise<Unlisten>;
+  /** A finished run that could not be saved, with the reason. */
+  onRunNotRecorded(cb: (message: string) => void): Promise<Unlisten>;
   onOpenFiles(cb: (paths: string[]) => void): Promise<Unlisten>;
   onDragDrop(cb: (e: { type: "over" | "leave" | "drop"; paths: string[] }) => void): Promise<Unlisten>;
 }
@@ -322,6 +324,7 @@ async function tauriApi(): Promise<Api> {
       listen<{ run_id: string; events: RunEvent[] }>("run-events", (e) => cb(e.payload.run_id, e.payload.events)),
     onInstallStep: (cb) => listen<StepEvent>("install-step", (e) => cb(e.payload)),
     onRunsChanged: (cb) => listen("runs-changed", () => cb()),
+    onRunNotRecorded: (cb) => listen<string>("run-not-recorded", (e) => cb(e.payload)),
     onOpenFiles: (cb) => listen<string[]>("open-files", (e) => cb(e.payload)),
     onDragDrop: (cb) =>
       getCurrentWebview().onDragDropEvent((e) => {

@@ -515,10 +515,15 @@ class Guard:
     def _on_rename(self, args: tuple) -> None:
         if _relative_to_fd(args, 2) or _relative_to_fd(args, 3):
             return
+        # Moving a file somewhere the app can read gives it the content: the source is read too.
+        self._check_read(_abs_path(args[0]) if args else None)
         self._check_change(args[0] if args else None, "move")
         self._check_change(args[1] if len(args) > 1 else None, "write")
 
     def _on_link(self, args: tuple) -> None:
+        # A hard or symbolic link to a file reads it as well as an open would.
+        if not _relative_to_fd(args, 2):
+            self._check_read(_abs_path(args[0]) if args else None)
         self._check_change(args[1] if len(args) > 1 else None, "write")
 
     def _on_remove(self, args: tuple) -> None:

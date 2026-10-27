@@ -18,6 +18,7 @@ use std::fs;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
+use unicode_normalization::UnicodeNormalization;
 
 use crate::deps::{self, DepHitKind};
 use crate::manifest::Permissions;
@@ -161,6 +162,12 @@ const NETWORK: Rule = rule(
     C::Network,
     S::Info,
     "Connects to other computers",
+);
+const NETWORK_ANY: Rule = rule(
+    "network-any",
+    C::Network,
+    S::Warning,
+    "Declares it may connect to any computer (network = [\"*\"]), so its network use is not limited",
 );
 const SAP: Rule = rule("sap", C::Sap, S::Info, "Drives SAP GUI");
 const PROCESSES: Rule = rule("processes", C::Processes, S::Info, "Starts other programs");
@@ -629,6 +636,38 @@ impl Scan {
                         if matches_any(&full, DECODERS) {
                             decodes = true;
                         }
+                        // `getattr(os, "system")`: the call named by a literal string.
+                        if full == "getattr"
+                            && let Some((target, evidence)) =
+                                getattr_target(&stmt[k + 1..], aliases)
+                            && let Some(rule) = call_rule(&target)
+                        {
+                            self.add(rule, rel, Some(line), &evidence);
+                            if rule.category == Category::DynamicCode {
+                                dynamic_line.get_or_insert(line);
+                            }
+                        }
+                    } else if !is_call
+                        && !after_dot
+                        && !after_def
+                        // Not the app's own function of that name.
+                        && (parts.len() != 1 || !defined.contains(parts[0]))
+                        // Not a keyword argument, an assignment to the name or an annotation.
+                        && !stmt
+                            .get(k)
+                            .is_some_and(|t| matches!(t.tok, Tok::Op('=') | Tok::Op(':')))
+                        && let Some(rule) = call_rule(&full)
+                    {
+                        // `f = exec`, `map(eval, rows)`: called later under another name.
+                        self.add(
+                            rule,
+                            rel,
+                            Some(line),
+                            &format!("{full} (passed as a value)"),
+                        );
+                        if rule.category == Category::DynamicCode {
+                            dynamic_line.get_or_insert(line);
+                        }
                     }
                     j = k;
                 }
@@ -748,6 +787,19 @@ impl Scan {
                 f
             })
             .collect();
+        // Not a finding in the code: the declaration itself turns the guard's network rule off.
+        if permissions.network.iter().any(|h| h.trim() == "*") {
+            findings.push(Finding {
+                rule: NETWORK_ANY.id.to_string(),
+                category: NETWORK_ANY.category,
+                severity: NETWORK_ANY.severity,
+                message: NETWORK_ANY.message.to_string(),
+                path: "pyproject.toml".to_string(),
+                line: None,
+                evidence: "network = [\"*\"]".to_string(),
+                occurrences: 1,
+            });
+        }
         findings.sort_by(|a, b| {
             b.severity
                 .cmp(&a.severity)
@@ -777,6 +829,43 @@ fn module_rule(name: &str) -> Option<&'static Rule> {
                 .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
         })
         .map(|(_, rule)| *rule)
+}
+
+/// The tokens after `getattr(`: `obj, "name"` with `obj` a (dotted) name gives the call it
+/// names, e.g. `os.system`, and the evidence to show.
+fn getattr_target(args: &[Token], aliases: &HashMap<String, String>) -> Option<(String, String)> {
+    let mut parts = Vec::new();
+    let mut i = 0;
+    loop {
+        let Tok::Name(name) = &args.get(i)?.tok else {
+            return None;
+        };
+        parts.push(name.as_str());
+        i += 1;
+        if args.get(i)?.tok != Tok::Op('.') {
+            break;
+        }
+        i += 1;
+    }
+    if args.get(i)?.tok != Tok::Op(',') {
+        return None;
+    }
+    let Tok::Str(attr) = &args.get(i + 1)?.tok else {
+        return None;
+    };
+    if !matches!(args.get(i + 2)?.tok, Tok::Op(')') | Tok::Op(',')) {
+        return None;
+    }
+    let object = resolve(&parts, aliases);
+    let object = if object == "__builtins__" {
+        "builtins".to_string()
+    } else {
+        object
+    };
+    Some((
+        format!("{object}.{attr}"),
+        format!("getattr({}, {attr:?})", parts.join(".")),
+    ))
 }
 
 fn call_rule(full: &str) -> Option<&'static Rule> {
@@ -1003,6 +1092,12 @@ fn tokenize(src: &str, first_line: u32) -> Vec<Token> {
             {
                 i = string(&c, i, &prefix, &mut line, &mut out);
             } else {
+                // Python reads identifiers in NFKC form (PEP 3131): `ｅｖａｌ` is `eval`.
+                let word = if word.is_ascii() {
+                    word
+                } else {
+                    word.nfkc().collect()
+                };
                 out.push(Token {
                     tok: Tok::Name(word),
                     line,
@@ -1053,16 +1148,46 @@ fn string(c: &[char], start: usize, prefix: &str, line: &mut u32, out: &mut Vec<
             if raw {
                 text.push('\\');
                 text.push(next);
-            } else {
-                match next {
-                    'n' => text.push('\n'),
-                    't' => text.push('\t'),
-                    '\\' | '\'' | '"' => text.push(next),
-                    '\n' => {}
-                    _ => {
-                        text.push('\\');
-                        text.push(next);
-                    }
+                i += 2;
+                continue;
+            }
+            // Numeric escapes are decoded too: `"\x73ystem"` is `"system"` to the rules.
+            let digits = |from: usize, max: usize, radix: u32| {
+                let n = c[from..]
+                    .iter()
+                    .take(max)
+                    .take_while(|d| d.is_digit(radix))
+                    .count();
+                let value: String = c[from..from + n].iter().collect();
+                (
+                    u32::from_str_radix(&value, radix)
+                        .ok()
+                        .and_then(char::from_u32),
+                    n,
+                )
+            };
+            let bytes = prefix.contains('b');
+            let numeric = match next {
+                'x' => Some(digits(i + 2, 2, 16)).filter(|(_, n)| *n == 2),
+                'u' if !bytes => Some(digits(i + 2, 4, 16)).filter(|(_, n)| *n == 4),
+                'U' if !bytes => Some(digits(i + 2, 8, 16)).filter(|(_, n)| *n == 8),
+                '0'..='7' => Some(digits(i + 1, 3, 8)),
+                _ => None,
+            };
+            if let Some((Some(decoded), n)) = numeric {
+                text.push(decoded);
+                i += if next.is_digit(8) { 1 + n } else { 2 + n };
+                continue;
+            }
+            match next {
+                'n' => text.push('\n'),
+                't' => text.push('\t'),
+                'r' => text.push('\r'),
+                '\\' | '\'' | '"' => text.push(next),
+                '\n' => {}
+                _ => {
+                    text.push('\\');
+                    text.push(next);
                 }
             }
             i += 2;
@@ -1196,6 +1321,21 @@ def run(source: Path, ctx):
     }
 
     #[test]
+    fn any_host_is_a_warning_even_without_network_code() {
+        let any = Permissions {
+            network: vec!["api.company.com".into(), " * ".into()],
+            ..Permissions::default()
+        };
+        let report = scan_one(
+            "print('hello')
+",
+            &any,
+        );
+        assert_eq!(rules(&report), vec![("network-any", Severity::Warning)]);
+        assert_eq!(report.findings[0].path, "pyproject.toml");
+    }
+
+    #[test]
     fn harmless_socket_use_is_not_network() {
         let benign = "import socket
 host = socket.gethostname()
@@ -1253,6 +1393,73 @@ s = socket.create_connection((host, 443))
     fn eval_in_an_fstring_is_code() {
         let report = scan_one("x = f\"{eval(data)}\"\n", &Permissions::default());
         assert_eq!(rules(&report), vec![("dynamic-code", Severity::Warning)]);
+    }
+
+    #[test]
+    fn names_are_read_as_python_reads_them() {
+        // Fullwidth letters: Python normalizes identifiers (NFKC), so this calls `eval`.
+        let report = scan_one(
+            "\u{ff45}\u{ff56}\u{ff41}\u{ff4c}(data)\n",
+            &Permissions::default(),
+        );
+        assert_eq!(rules(&report), vec![("dynamic-code", Severity::Warning)]);
+        let report = scan_one(
+            "import \u{ff53}ubprocess\nsubprocess.run(['x'])\n",
+            &Permissions::default(),
+        );
+        assert!(
+            rules(&report).contains(&("processes", Severity::Info)),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn escapes_in_strings_are_decoded() {
+        for key in [
+            r#""Software\\Microsoft\\Windows\\Current\x56ersion\\Run""#,
+            r#""Software\\Microsoft\\Windows\\CurrentVersion\\Run""#,
+            r#""Software\\Microsoft\\Windows\\Current\126ersion\\Run""#,
+        ] {
+            let report = scan_one(&format!("key = {key}\n"), &Permissions::default());
+            assert_eq!(
+                rules(&report),
+                vec![("persistence", Severity::Danger)],
+                "{key}"
+            );
+        }
+        // Raw strings keep the backslash, as Python does.
+        let report = scan_one(r#"key = r"Current\x56ersion\Run""#, &Permissions::default());
+        assert_eq!(rules(&report), vec![]);
+    }
+
+    #[test]
+    fn calls_passed_around_as_values() {
+        for src in [
+            "f = exec\nf(code)\n",
+            "results = list(map(eval, rows))\n",
+            "import builtins\nrun = getattr(builtins, 'exec')\n",
+            "run = getattr(__builtins__, \"eval\")\n",
+        ] {
+            let report = scan_one(src, &Permissions::default());
+            assert!(
+                rules(&report).contains(&("dynamic-code", Severity::Warning)),
+                "{src}"
+            );
+        }
+        let report = scan_one(
+            "import os\nrun = getattr(os, 'system')\n",
+            &Permissions::default(),
+        );
+        assert!(
+            rules(&report).contains(&("processes", Severity::Info)),
+            "{report:?}"
+        );
+        // A keyword argument or a method named like a builtin is not a reference to it.
+        let report = scan_one(
+            "model.eval()\nopts = dict(exec=True, compile=False)\n",
+            &Permissions::default(),
+        );
+        assert_eq!(rules(&report), vec![]);
     }
 
     #[test]
