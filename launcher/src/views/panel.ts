@@ -307,7 +307,7 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
         ? runs.map((r) => h("div", { class: "history-item" },
             h("span", { class: "grow" }, relTime(r.started_at), h("span", { class: "muted" }, ` · ${duration(r.duration_ms)}`)),
             statusText(r.status),
-            r.status === "ok" ? h("button", { class: "btn ghost small", title: "Open result folder", "aria-label": "Open result folder", onclick: () => ctx.api.openOutput(r.id, null, false) }, icon(FolderOpen, 14)) : null))
+            r.status === "ok" && !r.output_removed ? h("button", { class: "btn ghost small", title: "Open result folder", "aria-label": "Open result folder", onclick: () => ctx.api.openOutput(r.id, null, false) }, icon(FolderOpen, 14)) : null))
         : h("div", { class: "muted small" }, "No runs yet."));
     }
     loadHistory();

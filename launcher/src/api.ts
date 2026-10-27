@@ -93,6 +93,47 @@ export interface RunRecord {
   error?: string | null;
   guard?: GuardHit[];
   output_dir: string;
+  /** When a cleanup removed the results and log; the run stays in the history. */
+  output_removed?: number | null;
+}
+
+export interface CleanupRun {
+  run_id: string;
+  app_id: string;
+  app_title: string;
+  started_at: number;
+  status: RunStatus;
+  bytes: number;
+}
+
+export interface CleanupPlan {
+  runs: CleanupRun[];
+  bytes: number;
+}
+
+export interface CleanupResult {
+  runs: number;
+  bytes: number;
+  failed: string[];
+  journal_error?: string | null;
+}
+
+export interface JournalEntry {
+  seq: number;
+  at: number;
+  kind: string;
+  data: { runs?: { run_id: string; app_id: string; bytes: number; file_count: number; record_removed: boolean }[]; bytes?: number; remove_records?: boolean };
+  hash: string;
+}
+
+/** The journal checked against the run folders. */
+export interface JournalReport {
+  file: string;
+  lines: number;
+  broken_at?: number | null;
+  changed: string[];
+  missing: string[];
+  cleanups: JournalEntry[];
 }
 
 export interface RunResult {
@@ -254,6 +295,10 @@ export interface Api {
   runLog(runId: string): Promise<string>;
   openOutput(runId: string, path: string | null, reveal: boolean): Promise<void>;
   openDataFolder(): Promise<void>;
+  /** What a cleanup would remove. Nothing is deleted by asking. */
+  cleanupPreview(olderThanDays: number | null, appId: string | null, removeRecords: boolean): Promise<CleanupPlan>;
+  cleanupRuns(runIds: string[], removeRecords: boolean): Promise<CleanupResult>;
+  cleanupLog(): Promise<JournalReport>;
   setSecret(id: string, name: string, value: string): Promise<void>;
   clearSecret(id: string, name: string): Promise<void>;
   settings(): Promise<Settings>;
@@ -316,6 +361,9 @@ async function tauriApi(): Promise<Api> {
     runLog: (runId) => invoke("run_log", { runId }),
     openOutput: (runId, path, reveal) => invoke("open_output", { runId, path, reveal }),
     openDataFolder: () => invoke("open_data_folder"),
+    cleanupPreview: (olderThanDays, appId, removeRecords) => invoke("cleanup_preview", { olderThanDays, appId, removeRecords }),
+    cleanupRuns: (runIds, removeRecords) => invoke("cleanup_runs", { runIds, removeRecords }),
+    cleanupLog: () => invoke("cleanup_log"),
     setSecret: (id, name, value) => invoke("set_secret", { id, name, value }),
     clearSecret: (id, name) => invoke("clear_secret", { id, name }),
     settings: () => invoke("settings"),

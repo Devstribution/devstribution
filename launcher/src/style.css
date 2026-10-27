@@ -248,6 +248,7 @@ svg.lucide { flex: none; }
 .center { text-align: center; }
 .wrap-anywhere { overflow-wrap: anywhere; }
 .self-start { align-self: flex-start; }
+.inline { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); }
 .mono { font-family: var(--font-mono); font-size: var(--fs-sm); }
 .ok-text { color: var(--success-text); }
 .err-text { color: var(--danger-text); }

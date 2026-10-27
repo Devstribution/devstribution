@@ -17,9 +17,10 @@ use devstribution_core::package::{
 use devstribution_core::scan::{self, ScanReport};
 use devstribution_core::signing::{parse_public_key, public_key_base64, public_key_id};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::guard::GuardHit;
+use crate::journal::{self, Journal};
 use crate::paths::Paths;
 use crate::policy::{self, Policy, ScanDanger};
 use crate::run::{self, RunResult, RunSpec, RunStatus};
@@ -208,6 +209,52 @@ pub struct RunRecord {
     /// records from before it existed, which means `output_dir` only.
     #[serde(default)]
     pub result_folders: Vec<PathBuf>,
+    /// When a cleanup removed the run's output folder and log. The run stays in the history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_removed: Option<u64>,
+}
+
+/// A run a cleanup could remove the results of.
+#[derive(Debug, Clone, Serialize)]
+pub struct CleanupRun {
+    pub run_id: String,
+    pub app_id: String,
+    pub app_title: String,
+    pub started_at: u64,
+    pub status: RunStatus,
+    /// What would be freed.
+    pub bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CleanupPlan {
+    pub runs: Vec<CleanupRun>,
+    pub bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CleanupResult {
+    pub runs: usize,
+    pub bytes: u64,
+    /// Runs whose files could not all be removed (open in another program, for example).
+    pub failed: Vec<String>,
+    /// Set when the journal could not be written: the results are removed all the same.
+    pub journal_error: Option<String>,
+}
+
+/// What the journal says now, next to what is on disk.
+#[derive(Debug, Clone, Serialize)]
+pub struct JournalReport {
+    pub file: PathBuf,
+    pub lines: usize,
+    /// The first line that breaks the chain (1-based), if any.
+    pub broken_at: Option<u64>,
+    /// Runs whose `run.json` is not what the journal last recorded.
+    pub changed: Vec<String>,
+    /// Runs whose folder is gone, and no cleanup line says it was removed.
+    pub missing: Vec<String>,
+    /// The cleanups, newest first.
+    pub cleanups: Vec<journal::Entry>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1027,6 +1074,7 @@ impl Store {
             guard: Vec::new(),
             output_dir: output_dir.clone(),
             result_folders: run::result_folders(&app.manifest, &resolved, &output_dir),
+            output_removed: None,
         };
         self.save_run(&record)?;
         // One bytecode cache per installed version: an app cannot leave compiled code that
@@ -1074,6 +1122,10 @@ impl Store {
         }
         // The run is recorded even when the stop could not be: it says what the app did.
         let saved = self.save_run(record);
+        // The journal is a record beside the run, not part of it: a run is never lost to it.
+        if saved.is_ok() {
+            self.journal_run(&record.id);
+        }
         match stop_unsaved {
             Some(e) => Err(e.context(
                 "the app was stopped, but the launcher could not record it;                  it stays blocked until the launcher is closed",
@@ -1209,6 +1261,208 @@ impl Store {
             }
         }
         Ok(out)
+    }
+
+    // -- cleanup -----------------------------------------------------------------------------
+
+    fn journal(&self) -> Journal {
+        Journal::new(self.paths.journal())
+    }
+
+    fn journal_run(&self, run_id: &str) {
+        let path = self.paths.runs().join(run_id).join("run.json");
+        if let Some(sha) = journal::file_sha256(&path) {
+            let _ = self
+                .journal()
+                .append("run", json!({ "run_id": run_id, "run_sha256": sha }));
+        }
+    }
+
+    /// The runs whose results a cleanup could remove, with what it would free. Runs still
+    /// running are never in it. Without `remove_records` a run keeps its `run.json`, so it
+    /// stays in the history and the statistics.
+    pub fn cleanup_plan(
+        &self,
+        older_than_days: Option<u32>,
+        app_id: Option<&str>,
+        remove_records: bool,
+    ) -> Result<CleanupPlan> {
+        let cutoff = older_than_days.map(|d| now_secs().saturating_sub(u64::from(d) * 86_400));
+        let mut runs = Vec::new();
+        let mut bytes = 0;
+        for r in self.runs(app_id, usize::MAX)? {
+            if r.status == RunStatus::Running
+                || cutoff.is_some_and(|c| r.started_at > c)
+                || (r.output_removed.is_some() && !remove_records)
+            {
+                continue;
+            }
+            let files = run_files(&self.paths.runs().join(&r.id), remove_records);
+            let size: u64 = files.iter().map(|(_, n)| n).sum();
+            if size == 0 && !remove_records {
+                continue;
+            }
+            bytes += size;
+            runs.push(CleanupRun {
+                run_id: r.id,
+                app_id: r.app_id,
+                app_title: r.app_title,
+                started_at: r.started_at,
+                status: r.status,
+                bytes: size,
+            });
+        }
+        Ok(CleanupPlan { runs, bytes })
+    }
+
+    /// Removes the results and logs of these runs, and writes what it removed to the journal.
+    /// Only ever inside `runs\<id>\`: folders an app was pointed at are not touched. With
+    /// `remove_records` the run leaves the history too.
+    pub fn cleanup(&self, run_ids: &[String], remove_records: bool) -> Result<CleanupResult> {
+        let mut done = Vec::new();
+        let mut failed = Vec::new();
+        let mut total = 0;
+        for id in run_ids {
+            let Ok(mut record) = self.run(id) else {
+                failed.push(id.clone());
+                continue;
+            };
+            if record.status == RunStatus::Running {
+                failed.push(id.clone());
+                continue;
+            }
+            let dir = self.paths.runs().join(id);
+            let before = run_files(&dir, remove_records);
+            let mut clean = true;
+            match fs::read_dir(&dir) {
+                Ok(entries) if remove_records => {
+                    drop(entries);
+                    clean = fs::remove_dir_all(&dir).is_ok();
+                }
+                Ok(entries) => {
+                    for e in entries.flatten() {
+                        if e.file_name() == "run.json" {
+                            continue;
+                        }
+                        let path = e.path();
+                        let is_dir = path
+                            .symlink_metadata()
+                            .is_ok_and(|m| m.is_dir() && !is_link(&m));
+                        let removed = if is_dir {
+                            fs::remove_dir_all(&path)
+                        } else {
+                            fs::remove_file(&path).or_else(|_| fs::remove_dir(&path))
+                        };
+                        clean &= removed.is_ok();
+                    }
+                }
+                Err(_) => clean = false,
+            }
+            let after = run_files(&dir, remove_records);
+            let gone: Vec<&(String, u64)> = before.iter().filter(|f| !after.contains(f)).collect();
+            let bytes: u64 = gone.iter().map(|(_, n)| n).sum();
+            if !clean || !after.is_empty() {
+                failed.push(id.clone());
+            }
+            let mut run_sha256 = None;
+            if clean && !remove_records {
+                record.output_removed = Some(now_secs());
+                if self.save_run(&record).is_err() {
+                    failed.push(id.clone());
+                }
+                run_sha256 = journal::file_sha256(&dir.join("run.json"));
+            }
+            if gone.is_empty() {
+                continue;
+            }
+            total += bytes;
+            done.push(json!({
+                "run_id": id,
+                "app_id": record.app_id,
+                "bytes": bytes,
+                "file_count": gone.len(),
+                // The longest lists are cut: the journal says what was removed, not everything.
+                "files": gone.iter().take(100).collect::<Vec<_>>(),
+                "record_removed": clean && remove_records,
+                "run_sha256": run_sha256,
+            }));
+        }
+        let journal_error = if done.is_empty() {
+            None
+        } else {
+            self.journal()
+                .append(
+                    "cleanup",
+                    json!({ "runs": done, "bytes": total, "remove_records": remove_records }),
+                )
+                .err()
+                .map(|e| format!("{e:#}"))
+        };
+        Ok(CleanupResult {
+            runs: done.len(),
+            bytes: total,
+            failed,
+            journal_error,
+        })
+    }
+
+    /// The journal checked against the run folders.
+    pub fn journal_report(&self) -> JournalReport {
+        let journal = self.journal();
+        let reading = journal.read();
+        // Per run: the hash of its `run.json` as last recorded, `None` once its record was
+        // removed by a cleanup.
+        let mut last: BTreeMap<String, Option<String>> = BTreeMap::new();
+        for e in &reading.entries {
+            match e.kind.as_str() {
+                "run" => {
+                    if let (Some(id), Some(sha)) =
+                        (e.data["run_id"].as_str(), e.data["run_sha256"].as_str())
+                    {
+                        last.insert(id.to_string(), Some(sha.to_string()));
+                    }
+                }
+                "cleanup" => {
+                    for r in e.data["runs"].as_array().into_iter().flatten() {
+                        let Some(id) = r["run_id"].as_str() else {
+                            continue;
+                        };
+                        if r["record_removed"].as_bool() == Some(true) {
+                            last.insert(id.to_string(), None);
+                        } else if let Some(sha) = r["run_sha256"].as_str() {
+                            last.insert(id.to_string(), Some(sha.to_string()));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut changed = Vec::new();
+        let mut missing = Vec::new();
+        for (id, sha) in last {
+            let Some(sha) = sha else {
+                continue;
+            };
+            let path = self.paths.runs().join(&id).join("run.json");
+            match journal::file_sha256(&path) {
+                None => missing.push(id),
+                Some(now) if now != sha => changed.push(id),
+                Some(_) => {}
+            }
+        }
+        JournalReport {
+            file: journal.path().to_path_buf(),
+            lines: reading.entries.len(),
+            broken_at: reading.broken_at.map(|i| i + 1),
+            changed,
+            missing,
+            cleanups: reading
+                .entries
+                .into_iter()
+                .filter(|e| e.kind == "cleanup")
+                .rev()
+                .collect(),
+        }
     }
 
     pub fn stats(&self, days: u32) -> Result<Stats> {
@@ -1377,6 +1631,48 @@ fn same_key(a: &str, b: &str) -> bool {
     }
 }
 
+/// Whether the entry is a link (symbolic link or junction): cleanup neither counts what is
+/// behind one nor follows it, so a link an app left cannot lead it out of the run's folder.
+fn is_link(meta: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const REPARSE_POINT: u32 = 0x400;
+        if meta.file_attributes() & REPARSE_POINT != 0 {
+            return true;
+        }
+    }
+    meta.file_type().is_symlink()
+}
+
+/// The files of a run's folder as (path inside it, size), links counted as themselves. Its
+/// `run.json` is left out unless the whole record goes.
+fn run_files(dir: &Path, with_record: bool) -> Vec<(String, u64)> {
+    fn walk(dir: &Path, rel: &str, out: &mut Vec<(String, u64)>) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for e in entries.flatten() {
+            let Ok(meta) = e.path().symlink_metadata() else {
+                continue;
+            };
+            let name = format!("{rel}{}", e.file_name().to_string_lossy());
+            if meta.is_dir() && !is_link(&meta) {
+                walk(&e.path(), &format!("{name}/"), out);
+            } else {
+                out.push((name, meta.len()));
+            }
+        }
+    }
+    let mut files = Vec::new();
+    walk(dir, "", &mut files);
+    if !with_record {
+        files.retain(|(name, _)| name != "run.json");
+    }
+    files.sort();
+    files
+}
+
 fn fingerprint_of(key: &str) -> Option<String> {
     parse_public_key(key).ok().map(|k| public_key_id(&k))
 }
@@ -1406,4 +1702,191 @@ fn icon_data_url(app_dir: &Path, manifest: &Manifest) -> Option<String> {
     }
     let b64 = base64::engine::general_purpose::STANDARD.encode(data);
     Some(format!("data:{mime};base64,{b64}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn store() -> (tempfile::TempDir, Store) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(Paths {
+            root: dir.path().to_path_buf(),
+        })
+        .unwrap();
+        (dir, store)
+    }
+
+    /// A finished run with `kb` kilobytes of results and a log, journaled as a real one is.
+    fn add_run(store: &Store, id: &str, status: RunStatus, started_at: u64, kb: usize) {
+        let run_dir = store.paths.runs().join(id);
+        let output_dir = run_dir.join("output");
+        fs::create_dir_all(output_dir.join("sub")).unwrap();
+        fs::write(
+            output_dir.join("sub").join("report.xlsx"),
+            vec![0; kb * 1024],
+        )
+        .unwrap();
+        fs::write(run_dir.join("app.log"), "log").unwrap();
+        let record = RunRecord {
+            id: id.to_string(),
+            app_id: "alice/hello".into(),
+            app_title: "Hello".into(),
+            version: "1.0.0".into(),
+            kind: "task".into(),
+            started_at,
+            finished_at: Some(started_at + 1),
+            status,
+            duration_ms: 1000,
+            outputs: Map::new(),
+            error: None,
+            guard: Vec::new(),
+            output_dir,
+            result_folders: Vec::new(),
+            output_removed: None,
+        };
+        store.save_run(&record).unwrap();
+        store.journal_run(id);
+    }
+
+    #[test]
+    fn cleanup_frees_results_but_keeps_the_history() {
+        let (_dir, store) = store();
+        let now = now_secs();
+        add_run(
+            &store,
+            "20260101-000000-hello-aa",
+            RunStatus::Ok,
+            now - 90 * 86_400,
+            4,
+        );
+        add_run(
+            &store,
+            "20260102-000000-hello-bb",
+            RunStatus::Ok,
+            now - 2 * 86_400,
+            4,
+        );
+        add_run(
+            &store,
+            "20260103-000000-hello-cc",
+            RunStatus::Running,
+            now - 100 * 86_400,
+            4,
+        );
+
+        let plan = store.cleanup_plan(Some(30), None, false).unwrap();
+        assert_eq!(plan.runs.len(), 1, "only the old, finished run");
+        assert_eq!(plan.runs[0].run_id, "20260101-000000-hello-aa");
+        assert_eq!(plan.bytes, 4 * 1024 + 3);
+
+        let ids = vec![plan.runs[0].run_id.clone()];
+        let done = store.cleanup(&ids, false).unwrap();
+        assert_eq!((done.runs, done.bytes), (1, 4 * 1024 + 3));
+        assert!(done.failed.is_empty() && done.journal_error.is_none());
+
+        let dir = store.paths.runs().join(&ids[0]);
+        assert!(dir.join("run.json").is_file());
+        assert!(!dir.join("output").exists() && !dir.join("app.log").exists());
+        assert!(store.run(&ids[0]).unwrap().output_removed.is_some());
+        assert_eq!(
+            store.runs(None, 10).unwrap().len(),
+            3,
+            "still in the history"
+        );
+        assert!(
+            store
+                .cleanup_plan(Some(30), None, false)
+                .unwrap()
+                .runs
+                .is_empty()
+        );
+
+        let report = store.journal_report();
+        assert_eq!(report.broken_at, None);
+        assert!(report.changed.is_empty() && report.missing.is_empty());
+        assert_eq!(report.cleanups.len(), 1);
+        assert_eq!(report.cleanups[0].data["runs"][0]["file_count"], 2);
+    }
+
+    #[test]
+    fn a_running_run_is_never_cleaned() {
+        let (_dir, store) = store();
+        add_run(&store, "20260103-000000-hello-cc", RunStatus::Running, 1, 1);
+        let done = store
+            .cleanup(&["20260103-000000-hello-cc".to_string()], true)
+            .unwrap();
+        assert_eq!(done.runs, 0);
+        assert_eq!(done.failed.len(), 1);
+        assert!(
+            store
+                .paths
+                .runs()
+                .join("20260103-000000-hello-cc")
+                .join("output")
+                .is_dir()
+        );
+    }
+
+    #[test]
+    fn removing_the_record_too_leaves_no_gap_in_the_journal() {
+        let (_dir, store) = store();
+        add_run(&store, "20260101-000000-hello-aa", RunStatus::Error, 1, 1);
+        let ids = vec!["20260101-000000-hello-aa".to_string()];
+        store.cleanup(&ids, true).unwrap();
+        assert!(!store.paths.runs().join(&ids[0]).exists());
+        let report = store.journal_report();
+        assert!(report.missing.is_empty(), "a cleanup line accounts for it");
+    }
+
+    #[test]
+    fn what_the_launcher_did_not_do_shows_in_the_report() {
+        let (_dir, store) = store();
+        add_run(&store, "20260101-000000-hello-aa", RunStatus::Ok, 1, 1);
+        add_run(&store, "20260102-000000-hello-bb", RunStatus::Ok, 1, 1);
+        fs::remove_dir_all(store.paths.runs().join("20260101-000000-hello-aa")).unwrap();
+        let edited = store
+            .paths
+            .runs()
+            .join("20260102-000000-hello-bb")
+            .join("run.json");
+        let text = fs::read_to_string(&edited)
+            .unwrap()
+            .replace("1.0.0", "9.9.9");
+        fs::write(&edited, text).unwrap();
+
+        let report = store.journal_report();
+        assert_eq!(report.missing, vec!["20260101-000000-hello-aa"]);
+        assert_eq!(report.changed, vec!["20260102-000000-hello-bb"]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_junction_in_the_results_does_not_lead_cleanup_out_of_the_run() {
+        let (dir, store) = store();
+        add_run(&store, "20260101-000000-hello-aa", RunStatus::Ok, 1, 1);
+        let outside = dir.path().join("keep-me");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("precious.txt"), "x").unwrap();
+        let link = store
+            .paths
+            .runs()
+            .join("20260101-000000-hello-aa")
+            .join("output")
+            .join("link");
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&link)
+            .arg(&outside)
+            .output()
+            .unwrap()
+            .status
+            .success();
+        assert!(made, "mklink /J works without elevation");
+
+        store
+            .cleanup(&["20260101-000000-hello-aa".to_string()], true)
+            .unwrap();
+        assert!(outside.join("precious.txt").is_file());
+    }
 }

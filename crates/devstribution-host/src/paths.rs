@@ -88,6 +88,11 @@ impl Paths {
         self.root.join("state")
     }
 
+    /// What the launcher did to the run history (`journal`).
+    pub fn journal(&self) -> PathBuf {
+        self.state().join("journal.jsonl")
+    }
+
     /// Bytecode of app code, kept out of the verified app folders.
     pub fn pycache(&self) -> PathBuf {
         self.root.join("cache").join("pycache")

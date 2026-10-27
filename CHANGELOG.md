@@ -24,6 +24,11 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 
 ### Added
 
+- Settings → Storage → "Clean up…" removes the results and logs of old runs to free room. It shows
+  how much it frees first (by age and app) and asks before deleting. The runs stay in Activity,
+  marked as cleaned, unless you also choose to remove them; folders you chose for an app are never
+  touched. Every finished run and every cleanup is also written to `state\journal.jsonl`, a chain of
+  hashed lines, so a missing or edited run can be told from what a cleanup did ("Cleanup log").
 - Settings → Storage has an "Open folder" button for the data folder, for support and for IT.
 - `CONTRIBUTING.md`, and issue and pull request templates.
 

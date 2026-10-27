@@ -1,5 +1,6 @@
-import { X, Check, Pipette, FolderOpen } from "lucide";
+import { X, Check, Pipette, FolderOpen, Trash2 } from "lucide";
 import type { Ctx } from "../main";
+import { openCleanup } from "./cleanup";
 import type { Policy } from "../api";
 import { h, icon, clear, relTime, toast, errorText } from "../ui";
 import { ACCENTS, DEFAULT_LOOK, textOn, type Look, type Theme, type StatusColours } from "../look";
@@ -67,6 +68,10 @@ export function toggleSettings(ctx: Ctx) {
     h("button", { class: "icon-btn", "aria-label": "Close", onclick: close }, icon(X, 16)));
   clear(pop, head, appearance);
 
+  const openCleanupDialog = () => {
+    ctx.api.overview().then(({ apps }) => { close(); openCleanup(ctx, apps); }).catch((e) => toast(errorText(e), "error"));
+  };
+
   ctx.api.settings().then((s) => {
     if (open !== close) return;
     const free = [
@@ -88,8 +93,10 @@ export function toggleSettings(ctx: Ctx) {
         h("span", { class: "section-label" }, "Storage"),
         h("div", { class: "mono soft-text wrap-anywhere" }, s.data_dir),
         h("div", { class: "muted tiny" }, "Apps, their Python environments, run results and logs."),
-        h("button", { class: "btn small self-start", onclick: () => ctx.api.openDataFolder().catch((e) => toast(errorText(e), "error")) },
-          icon(FolderOpen, 14), "Open folder")),
+        h("div", { class: "inline" },
+          h("button", { class: "btn small self-start", onclick: () => ctx.api.openDataFolder().catch((e) => toast(errorText(e), "error")) },
+            icon(FolderOpen, 14), "Open folder"),
+          h("button", { class: "btn small self-start", onclick: openCleanupDialog }, icon(Trash2, 14), "Clean up…"))),
       h("div", { class: "settings-group" },
         h("span", { class: "section-label" }, "Uninstall"),
         h("button", { class: "btn small danger self-start", onclick: () => uninstallLauncher(ctx) }, "Uninstall devstribution…")),
