@@ -24,6 +24,7 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 
 ### Added
 
+- Settings → Storage has an "Open folder" button for the data folder, for support and for IT.
 - `CONTRIBUTING.md`, and issue and pull request templates.
 
 ## [0.2.0] - 2026-10-27

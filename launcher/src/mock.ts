@@ -439,6 +439,7 @@ export function mockApi(): Api {
       return "openpyxl: reading sheet 'Orders' (read-only mode)\nTraceback (most recent call last):\n  File \"main.py\", line 17, in run\n    sum_index = _column(header, sum_column)\nValueError: column 'Amount' not found; the sheet has: Order, Customer, Total\n";
     },
     async openOutput() {},
+    async openDataFolder() {},
     async setSecret(id, name) { const a = apps.find((x) => x.id === id); const s = a?.secrets.find((x) => x.name === name); if (s) s.set = true; },
     async clearSecret(id, name) { const a = apps.find((x) => x.id === id); const s = a?.secrets.find((x) => x.name === name); if (s) s.set = false; },
     async settings(): Promise<Settings> {

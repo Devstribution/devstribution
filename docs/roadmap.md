@@ -129,7 +129,7 @@ company evaluates devstribution: IT asks for both.
 - **Launcher, smaller items** (section 7):
   - plainer trust wording on the main screens (no "namespace", key IDs or "Free mode ·
     signatures checked"), and a first-run explanation of publishers and trust;
-  - Settings: open the data folder, stop trusting a publisher;
+  - Settings: stop trusting a publisher (☑ 27 October: "Open folder" for the data folder);
   - run folders pruned after a while; one run at a time per app; table results over 16 KB
     (today "ended without a result");
   - the update screen shows a changed title or icon (☑ 27 October: it compares package versions

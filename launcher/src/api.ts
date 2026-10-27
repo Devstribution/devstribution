@@ -253,6 +253,7 @@ export interface Api {
   listRuns(appId?: string, limit?: number): Promise<RunRecord[]>;
   runLog(runId: string): Promise<string>;
   openOutput(runId: string, path: string | null, reveal: boolean): Promise<void>;
+  openDataFolder(): Promise<void>;
   setSecret(id: string, name: string, value: string): Promise<void>;
   clearSecret(id: string, name: string): Promise<void>;
   settings(): Promise<Settings>;
@@ -314,6 +315,7 @@ async function tauriApi(): Promise<Api> {
     listRuns: (appId, limit) => invoke("list_runs", { appId: appId ?? null, limit: limit ?? null }),
     runLog: (runId) => invoke("run_log", { runId }),
     openOutput: (runId, path, reveal) => invoke("open_output", { runId, path, reveal }),
+    openDataFolder: () => invoke("open_data_folder"),
     setSecret: (id, name, value) => invoke("set_secret", { id, name, value }),
     clearSecret: (id, name) => invoke("clear_secret", { id, name }),
     settings: () => invoke("settings"),
