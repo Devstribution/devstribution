@@ -132,7 +132,8 @@ company evaluates devstribution: IT asks for both.
   - Settings: open the data folder, stop trusting a publisher;
   - run folders pruned after a while; one run at a time per app; table results over 16 KB
     (today "ended without a result");
-  - the update screen shows a changed title or icon, and compares versions like `1.0rc1`;
+  - the update screen shows a changed title or icon (☑ 27 October: it compares package versions
+    like `1.0rc1` the way PEP 440 orders them);
   - other languages; an accessible version of the runs chart.
 - **CLI**: `verify` shows the scan and can check against a `.trust` file. (☑ 27 October:
   `scan` and `diff` exit 2 when the package cannot be read, 1 for danger; `trust export` asks

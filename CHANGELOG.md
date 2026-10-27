@@ -17,6 +17,11 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 - `devstribution trust export` asks before replacing an existing file. Without a terminal to ask
   on (CI, a pipe) it refuses; `--force` replaces it.
 
+### Fixed
+
+- The update comparison orders package versions like `1.0rc1`, `1.0.post1` and `1.0.dev1` the way
+  PEP 440 does, so a downgrade to a pre-release is marked "older" (it was only for plain numbers).
+
 ### Added
 
 - `CONTRIBUTING.md`, and issue and pull request templates.
