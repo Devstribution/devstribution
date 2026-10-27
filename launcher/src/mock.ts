@@ -370,10 +370,10 @@ export function mockApi(): Api {
       return structuredClone(app);
     },
     async uninstall(id) { const i = apps.findIndex((a) => a.id === id); if (i >= 0) apps.splice(i, 1); },
-    async repair() {
+    async repair(id) {
       for (const m of ["Rebuilding the Python environment", "Installed 3 packages in 31ms", "Ready"]) {
         await sleep(400);
-        stepListeners.forEach((l) => l({ key: "repair", step: m === "Ready" ? "ready" : "environment", message: m }));
+        stepListeners.forEach((l) => l({ key: id, step: m === "Ready" ? "ready" : "environment", message: m }));
       }
     },
     async startRun(id, inputs) {

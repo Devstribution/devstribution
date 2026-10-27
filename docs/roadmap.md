@@ -52,7 +52,7 @@ What a stranger downloading it meets first, and what the SignPath application ne
 9. ☐ **Apply to SignPath Foundation**, with the release linked. If refused (the project is young),
    Certum's open-source certificate is the fallback.
 10. ☐ **The install dialog can be cancelled** (button and Escape) while it inspects or installs.
-11. ☐ **No silent behaviour** (section 7):
+11. ☑ **No silent behaviour** (section 7; 27 October):
     - an empty launcher says "No apps yet", not "No app matches these filters" and "All 0 apps";
     - dropping several packages says only the first is installed;
     - cancelling the secret prompt says the run was cancelled;

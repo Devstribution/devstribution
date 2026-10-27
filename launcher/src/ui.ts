@@ -1,7 +1,7 @@
 // Small DOM helpers: element builder, icons, formatting, toasts and recurring bits of UI.
 
 import { createElement, type IconNode } from "lucide";
-import { CircleAlert, CircleCheck, Info, ShieldCheck, ShieldAlert, ShieldX } from "lucide";
+import { CircleAlert, CircleCheck, Info, Loader, ShieldCheck, ShieldAlert, ShieldX } from "lucide";
 import type { RunStatus } from "./api";
 
 type Child = Node | string | number | null | undefined | false | Child[];
@@ -156,11 +156,24 @@ export function plural(n: number, word: string): string {
 
 let toastBox: HTMLElement | null = null;
 
-export function toast(message: string, kind: "info" | "error" | "ok" = "info", action?: { label: string; run: () => void }) {
+function toastsBox(): HTMLElement {
   if (!toastBox) {
     toastBox = h("div", { class: "toasts", role: "status" });
     document.body.appendChild(toastBox);
   }
+  return toastBox;
+}
+
+/** A toast that stays while something runs and shows its latest step; `end` removes it. */
+export function progressToast(message: string): { update(message: string): void; end(): void } {
+  const text = h("div", null, message);
+  const el = h("div", { class: "toast info" }, icon(Loader, 17, "spin"), text);
+  toastsBox().appendChild(el);
+  return { update: (m) => { text.textContent = m; }, end: () => el.remove() };
+}
+
+export function toast(message: string, kind: "info" | "error" | "ok" = "info", action?: { label: string; run: () => void }) {
+  const toastBox = toastsBox();
   const ic = kind === "error" ? CircleAlert : kind === "ok" ? CircleCheck : Info;
   const el = h("div", { class: `toast ${kind}` }, icon(ic, 17), h("div", null, message),
     action ? h("button", { class: "link", onclick: () => { el.remove(); action.run(); } }, action.label) : null);

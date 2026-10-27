@@ -48,7 +48,7 @@ export async function appsView(ctx: Ctx): Promise<Rendered> {
         : (a, b) => runs(b) - runs(a) || last(b) - last(a));
 
     const filtered = state.works !== "All" || state.publisher !== "Anyone" || !!q;
-    clear(countLine, shown.length === apps.length ? `All ${plural(apps.length, "app")}` : `${shown.length} of ${plural(apps.length, "app")}`,
+    clear(countLine, apps.length === 0 ? "No apps yet" : shown.length === apps.length ? `All ${plural(apps.length, "app")}` : `${shown.length} of ${plural(apps.length, "app")}`,
       filtered ? [" · ", h("button", { class: "link", onclick: () => {
         Object.assign(state, { query: "", works: "All", publisher: "Anyone" });
         input.value = "";
@@ -68,7 +68,9 @@ export async function appsView(ctx: Ctx): Promise<Rendered> {
                 : h("span", null, last(a) ? `Used ${relTime(last(a))} · ${plural(runs(a), "run")} this month` : "Not used yet")),
             h("button", { class: "btn primary", onclick: () => ctx.openApp(a.id) }, "Open"));
         })
-      : h("div", { class: "empty-box" }, "No app matches these filters."));
+      : h("div", { class: "empty-box" }, apps.length === 0
+          ? "No apps yet. Install one with the button below, or drop a .dsapp file anywhere on this window."
+          : "No app matches these filters."));
   };
   input.addEventListener("input", () => { state.query = input.value; draw(); });
   draw();

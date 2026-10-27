@@ -10,7 +10,9 @@ let filter: RunStatus | "all" = "all";
 
 function details(ctx: Ctx, r: RunRecord) {
   const log = h("div", { class: "log" }, "Loading…");
-  ctx.api.runLog(r.id).then((t) => { log.textContent = t || "The app wrote nothing to its log."; }).catch(() => { log.textContent = ""; });
+  ctx.api.runLog(r.id)
+    .then((t) => { log.textContent = t === null ? "No log was kept for this run." : t || "The app wrote nothing to its log."; })
+    .catch(() => { log.textContent = "The log could not be read."; });
   const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey); };
   const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
   document.addEventListener("keydown", onKey);

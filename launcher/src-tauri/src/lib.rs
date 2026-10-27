@@ -399,7 +399,8 @@ async fn list_runs(
 }
 
 #[tauri::command]
-async fn run_log(app: AppHandle, run_id: String) -> CmdResult<String> {
+/// The end of a run's log; `None` when no log file exists (an empty one is `Some("")`).
+async fn run_log(app: AppHandle, run_id: String) -> CmdResult<Option<String>> {
     blocking(move || {
         let record = state(&app).store.run(&run_id)?;
         let log = record
@@ -409,13 +410,13 @@ async fn run_log(app: AppHandle, run_id: String) -> CmdResult<String> {
             .join("app.log");
         // The end of the log only, decoded leniently: it can be large, and not all UTF-8.
         let Ok(mut file) = std::fs::File::open(log) else {
-            return Ok(String::new());
+            return Ok(None);
         };
         let len = file.metadata()?.len();
         file.seek(SeekFrom::Start(len.saturating_sub(200_000)))?;
         let mut bytes = Vec::new();
         file.take(200_000).read_to_end(&mut bytes)?;
-        Ok(String::from_utf8_lossy(&bytes).into_owned())
+        Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
     })
     .await
 }

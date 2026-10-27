@@ -292,7 +292,8 @@ export interface Api {
   startRun(id: string, inputs: Record<string, unknown>): Promise<RunRecord>;
   cancelRun(runId: string): Promise<void>;
   listRuns(appId?: string, limit?: number): Promise<RunRecord[]>;
-  runLog(runId: string): Promise<string>;
+  /** `null` when the run has no log file; an empty string when the app wrote nothing. */
+  runLog(runId: string): Promise<string | null>;
   openOutput(runId: string, path: string | null, reveal: boolean): Promise<void>;
   openDataFolder(): Promise<void>;
   /** What a cleanup would remove. Nothing is deleted by asking. */
