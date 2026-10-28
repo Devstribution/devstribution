@@ -29,6 +29,8 @@ struct AppState {
     runs: Mutex<HashMap<String, Arc<run::RunHandle>>>,
     /// `.dsapp` files the launcher was started with (file association), until the UI asks.
     pending_files: Mutex<Vec<String>>,
+    /// The newer launcher the last check found, until it is installed.
+    update: Mutex<Option<tauri_plugin_updater::Update>>,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -591,6 +593,8 @@ struct SettingsView {
     policy: Option<PolicyView>,
     uv_version: Option<String>,
     publishers: Vec<PinView>,
+    /// False when IT updates the launcher itself (policy `LauncherUpdates` = 0).
+    updates: bool,
 }
 
 #[tauri::command]
@@ -620,6 +624,7 @@ async fn settings(app: AppHandle) -> CmdResult<SettingsView> {
                     source: p.source,
                 })
                 .collect(),
+            updates: updates_allowed(&s.store).is_ok(),
         })
     })
     .await
@@ -753,6 +758,103 @@ fn uninstall_launcher(app: AppHandle) -> CmdResult<()> {
     Ok(())
 }
 
+/// A newer launcher, as the update dialog shows it.
+#[derive(Serialize)]
+struct UpdateView {
+    version: String,
+    current: String,
+    /// The release notes (Markdown), shown as text.
+    notes: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+struct UpdateProgress {
+    downloaded: u64,
+    total: Option<u64>,
+}
+
+fn updates_allowed(store: &Store) -> CmdResult<()> {
+    match store.policy() {
+        Some(p) if !p.launcher_updates => Err(format!(
+            "Your organisation updates devstribution itself. {}",
+            p.ask_whom()
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// Asks GitHub for the latest release (`latest.json`, see `docs/releasing.md`). Nothing is
+/// downloaded yet; only a version newer than this one counts.
+#[tauri::command]
+async fn check_update(app: AppHandle) -> CmdResult<Option<UpdateView>> {
+    use tauri_plugin_updater::UpdaterExt;
+    updates_allowed(&state(&app).store)?;
+    let found = app.updater().map_err(err)?.check().await.map_err(|e| {
+        applog::write(&format!("update check failed: {e}"));
+        format!(
+            "Could not look for updates: {e}. Check the internet connection, or whether a \
+                 proxy blocks github.com."
+        )
+    })?;
+    let view = found.as_ref().map(|u| UpdateView {
+        version: u.version.clone(),
+        current: u.current_version.clone(),
+        notes: u.body.clone(),
+    });
+    *lock(&state(&app).update) = found;
+    Ok(view)
+}
+
+/// Downloads the update found by [`check_update`], checks its signature against the updater
+/// key built into this launcher, and runs its installer, which closes the launcher and opens
+/// the new one. Refused while apps run: closing the launcher would stop them.
+#[tauri::command]
+async fn install_update(app: AppHandle) -> CmdResult<()> {
+    let s = state(&app);
+    updates_allowed(&s.store)?;
+    let running = lock(&s.runs).len();
+    if running > 0 {
+        return Err(format!(
+            "{} still running: updating closes devstribution, which would stop {}. Update when \
+             {} finished.",
+            if running == 1 {
+                "An app is"
+            } else {
+                "Some apps are"
+            },
+            if running == 1 { "it" } else { "them" },
+            if running == 1 { "it has" } else { "they have" },
+        ));
+    }
+    let Some(update) = lock(&s.update).clone() else {
+        return Err("There is no update to install: look for updates again.".into());
+    };
+    applog::write(&format!(
+        "updating devstribution {} to {}",
+        update.current_version, update.version
+    ));
+    let mut downloaded = 0u64;
+    let progress = app.clone();
+    update
+        .download_and_install(
+            move |chunk, total| {
+                downloaded += chunk as u64;
+                let _ = progress.emit("update-progress", UpdateProgress { downloaded, total });
+            },
+            || {},
+        )
+        .await
+        .map_err(|e| {
+            applog::write(&format!("update failed: {e}"));
+            format!(
+                "The update could not be installed: {e}. devstribution is unchanged; try again \
+                 later, or download the installer from the releases page."
+            )
+        })?;
+    // On Windows the installer has taken over and the launcher has already exited.
+    app.restart();
+}
+
 #[tauri::command]
 fn take_pending_files(app: AppHandle) -> Vec<String> {
     std::mem::take(&mut *lock(&state(&app).pending_files))
@@ -865,6 +967,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| match open_store() {
             Ok(store) => {
                 app.manage(AppState {
@@ -872,6 +975,7 @@ pub fn run() {
                     write_lock: Mutex::new(()),
                     runs: Mutex::new(HashMap::new()),
                     pending_files: Mutex::new(initial_files),
+                    update: Mutex::new(None),
                 });
                 Ok(())
             }
@@ -913,6 +1017,8 @@ pub fn run() {
             uninstall_launcher,
             take_pending_files,
             save_trust_request,
+            check_update,
+            install_update,
         ])
         .run(tauri::generate_context!());
     if let Err(e) = result {

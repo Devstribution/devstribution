@@ -1,8 +1,9 @@
 name: Release
 
 # A tag `v<version>` builds the Windows installer and the CLI, and creates a *draft* pre-release
-# with them, their checksums and the changelog section as notes. A person reads the draft and
-# publishes it. Run by hand (Actions → Release → Run workflow), it builds everything and creates
+# with them, their checksums, the update feed (latest.json) and the changelog section as notes. A
+# person reads the draft and publishes it; installed launchers update only to a published release
+# that is not a pre-release (docs/releasing.md, "Launcher updates"). Run by hand (Actions → Release → Run workflow), it builds everything and creates
 # no release: a dry run.
 #
 # No build caches here: a cache filled by another run could change what goes into a release.
@@ -58,19 +59,25 @@ jobs:
       - name: Launcher dependencies
         working-directory: launcher
         run: npm ci
-      - name: NSIS installer (the uv sidecar is fetched and hash-checked first)
+      # The updater key signs the installer for installed launchers (`.sig` next to it); its
+      # public half is in tauri.conf.json. Without the secret the build fails: no release
+      # goes out that launchers could not update to.
+      - name: NSIS installer and its updater signature (the uv sidecar is fetched and hash-checked first)
         working-directory: launcher
-        run: npx tauri build --bundles nsis -- --locked
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx tauri build --bundles nsis --config src-tauri/tauri.updater.conf.json -- --locked
       - name: Collect
         shell: bash
         run: |
           mkdir dist
-          cp target/release/bundle/nsis/*-setup.exe dist/
+          cp target/release/bundle/nsis/*-setup.exe target/release/bundle/nsis/*-setup.exe.sig dist/
           ls -l dist
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         if: github.ref_type == 'tag'
         with:
-          subject-path: dist/*
+          subject-path: dist/*-setup.exe
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: installer
@@ -138,10 +145,19 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: dist
           merge-multiple: true
+      - name: Update feed (latest.json, with the installer's updater signature)
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          python3 scripts/release.py latest-json "$TAG" dist/*-setup.exe --out dist/latest.json
+          rm dist/*-setup.exe.sig
       - name: Checksums
         working-directory: dist
         run: |

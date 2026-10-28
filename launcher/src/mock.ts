@@ -275,6 +275,7 @@ type Listener<T> = (v: T) => void;
 export function mockApi(): Api {
   const runListeners: Listener<[string, RunEvent]>[] = [];
   const stepListeners: Listener<StepEvent>[] = [];
+  const updateListeners: Listener<[number, number | null]>[] = [];
   const changed: Listener<void>[] = [];
   const timers = new Map<string, number>();
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -482,6 +483,7 @@ export function mockApi(): Api {
         mode: MANAGED ? "managed" : "free",
         policy: MANAGED ? MANAGED_POLICY : null,
         uv_version: "uv 0.13.4",
+        updates: true,
         publishers: [
           { namespace: "devstribution", key_id: "2972B9E777FFC794", pinned_at: now() - 9 * DAY, source: "first-use" },
           { namespace: "finance", key_id: "8D41C0A9F2B37E10", pinned_at: now() - 21 * DAY, source: "first-use" },
@@ -493,6 +495,19 @@ export function mockApi(): Api {
     async uninstallLauncher() { throw new Error("The browser demo has no uninstaller: in the launcher, this opens devstribution's own uninstaller."); },
     async takePendingFiles() { return []; },
     async saveTrustRequest() { return false; },
+    async checkUpdate() {
+      await sleep(600);
+      return {
+        version: "0.3.0", current: "0.1.0",
+        notes: "## Added\n\n- **The launcher updates itself**: it looks for a new version when it starts.\n- Keyboard and screen reader basics.\n\n## Fixed\n\n- Error messages stay until you close them.",
+      };
+    },
+    async installUpdate() {
+      const total = 14_200_000;
+      for (let done = 0; done <= total; done += 1_420_000) { updateListeners.forEach((l) => l([done, total])); await sleep(250); }
+      throw new Error("The browser demo cannot install updates: in the launcher, devstribution closes here and the new version installs.");
+    },
+    async onUpdateProgress(cb) { const l: Listener<[number, number | null]> = ([d, t]) => cb(d, t); updateListeners.push(l); return off(updateListeners, l); },
     async onRunEvents(cb) { const l: Listener<[string, RunEvent]> = ([id, e]) => cb(id, [e]); runListeners.push(l); return off(runListeners, l); },
     async onInstallStep(cb) { stepListeners.push(cb); return off(stepListeners, cb); },
     async onRunsChanged(cb) { changed.push(cb); return off(changed, cb); },

@@ -33,6 +33,8 @@
     "allow-settings",
     "allow-uninstall-launcher",
     "allow-take-pending-files",
-    "allow-save-trust-request"
+    "allow-save-trust-request",
+    "allow-check-update",
+    "allow-install-update"
   ]
 }

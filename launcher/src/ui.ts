@@ -188,7 +188,8 @@ export function trapFocus(box: HTMLElement, initial?: HTMLElement): () => void {
   if (!box.hasAttribute("tabindex")) box.tabIndex = -1;
   traps.push(box);
   const watch = new MutationObserver(() => {
-    if (box.isConnected && !box.contains(document.activeElement)) box.focus();
+    // Only the topmost: a dialog under another one must not take the focus back.
+    if (box.isConnected && traps[traps.length - 1] === box && !box.contains(document.activeElement)) box.focus();
   });
   watch.observe(box, { childList: true, subtree: true });
   (initial ?? box).focus();
