@@ -122,7 +122,8 @@ pub enum RunStatus {
 }
 
 /// The hint for an exception the app did not explain: most likely a bug in the app.
-pub const BUG_HINT: &str = "This is most likely a problem in the app, not something you did.      Copy the details and send them to the app's author.";
+pub const BUG_HINT: &str = "This is most likely a problem in the app, not something you did. \
+     Copy the details and send them to the app's author.";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunResult {
@@ -607,7 +608,9 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
                 }),
                 traceback: None,
                 hint: Some(
-                    "The app closed before it finished, without saying why: it may have crashed                      or run out of memory. Try again; if it happens again, send the run's log to                      the app's author."
+                    "The app closed before it finished, without saying why: it may have crashed \
+                     or run out of memory. Try again; if it happens again, send the run's log to \
+                     the app's author."
                         .into(),
                 ),
                 duration_ms,
