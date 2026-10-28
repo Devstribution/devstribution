@@ -131,9 +131,10 @@ What has to hold before our signature goes on it, roughly in this order.
     uv starts suspended in a Job Object; Cancel (button or Escape) or 30 minutes end it and
     everything it started, and the half-made environment is removed. Repair's progress has a
     Cancel too; the old environment stays until a new one is complete.
-13. ☐ **Release workflow hardened**: runs only from `main` after CI has passed, attests
+13. ☑ **Release workflow hardened**: runs only from `main` after CI has passed, attests
     `SHA256SUMS.txt` (GitHub artifact attestations), says plainly what the checksums prove, and
     `releasing.md` lists refreshing the dependency data (section 5) before each release.
+    28 October. Still to see: a real tag run (the first release after this one).
 14. ☐ **CI and tests**: the minimum Rust version (1.90) checked, `cargo-deny`, `npm audit`
     including dev dependencies, job timeouts, Python 3.10 (the runner's minimum), the examples
     packed and scanned; tests for the launcher's Rust commands, a TypeScript linter, and a
