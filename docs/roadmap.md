@@ -59,8 +59,9 @@ What a stranger downloading it meets first, and what the SignPath application ne
    27 October: the launcher writes `logs\launcher.log` (starts, failed commands, panics), Settings
    shows where, and "Copy diagnostics" puts versions, apps, the latest runs and the end of that log
    on the clipboard.
-7. ☐ **Docs for app authors, the basics**: from `devstribution init` to a delivered `.dsapp`
-   (section 8).
+7. ☑ **Docs for app authors, the basics**: from `devstribution init` to a delivered `.dsapp`
+   (section 8). 28 October: [`authors.md`](authors.md), linked from the README and from the
+   `AGENTS.md` that `init` writes.
 8. ☑ **On GitHub (repository owner)**: private vulnerability reporting on (`SECURITY.md` points to
    it), two-factor authentication for everyone with write access. 28 October.
 9. ☐ **Apply to SignPath Foundation**, with the release linked. If refused (the project is young),
@@ -406,7 +407,7 @@ The scan read only the package's own Python files. Extend it where attackers act
 - ☑ Versioning, changelog, release notes → A2. ☐ `docs/HANDOFF.md` and `status_quo.md` folded into a
   contributor guide, after the first release.
 - ☐ Logs a user can find and send (a "Copy diagnostics" button), without secrets in them → A6.
-- ☐ Docs for app authors: from `devstribution init` to a delivered `.dsapp` → A7.
+- ☑ Docs for app authors: from `devstribution init` to a delivered `.dsapp` → A7.
 - ☐ **Fuzzing** (`cargo-fuzz`) of extraction, the manifest and lockfile parsers, and the scan's
   tokenizer → B7.
 - ☐ **Windows Event Log**: installs, runs, blocked calls, stopped runs and quarantines, as events

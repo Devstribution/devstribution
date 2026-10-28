@@ -11,6 +11,9 @@ and started by the devstribution launcher. Keep it that way.
 - `kind = "form"`: `entry = "main:run"` names a function whose parameters are exactly the
   `[[tool.devstribution.inputs]]` names plus `ctx`, and which returns a dict whose keys are the
   `[[tool.devstribution.outputs]]` names. Write output files inside `ctx.output_dir`.
+- For a problem the user can fix (wrong file, missing column), `raise AppError("...")` with a
+  message written for them (`from devstribution_runner import AppError`); it is shown as is,
+  without a traceback. Do not catch other exceptions just to hide them.
 - Use `ctx.progress(fraction, message)` in long loops (it is also where Cancel takes effect),
   `ctx.log(message)` for the user, `ctx.secrets.get(name)` for secrets declared in
   `[tool.devstribution.permissions] secrets`. Never hard-code credentials.
@@ -23,6 +26,8 @@ and started by the devstribution launcher. Keep it that way.
   their folder in `.dsappignore`. `pack` refuses data-like files (spreadsheets, databases,
   archives, logs) unless `.dsappignore` leaves them out, or names them with `!path` when the app
   really ships them (e.g. a template).
+
+Guide for people: https://github.com/Devstribution/devstribution/blob/main/docs/authors.md
 
 ## Loop
 1. `devstribution dev . -i name=value` runs the app like the launcher does. Its error messages

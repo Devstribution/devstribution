@@ -10,6 +10,14 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-28
+
+The first version that updates itself: later versions arrive from inside the launcher. Getting
+here from 0.1.0 or 0.2.0 is one last install by hand, over the old version (apps, results and
+secrets are kept). Also: Cancel while an app's Python is prepared, error messages that say what
+to do, keyboard and screen reader basics, and a guide for app authors. Still a preview, **not
+code-signed yet**.
+
 ### Changed
 
 - `devstribution scan` and `devstribution diff` exit with 2 when a package could not be read, so
@@ -58,6 +66,9 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
   updated by hand once.
 - Apps can raise `devstribution_runner.AppError("…")` with a message for the user: the launcher
   shows it as written, with no traceback and no "send it to the author".
+- A guide for app authors, from `devstribution init` to a delivered `.dsapp`:
+  [`docs/authors.md`](docs/authors.md). The `AGENTS.md` that `init` writes links to it and
+  explains `AppError`.
 - Settings has an About block (version, licence, where the log is, and the software inside
   devstribution with its licences; "Open all licence texts" opens `THIRD-PARTY-NOTICES.txt`, which
   the installer ships) and a "Copy diagnostics" button: versions, installed apps, the latest runs,
@@ -151,6 +162,7 @@ warns before the installer runs, and it is not meant for company PCs yet.
 - Not yet tried on a locked-down company PC or behind a company proxy.
 - The launcher does not update itself: install a newer version over it.
 
-[Unreleased]: https://github.com/Devstribution/devstribution/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Devstribution/devstribution/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Devstribution/devstribution/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Devstribution/devstribution/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Devstribution/devstribution/releases/tag/v0.1.0

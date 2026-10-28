@@ -54,8 +54,9 @@ devstribution verify my-tool/dist/my-tool-0.1.0.dsapp --key <keys folder>/yourna
 ```
 
 An app is an ordinary Python folder: `pyproject.toml` with a `[tool.devstribution]` section,
-a `uv.lock`, and the code. See `examples/` and the `AGENTS.md` that `init` writes for coding
-agents.
+a `uv.lock`, and the code. The guide from `init` to a delivered `.dsapp` is
+[docs/authors.md](docs/authors.md); see also `examples/` and the `AGENTS.md` that `init` writes for
+coding agents.
 
 Run the launcher (needs Node 22+; on Linux also the WebKitGTK libraries listed in the CI workflow):
 

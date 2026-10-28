@@ -899,7 +899,7 @@ dependencies = [
 
 [[package]]
 name = "devstribution-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -917,7 +917,7 @@ dependencies = [
 
 [[package]]
 name = "devstribution-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "hex",
  "ignore",
@@ -936,7 +936,7 @@ dependencies = [
 
 [[package]]
 name = "devstribution-host"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -955,7 +955,7 @@ dependencies = [
 
 [[package]]
 name = "devstribution-launcher"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "devstribution-core",
