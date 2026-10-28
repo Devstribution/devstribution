@@ -898,6 +898,7 @@ fn restrict_dll_search() {
     use windows_sys::Win32::System::LibraryLoader::{
         LOAD_LIBRARY_SEARCH_DEFAULT_DIRS, SetDefaultDllDirectories,
     };
+    // SAFETY: takes a flag and no pointers; called at start, before other threads load DLLs.
     unsafe { SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS) };
 }
 

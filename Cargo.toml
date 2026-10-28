@@ -16,6 +16,10 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/Devstribution/devstribution"
 rust-version = "1.90"
 
+# Every `unsafe` block says why it is sound (a `// SAFETY:` comment above it).
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "deny"
+
 [workspace.dependencies]
 devstribution-core = { path = "crates/devstribution-core" }
 devstribution-host = { path = "crates/devstribution-host" }

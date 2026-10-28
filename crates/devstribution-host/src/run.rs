@@ -857,8 +857,9 @@ pub(crate) mod platform {
         watched: AtomicBool,
     }
 
-    // The handles are only used through thread-safe kernel calls.
+    // SAFETY: the handles are only used through kernel calls that may be made from any thread.
     unsafe impl Send for Job {}
+    // SAFETY: as for `Send`; the other fields are atomics.
     unsafe impl Sync for Job {}
 
     impl Job {
@@ -866,6 +867,9 @@ pub(crate) mod platform {
         /// be put in a job is not started: Cancel and closing the launcher could not stop
         /// what it starts.
         pub fn assign(child: &Child) -> Result<Job> {
+            // SAFETY: every pointer passed is null or points to a local that outlives the call
+            // that uses it, with the size given beside it; a handle is checked for null before
+            // use, and `child` keeps its process handle open for the whole function.
             unsafe {
                 let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
                 if handle.is_null() {
@@ -932,6 +936,7 @@ pub(crate) mod platform {
 
         pub fn terminate(&self) {
             if !self.job.is_null() {
+                // SAFETY: `self.job` is an open Job Object handle, closed only when `self` drops.
                 unsafe { TerminateJobObject(self.job, 1) };
             }
         }
@@ -949,6 +954,8 @@ pub(crate) mod platform {
                 while !closed.load(Ordering::Relaxed) {
                     let (mut code, mut key) = (0u32, 0usize);
                     let mut overlapped: *mut OVERLAPPED = std::ptr::null_mut();
+                    // SAFETY: `port` is open until this thread closes it below (`Drop` leaves a
+                    // watched port to it); the out-pointers are locals.
                     let got = unsafe {
                         GetQueuedCompletionStatus(port, &mut code, &mut key, &mut overlapped, 250)
                     };
@@ -968,6 +975,7 @@ pub(crate) mod platform {
                         _ => {}
                     }
                 }
+                // SAFETY: this thread owns the port (`watched` is set), and closes it once.
                 unsafe { CloseHandle(port) };
             });
         }
@@ -977,10 +985,12 @@ pub(crate) mod platform {
         fn drop(&mut self) {
             self.closed.store(true, Ordering::Relaxed);
             if !self.job.is_null() {
+                // SAFETY: the job handle is closed only here, once.
                 unsafe { CloseHandle(self.job) };
             }
             // A watching thread owns the port: it stops within 250 ms and closes it.
             if !self.port.is_null() && !self.watched.load(Ordering::Relaxed) {
+                // SAFETY: no thread took the port, so this is the only close.
                 unsafe { CloseHandle(self.port) };
             }
         }
@@ -988,6 +998,10 @@ pub(crate) mod platform {
 
     /// The command line of `pid`, or its program when the command line cannot be read.
     fn command_line(pid: u32) -> Option<String> {
+        // SAFETY: the process handle is checked for null and closed before returning. The query
+        // writes at most `buffer.len() * 8` bytes into `buffer`, whose u64 elements are aligned
+        // for the UNICODE_STRING it starts with; when the call succeeds, that string's buffer
+        // points inside `buffer` and holds `Length` bytes. `name` has `size` writable units.
         unsafe {
             let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
             if h.is_null() {
@@ -1027,6 +1041,8 @@ pub(crate) mod platform {
 
     /// Resumes the threads of a process created suspended (it has exactly one).
     fn resume(pid: u32) -> Result<()> {
+        // SAFETY: `entry` is zeroed and has its `dwSize` set, as the API asks; the snapshot and
+        // each thread handle are checked and closed.
         unsafe {
             let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
             if snapshot == INVALID_HANDLE_VALUE {
@@ -1069,6 +1085,7 @@ pub(crate) mod platform {
             return;
         }
         let Some(created) = created else { return };
+        // SAFETY: the handle is checked for null and closed; the out-pointers are locals.
         unsafe {
             let h = OpenProcess(
                 PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION,

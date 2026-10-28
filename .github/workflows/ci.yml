@@ -12,6 +12,7 @@ permissions:
 
 jobs:
   test:
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -33,12 +34,15 @@ jobs:
       - name: Rust tests
         run: cargo test
 
+      - name: Runner tests (Python 3.10, the runner's minimum)
+        run: uv run --no-project --python 3.10 python -m unittest discover -s runner/tests -v
       - name: Runner tests (Python 3.11)
         run: uv run --no-project --python 3.11 python -m unittest discover -s runner/tests -v
       - name: Runner tests (Python 3.13)
         run: uv run --no-project --python 3.13 python -m unittest discover -s runner/tests -v
 
   launcher:
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -71,9 +75,22 @@ jobs:
       - name: Launcher lint
         run: cargo clippy -p devstribution-launcher --all-targets -- -D warnings
 
+  msrv:
+    # The oldest Rust that Cargo.toml promises (`rust-version`) still builds the crates.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: "1.90"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - run: cargo check --locked -p devstribution-core -p devstribution-host -p devstribution-cli
+
   audit:
     # Known vulnerabilities in the Rust and npm dependencies fail the build.
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -88,4 +105,4 @@ jobs:
           cargo audit
       - name: npm audit
         working-directory: launcher
-        run: npm audit --omit=dev --audit-level=moderate
+        run: npm audit --audit-level=moderate
