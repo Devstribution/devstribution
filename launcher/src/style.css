@@ -233,6 +233,10 @@ h1, h2, h3, h4 { margin: 0; letter-spacing: -0.01em; }
 svg.lucide { flex: none; }
 ::selection { background: var(--accent); color: var(--on-accent); }
 :focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+/* Dialogs take focus themselves so their name is read; no ring around the whole dialog. */
+[role=dialog]:focus { outline: none; }
+/* Read by screen readers, not shown. */
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* Small helpers, so views don't carry inline styles. */
 .grow { flex: 1; min-width: 0; }
@@ -705,6 +709,8 @@ kbd { font: inherit; font-size: var(--fs-xs); border: 1px solid var(--border-str
 .toast.ok { background: var(--success); color: var(--on-success); }
 .toast.error { background: var(--danger); color: var(--on-danger); border-radius: var(--r-lg); }
 .toast .link { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+.toast-close { display: grid; place-items: center; margin-right: -6px; padding: 4px; border: 0; border-radius: var(--r-pill); background: none; color: inherit; opacity: .8; }
+.toast-close:hover { opacity: 1; background: rgb(255 255 255 / .15); }
 
 .drop-overlay {
   position: fixed; inset: 0; z-index: 70; display: grid; place-items: center;
@@ -751,3 +757,11 @@ kbd { font: inherit; font-size: var(--fs-xs); border: 1px solid var(--border-str
 /* Shown instead of a blank window when the launcher cannot set itself up. */
 .startup-error { margin: auto; }
 .failure-fill { display: grid; place-items: center; min-height: 100%; padding: var(--sp-6); }
+
+/* Less motion when Windows says so (Settings → Accessibility → Visual effects → Animation
+   effects off): no slides, pops or fades. The spinner keeps turning, slowly: it says "working". */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+  .spin { animation: spin 2.5s linear infinite !important; }
+  .progress.indeterminate .fill { animation: none !important; width: 100% !important; opacity: .45; }
+}

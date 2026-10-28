@@ -1,7 +1,7 @@
 import { Search } from "lucide";
 import type { AppView } from "../api";
 import type { Ctx, Rendered } from "../main";
-import { h, icon, appIcon, clear, relTime, worksWith, plural } from "../ui";
+import { h, icon, appIcon, clear, relTime, worksWith, plural, keepFocus } from "../ui";
 
 // Kept across visits (and across the refresh after each run) so the page doesn't reset under the user.
 const state = { query: "", works: "All", publisher: "Anyone", sort: "Most used" as Sort };
@@ -29,7 +29,7 @@ export async function appsView(ctx: Ctx): Promise<Rendered> {
   const chip = (label: string, on: boolean, pick: () => void) =>
     h("button", { class: `chip ${on ? "on" : ""}`, "aria-pressed": String(on), onclick: pick }, label);
 
-  const draw = () => {
+  const draw = () => keepFocus([sortBox, chips], () => {
     clear(sortBox, SORTS.map((s) =>
       h("button", { class: state.sort === s ? "on" : "", role: "radio", "aria-checked": String(state.sort === s), onclick: () => { state.sort = s; draw(); } }, s)));
     clear(chips,
@@ -71,7 +71,7 @@ export async function appsView(ctx: Ctx): Promise<Rendered> {
       : h("div", { class: "empty-box" }, apps.length === 0
           ? "No apps yet. Install one with the button below, or drop a .dsapp file anywhere on this window."
           : "No app matches these filters."));
-  };
+  });
   input.addEventListener("input", () => { state.query = input.value; draw(); });
   draw();
 

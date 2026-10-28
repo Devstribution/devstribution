@@ -1,7 +1,7 @@
 import { X, Trash2, ScrollText } from "lucide";
 import type { Ctx } from "../main";
 import type { AppView, CleanupPlan, JournalReport } from "../api";
-import { h, icon, clear, bytes, plural, toast, errorText } from "../ui";
+import { h, icon, clear, bytes, plural, toast, errorText, trapFocus } from "../ui";
 
 const AGES: [string, number | null][] = [["Older than 7 days", 7], ["Older than 30 days", 30], ["Older than 90 days", 90], ["Older than a year", 365], ["All finished runs", null]];
 
@@ -17,7 +17,7 @@ export function openCleanup(ctx: Ctx, apps: AppView[]) {
   let busy = false;
   let showLog = false;
 
-  const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey); };
+  const close = () => { release(); overlay.remove(); document.removeEventListener("keydown", onKey); };
   const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
   document.addEventListener("keydown", onKey);
 
@@ -31,6 +31,7 @@ export function openCleanup(ctx: Ctx, apps: AppView[]) {
         h("button", { class: "icon-btn", "aria-label": "Close", onclick: close }, icon(X, 16))),
       body, foot));
   document.body.appendChild(overlay);
+  const release = trapFocus(overlay.firstElementChild as HTMLElement);
 
   async function load() {
     plan = null;

@@ -31,6 +31,11 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
   "Copy details" (the error and traceback) to send to the author. The host's remaining messages
   (data folder, output folders, the runner, moving an app or environment into place, the Windows
   calls that watch a run) also say what to do now.
+- The launcher works from the keyboard and with a screen reader: dialogs keep the focus inside
+  and give it back when they close, the `⋯` menu and the segmented controls take arrow keys,
+  clicking a choice no longer drops the focus, and run progress, results and install steps are
+  announced. Error messages stay until you close them. With Windows' animation effects turned
+  off, the launcher does not slide or fade either.
 - `devstribution trust export` asks before replacing an existing file. Without a terminal to ask
   on (CI, a pipe) it refuses; `--force` replaces it.
 

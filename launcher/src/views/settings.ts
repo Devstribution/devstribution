@@ -2,7 +2,7 @@ import { X, Check, Pipette, FolderOpen, Trash2, ClipboardCopy } from "lucide";
 import type { Ctx } from "../main";
 import { openCleanup } from "./cleanup";
 import type { Policy, Settings } from "../api";
-import { h, icon, clear, relTime, toast, errorText, copyText } from "../ui";
+import { h, icon, clear, relTime, toast, errorText, copyText, trapFocus, keepFocus } from "../ui";
 import { ACCENTS, DEFAULT_LOOK, textOn, type Look, type Theme, type StatusColours } from "../look";
 
 const THEMES: [Theme, string][] = [["light", "Light"], ["dark", "Dark"], ["system", "System"]];
@@ -24,6 +24,7 @@ export function toggleSettings(ctx: Ctx) {
   const scrim = h("div", { class: "scrim clear" });
   const pop = h("aside", { class: "popover", role: "dialog", "aria-label": "Settings" });
   const close = () => {
+    release();
     scrim.remove();
     pop.remove();
     document.removeEventListener("keydown", onKey);
@@ -33,6 +34,7 @@ export function toggleSettings(ctx: Ctx) {
   scrim.addEventListener("click", close);
   document.addEventListener("keydown", onKey);
   document.body.append(scrim, pop);
+  const release = trapFocus(pop);
   open = close;
 
   const appearance = h("div", { class: "stack" });
@@ -43,7 +45,7 @@ export function toggleSettings(ctx: Ctx) {
     picker.addEventListener("input", () => ctx.look.set({ accent: picker.value }));
     picker.addEventListener("change", drawAppearance);
     const changed = JSON.stringify(look) !== JSON.stringify(DEFAULT_LOOK);
-    clear(appearance,
+    keepFocus([appearance], () => clear(appearance,
       h("div", { class: "settings-group" }, h("span", { class: "section-label" }, "Theme"), choice(ctx, "theme", THEMES, "Theme", drawAppearance)),
       h("div", { class: "settings-group" },
         h("span", { class: "section-label" }, "Accent colour: buttons, selections, progress"),
@@ -60,7 +62,7 @@ export function toggleSettings(ctx: Ctx) {
       h("div", { class: "settings-group" },
         h("span", { class: "section-label" }, "Status colours: done, didn’t work, warnings"),
         choice(ctx, "status", STATUS, "Status colours", drawAppearance)),
-      changed ? h("button", { class: "link small self-start", onclick: () => { ctx.look.reset(); drawAppearance(); } }, "Back to the default look") : null);
+      changed ? h("button", { class: "link small self-start", onclick: () => { ctx.look.reset(); drawAppearance(); } }, "Back to the default look") : null));
   };
   drawAppearance();
 

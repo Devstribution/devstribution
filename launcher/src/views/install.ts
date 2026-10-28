@@ -2,7 +2,7 @@ import { ShieldAlert, ShieldCheck, ShieldX, ShieldOff, Globe, Folder, KeyRound, 
   SquareTerminal, Cpu, Code, EyeOff, Eye, CalendarClock, PackagePlus, PackageCheck, Package, Binary, ScanSearch, FileDiff } from "lucide";
 import type { AppDiff, Finding, PendingInstall, StepEvent } from "../api";
 import type { Ctx } from "../main";
-import { h, icon, appIcon, bytes, clear, toast, errorText, KIND_LABEL } from "../ui";
+import { h, icon, appIcon, bytes, clear, toast, errorText, trapFocus, announce, KIND_LABEL } from "../ui";
 
 function permissionRows(p: PendingInstall): HTMLElement {
   const rows: [typeof Globe, string, string][] = [];
@@ -123,14 +123,15 @@ export async function installFlow(ctx: Ctx, path?: string) {
   const chosen = path ?? (await ctx.api.pickPackage());
   if (!chosen) return;
 
-  const modal = h("div", { class: "modal", role: "dialog", "aria-modal": "true", "aria-label": "Install app" });
+  const modal = h("div", { class: "modal", role: "dialog", "aria-label": "Install app" });
   const overlay = h("div", { class: "overlay" }, modal);
   // What Escape does right now; null while it cannot be stopped (a Cancel already sent).
   let dismiss: (() => void) | null = null;
   const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && dismiss) dismiss(); };
-  const end = () => { document.removeEventListener("keydown", onKey); overlay.remove(); };
+  const end = () => { release(); document.removeEventListener("keydown", onKey); overlay.remove(); };
   document.addEventListener("keydown", onKey);
   document.body.appendChild(overlay);
+  const release = trapFocus(modal);
 
   let cancelled = false;
   dismiss = () => { cancelled = true; end(); };
@@ -236,8 +237,11 @@ export async function installFlow(ctx: Ctx, path?: string) {
     };
     const stopBtn = h("button", { class: "btn", onclick: stop }, "Cancel") as HTMLButtonElement;
     const list = h("div", { class: "steps" });
+    let said = "";
     const draw = () => {
       const idx = steps.findIndex(([k]) => k === active);
+      const now = active === "ready" ? `${p.title} is installed` : steps[idx]?.[1] ?? "";
+      if (now && now !== said) { said = now; announce(now); }
       clear(list, steps.map(([, label], i) => {
         const done = i < idx || active === "ready";
         const cls = done ? "done" : i === idx ? "active" : "";

@@ -7,8 +7,11 @@ this easier. Python apps (tools, automations, proofs of concept) are shared as s
 and a single signed launcher checks, installs and runs them. Each app is trusted according to who
 published it, and the launcher checks that what you run is exactly what that publisher signed.
 
-**Status: early proof of concept (pre-alpha).** It isn't ready for everyday use yet: the launcher
-is not code-signed, and some Windows-specific parts still need testing on real PCs. The design is
+**Status: early pre-releases (0.x), Windows only.** The installer and the CLI are on the
+[releases page](https://github.com/Devstribution/devstribution/releases), good for trying it out but
+not yet for everyday use: the launcher is not code-signed (Windows SmartScreen warns when the
+installer starts), and a locked-down company PC and managed mode still need testing on real PCs
+(the [roadmap](docs/roadmap.md) has what comes before a signed 1.0). The design is
 in [docs/plan.md](docs/plan.md); the launcher's look (palette, type, components) in
 [docs/design.md](docs/design.md). What the platform protects against, and what it doesn't, is in
 [docs/security.md](docs/security.md). For IT departments: [docs/managed-mode.md](docs/managed-mode.md)
