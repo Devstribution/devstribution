@@ -4,10 +4,13 @@ use std::ffi::OsString;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::OnceLock;
+use std::sync::{OnceLock, mpsc};
+use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use devstribution_core::manifest::Manifest;
+
+use crate::run::platform;
 
 static FIXED_UV: OnceLock<PathBuf> = OnceLock::new();
 
@@ -68,12 +71,32 @@ pub enum LockMode {
     Locked,
 }
 
+/// How long uv may take to prepare an environment before it is stopped. Large dependencies
+/// (PyTorch) take minutes on a slow line; a proxy that holds the connection open forever must
+/// not leave the install screen waiting forever.
+pub const TIMEOUT: Duration = Duration::from_secs(30 * 60);
+
+/// Preparing the environment was stopped because the user asked to.
+#[derive(Debug)]
+pub struct Cancelled;
+
+impl std::fmt::Display for Cancelled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("preparing the Python environment was cancelled")
+    }
+}
+
+impl std::error::Error for Cancelled {}
+
 /// `uv sync` the app's locked dependencies into `env_dir`, reporting uv's progress lines.
+/// `stop` is asked a few times a second; when it says yes, or after [`TIMEOUT`], uv and
+/// everything it started are ended.
 pub fn sync(
     app_dir: &Path,
     env_dir: &Path,
     mode: LockMode,
     on_line: &mut dyn FnMut(&str),
+    stop: &dyn Fn() -> bool,
 ) -> Result<()> {
     let mut cmd = command();
     cmd.args(["sync", "--no-build", "--no-dev", "--no-install-project"])
@@ -89,6 +112,18 @@ pub fn sync(
     }
     // After the settings above, which clear the environment.
     cmd.env("UV_PROJECT_ENVIRONMENT", env_dir);
+    supervise(cmd, on_line, stop, TIMEOUT)
+}
+
+/// Runs uv in a Job Object, like an app's run, so that Cancel, the timeout and closing the
+/// launcher end it together with every process it started (Python downloads, extractors).
+fn supervise(
+    mut cmd: Command,
+    on_line: &mut dyn FnMut(&str),
+    stop: &dyn Fn() -> bool,
+    timeout: Duration,
+) -> Result<()> {
+    platform::prepare(&mut cmd);
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -97,24 +132,68 @@ pub fn sync(
         .context(
             "cannot start uv, the tool that sets up an app's Python: reinstall devstribution, or ask your IT department whether it is blocked (developers can set DEVSTRIBUTION_UV)",
         )?;
+    let job = match platform::Job::assign(&child) {
+        Ok(job) => job,
+        Err(e) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(e);
+        }
+    };
+    // Lines arrive on a thread of their own, so that a uv that prints nothing can still be
+    // stopped.
+    let stderr = child.stderr.take().expect("piped");
+    let (tx, rx) = mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines() {
+            if tx.send(line.unwrap_or_default()).is_err() {
+                break;
+            }
+        }
+    });
+    let started = Instant::now();
     let mut tail: Vec<String> = Vec::new();
-    for line in BufReader::new(child.stderr.take().expect("piped")).lines() {
-        let line = line.unwrap_or_default();
-        let line = line.trim_end();
-        if line.is_empty() {
-            continue;
+    let stopped = loop {
+        match rx.recv_timeout(Duration::from_millis(200)) {
+            Ok(line) => {
+                let line = line.trim_end();
+                if !line.is_empty() {
+                    on_line(line);
+                    tail.push(line.to_string());
+                    if tail.len() > 12 {
+                        tail.remove(0);
+                    }
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break None,
         }
-        on_line(line);
-        tail.push(line.to_string());
-        if tail.len() > 12 {
-            tail.remove(0);
+        if stop() {
+            break Some(anyhow::Error::new(Cancelled));
         }
+        if started.elapsed() > timeout {
+            let minutes = timeout.as_secs().div_ceil(60).max(1);
+            break Some(anyhow!(
+                "preparing the Python environment took more than {minutes} minute{} and was \
+                 stopped. This is usually a slow connection, or a proxy that holds the download: \
+                 check it and try again.",
+                if minutes == 1 { "" } else { "s" }
+            ));
+        }
+    };
+    if let Some(e) = stopped {
+        job.terminate();
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(e);
     }
     let status = child.wait()?;
     if !status.success() {
         bail!(
-            "preparing the Python environment failed. This is usually the internet connection or a proxy blocking the download: check it and try again.\n{}",
-            tail.join("\n")
+            "preparing the Python environment failed. This is usually the internet connection or a proxy blocking the download: check it and try again.
+{}",
+            tail.join("
+")
         );
     }
     Ok(())
@@ -193,5 +272,57 @@ pub fn python_in(env_dir: &Path, gui: bool) -> PathBuf {
         env_dir.join("Scripts").join(exe)
     } else {
         env_dir.join("bin").join("python")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// A command that prints a line, then waits about a minute without printing anything.
+    fn slow() -> Command {
+        if cfg!(windows) {
+            let mut cmd = Command::new("cmd");
+            cmd.args(["/c", "echo started 1>&2 && ping -n 60 127.0.0.1 >nul"]);
+            cmd
+        } else {
+            let mut cmd = Command::new("sh");
+            cmd.args(["-c", "echo started >&2; sleep 60"]);
+            cmd
+        }
+    }
+
+    #[test]
+    fn cancel_ends_uv_and_what_it_started() {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let later = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(500));
+            later.store(true, Ordering::SeqCst);
+        });
+        let started = Instant::now();
+        let mut lines = Vec::new();
+        let err = supervise(
+            slow(),
+            &mut |l| lines.push(l.to_string()),
+            &|| cancel.load(Ordering::SeqCst),
+            TIMEOUT,
+        )
+        .unwrap_err();
+        assert!(err.is::<Cancelled>(), "{err:#}");
+        assert!(started.elapsed() < Duration::from_secs(10));
+        assert_eq!(lines, ["started"]);
+    }
+
+    #[test]
+    fn a_silent_uv_is_stopped_at_the_timeout() {
+        let started = Instant::now();
+        let err = supervise(slow(), &mut |_| {}, &|| false, Duration::from_millis(500))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("took more than 1 minute and was"), "{err}");
+        assert!(started.elapsed() < Duration::from_secs(10));
     }
 }

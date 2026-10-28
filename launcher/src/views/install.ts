@@ -125,7 +125,7 @@ export async function installFlow(ctx: Ctx, path?: string) {
 
   const modal = h("div", { class: "modal", role: "dialog", "aria-modal": "true", "aria-label": "Install app" });
   const overlay = h("div", { class: "overlay" }, modal);
-  // What Escape does right now; null while the install runs, which cannot be stopped yet.
+  // What Escape does right now; null while it cannot be stopped (a Cancel already sent).
   let dismiss: (() => void) | null = null;
   const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && dismiss) dismiss(); };
   const end = () => { document.removeEventListener("keydown", onKey); overlay.remove(); };
@@ -224,6 +224,17 @@ export async function installFlow(ctx: Ctx, path?: string) {
     ];
     let active: string = "files";
     let detail = "";
+    // Cancel stops uv and everything it started; the install then fails and nothing is kept.
+    let stopping = false;
+    const stop = () => {
+      if (stopping) return;
+      stopping = true;
+      dismiss = null;
+      stopBtn.disabled = true;
+      stopBtn.textContent = "Cancelling…";
+      ctx.api.cancelEnvironment().catch(() => {});
+    };
+    const stopBtn = h("button", { class: "btn", onclick: stop }, "Cancel") as HTMLButtonElement;
     const list = h("div", { class: "steps" });
     const draw = () => {
       const idx = steps.findIndex(([k]) => k === active);
@@ -239,8 +250,8 @@ export async function installFlow(ctx: Ctx, path?: string) {
     clear(modal,
       h("div", { class: "modal-head" }, appIcon(p, "lg"), h("div", null, h("h2", null, `Installing ${p.title}`), h("div", { class: "muted" }, `version ${p.version}`))),
       h("div", { class: "modal-body" }, list),
-      h("div", { class: "modal-foot" }, h("span", { class: "muted small grow" }, "This can take a few minutes the first time, and can’t be stopped once it has started.")));
-    dismiss = null;
+      h("div", { class: "modal-foot" }, h("span", { class: "muted small grow" }, "This can take a few minutes the first time."), stopBtn));
+    dismiss = stop;
     const unlisten = await ctx.api.onInstallStep((e) => {
       if (e.key !== p.token && e.key !== "demo") return;
       active = e.step;
@@ -261,7 +272,8 @@ export async function installFlow(ctx: Ctx, path?: string) {
     } catch (e) {
       unlisten();
       end();
-      toast(`Installation failed: ${errorText(e)}`, "error");
+      if (stopping) toast(`Installation cancelled. ${p.title} was not installed.`, "info");
+      else toast(`Installation failed: ${errorText(e)}`, "error");
     }
   }
 }

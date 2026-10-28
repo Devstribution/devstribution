@@ -4,6 +4,7 @@ const COMMANDS: &[&str] = &[
     "inspect_package",
     "confirm_install",
     "discard_install",
+    "cancel_environment",
     "uninstall_app",
     "repair_app",
     "release_quarantine",

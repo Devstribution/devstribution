@@ -333,9 +333,16 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
         icon(ctx.pins.has(app.id) ? PinOff : Pin, 16), ctx.pins.has(app.id) ? "Unpin from sidebar" : "Pin to sidebar"),
       h("button", { role: "menuitem", onclick: async () => {
         menu.hidden = true;
-        const progress = progressToast("Rebuilding the environment…");
+        // Cancel stops uv; the old environment stays in place until a new one is complete.
+        let stopped = false;
+        const progress = progressToast("Rebuilding the environment…", {
+          label: "Cancel", busy: "Cancelling…",
+          run: () => { stopped = true; ctx.api.cancelEnvironment().catch(() => {}); },
+        });
         const off = await ctx.api.onInstallStep((e) => { if (e.key === app.id) progress.update(e.message); });
-        try { await ctx.api.repair(app.id); progress.end(); toast("Repaired: the environment was rebuilt", "ok"); } catch (e) { progress.end(); toast(errorText(e), "error"); } finally { off(); }
+        try { await ctx.api.repair(app.id); progress.end(); toast("Repaired: the environment was rebuilt", "ok"); }
+        catch (e) { progress.end(); toast(stopped ? "Repair cancelled. The app’s environment is as it was." : errorText(e), stopped ? "info" : "error"); }
+        finally { off(); }
       } }, icon(Wrench, 16), "Repair"),
       h("button", { role: "menuitem", class: "danger", onclick: () => uninstall() }, icon(Trash2, 16), "Uninstall"));
     drawMenu();

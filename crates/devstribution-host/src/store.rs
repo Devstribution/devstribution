@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
@@ -324,6 +325,9 @@ pub struct Store {
     /// their verified file list. The staging folder can be written by anything the user runs,
     /// so install checks both against these before trusting what is there.
     staged: Mutex<BTreeMap<String, ([u8; 32], FilesList)>>,
+    /// Raised by [`Store::cancel_environment`]: an environment being prepared stops when this
+    /// is no longer the value it started with, so a Cancel never reaches a later install.
+    env_cancel: AtomicU64,
 }
 
 /// This launcher's version, compared with the policy's minimum.
@@ -357,6 +361,7 @@ impl Store {
             policy: Policy::from_system(),
             unsaved_stops: Mutex::new(BTreeMap::new()),
             staged: Mutex::new(BTreeMap::new()),
+            env_cancel: AtomicU64::new(0),
         };
         store.close_interrupted_runs();
         Ok(store)
@@ -410,7 +415,8 @@ impl Store {
             if !tolerated {
                 reasons.push(if p.knows(namespace) {
                     format!(
-                        "your organisation approves `{namespace}`, but not the key this was signed                          with ({})",
+                        "your organisation approves `{namespace}`, but not the key this was signed \
+                         with ({})",
                         fingerprint_of(key).unwrap_or_default()
                     )
                 } else {
@@ -767,6 +773,8 @@ impl Store {
         token: &str,
         on_step: &mut dyn FnMut(InstallStep),
     ) -> Result<InstalledApp> {
+        // A Cancel from here on stops the environment (the files step is short).
+        let cancel_from = self.env_cancel.load(Ordering::SeqCst);
         if !is_token(token) {
             bail!("this install is no longer valid: open the package again");
         }
@@ -852,7 +860,7 @@ impl Store {
                 message: line.to_string(),
             })
         };
-        if let Err(e) = build_env(&app_dir, &env_dir, &mut forward) {
+        if let Err(e) = self.build_env(cancel_from, &app_dir, &env_dir, &mut forward) {
             // The installed version, if any, is untouched: only new files go.
             if !same_content_installed {
                 let _ = fs::remove_dir_all(&app_dir);
@@ -975,8 +983,31 @@ impl Store {
         Ok(())
     }
 
+    /// Stops the Python environment being prepared, by an install or a Repair: uv and what it
+    /// started end, nothing half-made is kept, and the install or Repair fails with
+    /// [`uv::Cancelled`].
+    pub fn cancel_environment(&self) {
+        self.env_cancel.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Builds an app's environment next to `env_dir` and moves it into place only when uv has
+    /// finished: a failed, cancelled or interrupted build never leaves a half-made environment
+    /// that looks ready, and the environment it replaces keeps working until then.
+    /// `cancel_from` is [`Store::env_cancel`] when the install or Repair began.
+    fn build_env(
+        &self,
+        cancel_from: u64,
+        app_dir: &Path,
+        env_dir: &Path,
+        on_line: &mut dyn FnMut(&str),
+    ) -> Result<()> {
+        let stop = || self.env_cancel.load(Ordering::SeqCst) != cancel_from;
+        build_env(app_dir, env_dir, on_line, &stop)
+    }
+
     /// Rebuilds an app's environment from its lockfile.
     pub fn repair(&self, id: &str, on_step: &mut dyn FnMut(InstallStep)) -> Result<()> {
+        let cancel_from = self.env_cancel.load(Ordering::SeqCst);
         self.refuse_if_running(id, "repair")?;
         let app = self.app(id)?;
         on_step(InstallStep {
@@ -990,7 +1021,7 @@ impl Store {
             })
         };
         // The old environment stays until the new one is complete.
-        build_env(&app.app_dir, &app.env_dir, &mut forward)?;
+        self.build_env(cancel_from, &app.app_dir, &app.env_dir, &mut forward)?;
         on_step(InstallStep {
             step: "ready",
             message: "Ready".into(),
@@ -1146,7 +1177,8 @@ impl Store {
         }
         match stop_unsaved {
             Some(e) => Err(e.context(
-                "the app was stopped, but the launcher could not record it;                  it stays blocked until the launcher is closed",
+                "the app was stopped, but the launcher could not record it; \
+                 it stays blocked until the launcher is closed",
             )),
             None => saved,
         }
@@ -1668,10 +1700,13 @@ impl Store {
     }
 }
 
-/// Builds an app's environment next to `env_dir` and moves it into place only when uv has
-/// finished: a failed or interrupted build never leaves a half-made environment that looks
-/// ready, and the environment it replaces keeps working until then.
-fn build_env(app_dir: &Path, env_dir: &Path, on_line: &mut dyn FnMut(&str)) -> Result<()> {
+/// See [`Store::build_env`].
+fn build_env(
+    app_dir: &Path,
+    env_dir: &Path,
+    on_line: &mut dyn FnMut(&str),
+    stop: &dyn Fn() -> bool,
+) -> Result<()> {
     let parent = env_dir.parent().expect("has a parent");
     fs::create_dir_all(parent)?;
     let name = env_dir
@@ -1679,7 +1714,7 @@ fn build_env(app_dir: &Path, env_dir: &Path, on_line: &mut dyn FnMut(&str)) -> R
         .and_then(|n| n.to_str())
         .unwrap_or("env");
     let building = parent.join(format!("{name}.building-{}", random_hex(4)));
-    if let Err(e) = uv::sync(app_dir, &building, LockMode::Frozen, on_line) {
+    if let Err(e) = uv::sync(app_dir, &building, LockMode::Frozen, on_line, stop) {
         let _ = fs::remove_dir_all(&building);
         return Err(e);
     }

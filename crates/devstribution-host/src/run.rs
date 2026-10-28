@@ -742,7 +742,8 @@ fn keep_declared_outputs(
             });
             if !inside {
                 problems.push(format!(
-                    "the file output `{name}` is not a file in the run's output folder or in a                      folder chosen for the run: ignored"
+                    "the file output `{name}` is not a file in the run's output folder or in a \
+                     folder chosen for the run: ignored"
                 ));
                 return false;
             }
@@ -780,7 +781,7 @@ pub enum JobEvent {
 }
 
 #[cfg(windows)]
-mod platform {
+pub(crate) mod platform {
     use std::os::windows::io::AsRawHandle;
     use std::os::windows::process::CommandExt;
     use std::process::{Child, Command};
@@ -852,6 +853,8 @@ mod platform {
         /// Where the job reports new processes; read by [`Job::watch`]'s thread.
         port: HANDLE,
         closed: Arc<AtomicBool>,
+        /// Whether [`Job::watch`] took over the port (it closes it); otherwise the drop does.
+        watched: AtomicBool,
     }
 
     // The handles are only used through thread-safe kernel calls.
@@ -876,6 +879,7 @@ mod platform {
                     job: handle,
                     port,
                     closed: Arc::default(),
+                    watched: AtomicBool::new(false),
                 };
                 if port.is_null() {
                     bail!(
@@ -935,6 +939,9 @@ mod platform {
         /// Calls `on_event`, from a thread of its own, for every process that joins the job
         /// apart from the app's own (`app_pid`), until the job is empty or dropped.
         pub fn watch(&self, app_pid: u32, on_event: impl Fn(JobEvent) + Send + 'static) {
+            if self.port.is_null() || self.watched.swap(true, Ordering::Relaxed) {
+                return;
+            }
             let port = self.port as usize;
             let closed = self.closed.clone();
             std::thread::spawn(move || {
@@ -972,7 +979,10 @@ mod platform {
             if !self.job.is_null() {
                 unsafe { CloseHandle(self.job) };
             }
-            // The watching thread owns the port: it stops within 250 ms and closes it.
+            // A watching thread owns the port: it stops within 250 ms and closes it.
+            if !self.port.is_null() && !self.watched.load(Ordering::Relaxed) {
+                unsafe { CloseHandle(self.port) };
+            }
         }
     }
 
@@ -1085,7 +1095,7 @@ mod platform {
 }
 
 #[cfg(not(windows))]
-mod platform {
+pub(crate) mod platform {
     use std::process::{Child, Command};
     use std::time::SystemTime;
 
