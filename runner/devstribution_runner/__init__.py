@@ -1,8 +1,8 @@
 """The run context that devstribution gives to apps.
 
 In production this package is provided by the launcher (it is never installed in the app's
-environment). For development it is published on PyPI as `devstribution-runner`, to be added
-as a dev dependency for type hints and local tests:
+environment), and `devstribution dev` provides it too. It is not on PyPI yet; for local tests
+outside `devstribution dev`, put this repository's `runner` folder on the path:
 
     from devstribution_runner import local_context
     result = run(Path("orders.xlsx"), ctx=local_context())
