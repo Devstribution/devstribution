@@ -31,6 +31,8 @@ UNSIGNED = """\
 > *More info*, then *Run anyway*. Before that, check the file against `SHA256SUMS.txt`, or that
 > it was built by this repository's release workflow:
 > `gh attestation verify <file> --repo Devstribution/devstribution`.
+>
+> [Code signing policy](https://github.com/Devstribution/devstribution/blob/main/docs/code-signing-policy.md)
 """
 
 
