@@ -76,3 +76,9 @@ python3 -m unittest discover -s runner/tests          # runner protocol and code
 
 Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
 Contributing: see [CONTRIBUTING.md](CONTRIBUTING.md). Security issues: see [SECURITY.md](SECURITY.md).
+
+## Code signing policy
+
+Releases are not code-signed yet. The policy signed releases will follow (who approves them,
+what gets signed, what the launcher sends over the network) is in
+[docs/code-signing-policy.md](docs/code-signing-policy.md).

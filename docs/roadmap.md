@@ -37,9 +37,11 @@ What a stranger downloading it meets first, and what the SignPath application ne
 2. ☑ **Versioning, changelog and release notes**, then `v0.1.0` published as a pre-release.
    SmartScreen warns about the unsigned installer; the release notes say so. How a release is
    made: [`releasing.md`](releasing.md).
-3. ☐ **A code signing policy** (README or its own page), as SignPath projects publish: who may
+3. ☑ **A code signing policy** (README or its own page), as SignPath projects publish: who may
    approve a signed release, the attribution to SignPath, and what the launcher sends over the
    network (nothing of ours: uv, Python and packages, later the revocation list).
+   28 October: [`code-signing-policy.md`](code-signing-policy.md), linked from the README and
+   the release notes.
 4. ☑ **An About page**: version, licences of bundled software, where the data folder is
    (section 7). 27 October: in Settings, with the licence texts of everything shipped
    (`THIRD-PARTY-NOTICES.txt`, made by `scripts/third_party_notices.py`, shipped with the installer).
