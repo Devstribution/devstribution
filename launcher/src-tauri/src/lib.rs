@@ -241,6 +241,13 @@ fn discard_install(app: AppHandle, token: String) {
     state(&app).store.discard(&token);
 }
 
+/// Stops the Python environment an install or Repair is preparing. Not behind the write lock:
+/// the install holds it while it waits for uv.
+#[tauri::command]
+fn cancel_environment(app: AppHandle) {
+    state(&app).store.cancel_environment();
+}
+
 #[tauri::command]
 async fn uninstall_app(app: AppHandle, id: String) -> CmdResult<()> {
     blocking(move || {
@@ -884,6 +891,7 @@ pub fn run() {
             inspect_package,
             confirm_install,
             discard_install,
+            cancel_environment,
             uninstall_app,
             repair_app,
             release_quarantine,

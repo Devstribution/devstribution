@@ -286,6 +286,8 @@ export interface Api {
   inspectPackage(path: string): Promise<PendingInstall>;
   confirmInstall(token: string): Promise<AppView>;
   discardInstall(token: string): Promise<void>;
+  /** Stops the Python environment an install or Repair is preparing. */
+  cancelEnvironment(): Promise<void>;
   uninstall(id: string): Promise<void>;
   repair(id: string): Promise<void>;
   /** Ends a quarantine; `allow` lets the rule that stopped the app pass from now on. */
@@ -358,6 +360,7 @@ async function tauriApi(): Promise<Api> {
     inspectPackage: (path) => invoke("inspect_package", { path }),
     confirmInstall: (token) => invoke("confirm_install", { token }),
     discardInstall: (token) => invoke("discard_install", { token }),
+    cancelEnvironment: () => invoke("cancel_environment"),
     uninstall: (id) => invoke("uninstall_app", { id }),
     repair: (id) => invoke("repair_app", { id }),
     releaseQuarantine: (id, allow) => invoke("release_quarantine", { id, allow }),

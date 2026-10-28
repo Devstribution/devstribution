@@ -35,7 +35,7 @@ pub fn dev(dir: &Path, inputs: &[String], args: &[String], json_output: bool) ->
     let key = hex::encode(&Sha256::digest(app_dir.to_string_lossy().as_bytes())[..8]);
     let env_dir = paths.dev_envs().join(format!("{}-{key}", manifest.id.app));
     let mut quiet = |_: &str| {};
-    uv::sync(&app_dir, &env_dir, LockMode::Locked, &mut quiet)
+    uv::sync(&app_dir, &env_dir, LockMode::Locked, &mut quiet, &|| false)
         .context("preparing the environment (if uv.lock is out of date, run `uv lock`)")?;
 
     let given = parse_inputs(&manifest, inputs)?;

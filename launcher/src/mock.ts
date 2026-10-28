@@ -193,6 +193,8 @@ function demoRuns(): RunRecord[] {
 }
 
 let runs = demoRuns();
+/** Set by cancelEnvironment: the demo install stops at its next step. */
+let envCancelled = false;
 const cleanups: JournalEntry[] = [];
 
 function stats(): Stats {
@@ -343,8 +345,10 @@ export function mockApi(): Api {
         ["environment", "Installed 9 packages in 48ms"],
         ["ready", "Ready"],
       ];
+      envCancelled = false;
       for (const [step, message] of steps) {
         await sleep(450);
+        if (envCancelled) throw new Error("preparing the Python environment was cancelled");
         stepListeners.forEach((l) => l({ key: "demo", step, message }));
       }
       const app: AppView = {
@@ -363,6 +367,7 @@ export function mockApi(): Api {
       return structuredClone(app);
     },
     async discardInstall() {},
+    async cancelEnvironment() { envCancelled = true; },
     async releaseQuarantine(id, allow) {
       const app = apps.find((a) => a.id === id)!;
       if (app.quarantine && allow) app.guard_allow = [...app.guard_allow, app.quarantine.hit.rule];

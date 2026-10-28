@@ -13,6 +13,7 @@
     "allow-inspect-package",
     "allow-confirm-install",
     "allow-discard-install",
+    "allow-cancel-environment",
     "allow-uninstall-app",
     "allow-repair-app",
     "allow-release-quarantine",

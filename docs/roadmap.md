@@ -61,10 +61,10 @@ What a stranger downloading it meets first, and what the SignPath application ne
    it), two-factor authentication for everyone with write access.
 9. ☐ **Apply to SignPath Foundation**, with the release linked. If refused (the project is young),
    Certum's open-source certificate is the fallback.
-10. ◐ **The install dialog can be cancelled** (button and Escape) while it inspects or installs.
+10. ☑ **The install dialog can be cancelled** (button and Escape) while it inspects or installs.
     27 October: Cancel and Escape work while the package is checked, on the confirmation screen
-    and on the finished screen; a package checked after Cancel is discarded. Once the install has
-    started it cannot be stopped, and the dialog says so: stopping uv is B12.
+    and on the finished screen; a package checked after Cancel is discarded. 28 October: also
+    while the environment is prepared (B12).
 11. ☑ **No silent behaviour** (section 7; 27 October):
     - an empty launcher says "No apps yet", not "No app matches these filters" and "All 0 apps";
     - dropping several packages says only the first is installed;
@@ -112,8 +112,11 @@ What has to hold before our signature goes on it, roughly in this order.
     October scan are tracked privately until fixed, as `SECURITY.md` asks reporters to send them.
 11. ☐ **`state.json` survives a crash**: written to disk before the rename, with a backup the
     launcher recovers from. Today a damaged file blocks every operation.
-12. ☐ **uv can be stopped**: a timeout and Cancel during installs, and uv inside a Job Object
-    like runs, so a stalled proxy cannot leave the install screen stuck (with B1).
+12. ☑ **uv can be stopped**: a timeout and Cancel during installs, and uv inside a Job Object
+    like runs, so a stalled proxy cannot leave the install screen stuck (with B1). 28 October:
+    uv starts suspended in a Job Object; Cancel (button or Escape) or 30 minutes end it and
+    everything it started, and the half-made environment is removed. Repair can be cancelled
+    through the same command; its screen has no Cancel button yet.
 13. ☐ **Release workflow hardened**: runs only from `main` after CI has passed, attests
     `SHA256SUMS.txt` (GitHub artifact attestations), says plainly what the checksums prove, and
     `releasing.md` lists refreshing the dependency data (section 5) before each release.
