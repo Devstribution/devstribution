@@ -622,6 +622,10 @@ def run(name: str, ctx):
             }
         }
         assert_eq!(store.runs(None, 1).unwrap()[0].hint, result.hint);
+        assert!(
+            !result.hint.unwrap_or_default().contains("  "),
+            "a broken line continuation"
+        );
     }
 }
 

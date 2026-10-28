@@ -56,14 +56,14 @@ impl Paths {
                 if to.exists() {
                     std::fs::remove_dir_all(&to)?;
                 }
-                std::fs::rename(&from, &to)
-                    .with_context(|| {
-                        format!(
-                            "cannot move devstribution's data from {} to {}: close every app                              started from devstribution and open it again",
-                            from.display(),
-                            to.display()
-                        )
-                    })?;
+                std::fs::rename(&from, &to).with_context(|| {
+                    format!(
+                        "cannot move devstribution's data from {} to {}: close every app \
+                             started from devstribution and open it again",
+                        from.display(),
+                        to.display()
+                    )
+                })?;
             }
         }
         Ok(())
