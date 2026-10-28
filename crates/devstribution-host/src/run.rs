@@ -121,6 +121,9 @@ pub enum RunStatus {
     Cancelled,
 }
 
+/// The hint for an exception the app did not explain: most likely a bug in the app.
+pub const BUG_HINT: &str = "This is most likely a problem in the app, not something you did.      Copy the details and send them to the app's author.";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunResult {
     pub status: RunStatus,
@@ -128,6 +131,10 @@ pub struct RunResult {
     pub outputs: Map<String, Value>,
     pub error: Option<String>,
     pub traceback: Option<String>,
+    /// What the user can try, when the error usually comes from the PC rather than the app
+    /// (a file open in Excel, no connection): from the runner, or from the host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
     pub duration_ms: u64,
     /// What the runtime guard did; a `stop` among them ended the run.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -283,6 +290,7 @@ impl RunHandle {
             outputs: Map::new(),
             error: Some("the run supervisor crashed".into()),
             traceback: None,
+            hint: Some("This is a problem in devstribution, not the app: try again, and if it happens again, send the diagnostics from Settings to its developers.".into()),
             duration_ms: 0,
             guard: Vec::new(),
         })
@@ -312,8 +320,12 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
             spec.manifest.kind.as_str()
         );
     }
-    fs::create_dir_all(&spec.output_dir)
-        .with_context(|| format!("creating {}", spec.output_dir.display()))?;
+    fs::create_dir_all(&spec.output_dir).with_context(|| {
+        format!(
+            "cannot create the run's output folder {}: check that the disk has free space",
+            spec.output_dir.display()
+        )
+    })?;
     let timeout = match spec.manifest.kind {
         Kind::Form | Kind::Cli => Some(
             spec.manifest
@@ -573,6 +585,7 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
                 outputs: m["outputs"].as_object().cloned().unwrap_or_default(),
                 error: m["error"].as_str().map(String::from),
                 traceback: m["traceback"].as_str().map(String::from),
+                hint: m["hint"].as_str().map(String::from),
                 duration_ms,
                 guard: Vec::new(),
             },
@@ -581,6 +594,7 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
                 outputs: Map::new(),
                 error: Some("the app was stopped".into()),
                 traceback: None,
+                hint: None,
                 duration_ms,
                 guard: Vec::new(),
             },
@@ -592,6 +606,10 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
                     None => "the app ended without a result".into(),
                 }),
                 traceback: None,
+                hint: Some(
+                    "The app closed before it finished, without saying why: it may have crashed                      or run out of memory. Try again; if it happens again, send the run's log to                      the app's author."
+                        .into(),
+                ),
                 duration_ms,
                 guard: Vec::new(),
             },
@@ -601,7 +619,12 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
             result.status = RunStatus::Error;
             result.error = Some(stop.stop_error());
             result.traceback = None;
+            result.hint = None;
             result.outputs.clear();
+        }
+        if result.status == RunStatus::Error && result.traceback.is_some() && result.hint.is_none()
+        {
+            result.hint = Some(BUG_HINT.into());
         }
         // The result comes from the app's own process, so it is checked here like any other
         // input: only declared outputs, and files only from the run's output folder or a
@@ -804,6 +827,15 @@ mod platform {
         cmd.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
     }
 
+    /// A failure of the Windows calls that supervise a run: rare, and usually security software
+    /// or a company policy refusing them.
+    fn job_failed(what: &str) -> String {
+        format!(
+            "{what}. Windows refused a call devstribution needs to watch the app: try again, and \
+             if it keeps happening, ask your IT department whether security software blocks it"
+        )
+    }
+
     /// A time as a Windows FILETIME (100 ns since 1601), the unit of process creation times.
     pub fn filetime(t: SystemTime) -> u64 {
         let unix = t.duration_since(UNIX_EPOCH).unwrap_or_default();
@@ -831,7 +863,10 @@ mod platform {
             unsafe {
                 let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
                 if handle.is_null() {
-                    bail!("cannot create a Job Object for the run");
+                    bail!(
+                        "{}",
+                        job_failed("cannot create the Job Object that watches the run")
+                    );
                 }
                 let port = CreateIoCompletionPort(INVALID_HANDLE_VALUE, std::ptr::null_mut(), 0, 1);
                 let job = Job {
@@ -840,7 +875,10 @@ mod platform {
                     closed: Arc::default(),
                 };
                 if port.is_null() {
-                    bail!("cannot watch the app's processes (no completion port)");
+                    bail!(
+                        "{}",
+                        job_failed("cannot watch the app's processes (no completion port)")
+                    );
                 }
                 let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
                 info.BasicLimitInformation.LimitFlags =
@@ -875,7 +913,10 @@ mod platform {
                     std::mem::size_of_val(&port_info),
                 );
                 if !ok || AssignProcessToJobObject(job.job, child.as_raw_handle() as HANDLE) == 0 {
-                    bail!("cannot put the app in its Job Object");
+                    bail!(
+                        "{}",
+                        job_failed("cannot put the app in the Job Object that watches it")
+                    );
                 }
                 resume(child.id())?;
                 Ok(job)
@@ -976,7 +1017,10 @@ mod platform {
         unsafe {
             let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
             if snapshot == INVALID_HANDLE_VALUE {
-                bail!("cannot start the app (no thread snapshot)");
+                bail!(
+                    "{}",
+                    job_failed("cannot start the app (no thread snapshot)")
+                );
             }
             let mut entry: THREADENTRY32 = std::mem::zeroed();
             entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
@@ -996,7 +1040,10 @@ mod platform {
             }
             CloseHandle(snapshot);
             if resumed == 0 {
-                bail!("cannot start the app (its thread could not be resumed)");
+                bail!(
+                    "{}",
+                    job_failed("cannot start the app (its thread could not be resumed)")
+                );
             }
             Ok(())
         }

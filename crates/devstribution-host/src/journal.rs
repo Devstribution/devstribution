@@ -130,7 +130,10 @@ impl Journal {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let reading = self.read();
         if let Some(at) = reading.broken_at {
-            anyhow::bail!("the journal is broken at line {}", at + 1);
+            anyhow::bail!(
+                "the cleanup journal is damaged at line {}: it was changed outside devstribution",
+                at + 1
+            );
         }
         let (seq, prev) = reading
             .entries

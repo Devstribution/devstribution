@@ -4,7 +4,7 @@ import {
 } from "lucide";
 import type { AppView, GuardHit, Input, RunRecord } from "../api";
 import type { Ctx, LiveRun } from "../main";
-import { h, icon, appIcon, clear, duration, fileName, relTime, statusText, toast, progressToast, errorText, trustTag, KIND_LABEL } from "../ui";
+import { h, icon, appIcon, clear, duration, fileName, relTime, statusText, toast, progressToast, errorText, runError, trustTag, KIND_LABEL } from "../ui";
 
 /** Values the form starts with: last run's values, else the manifest defaults. */
 function initialValues(app: AppView): Record<string, unknown> {
@@ -248,7 +248,7 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
           res.status === "ok" && app.outputs.some((o) => o.type === "file")
             ? h("button", { class: "btn small", onclick: () => ctx.api.openOutput(run!.runId, null, false) }, icon(FolderOpen, 14), "Folder")
             : null),
-        res.status === "error" && res.error ? h("div", { class: "error-box" }, res.error) : null,
+        res.status === "error" ? runError(res, app.title) : null,
         outputs.some(Boolean) ? h("div", { class: "outputs" }, outputs) : null,
         whatItDid(res.guard ?? [])));
     }

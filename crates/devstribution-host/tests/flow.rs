@@ -575,6 +575,56 @@ fn run_recorded(store: &Store) -> anyhow::Result<run::RunResult> {
     Ok(result)
 }
 
+/// A failed run says what the user can try: the runner's hint for errors that come from the PC,
+/// the "send it to the author" hint for a bug, and nothing extra for an `AppError`; the hint is
+/// kept in the run's record.
+#[test]
+fn failed_runs_say_what_to_try() {
+    for (main, hint) in [
+        (
+            "def run(name: str, ctx):
+    raise PermissionError(13, 'denied', 'C:/x.xlsx')
+",
+            Some("close it and try again"),
+        ),
+        (
+            "def run(name: str, ctx):
+    return 1 / 0
+",
+            Some(run::BUG_HINT),
+        ),
+        (
+            "from devstribution_runner import AppError
+
+def run(name: str, ctx):
+    raise AppError('Choose the export')
+",
+            None,
+        ),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Store::open(Paths {
+            root: tmp.path().join("home"),
+        })
+        .unwrap();
+        install_app(&store, tmp.path(), main);
+        let result = run_recorded(&store).unwrap();
+        assert_eq!(result.status, RunStatus::Error);
+        match hint {
+            Some(h) => assert!(
+                result.hint.as_deref().unwrap().contains(h),
+                "{:?}",
+                result.hint
+            ),
+            None => {
+                assert_eq!(result.error.as_deref(), Some("Choose the export"));
+                assert_eq!(result.hint, None);
+            }
+        }
+        assert_eq!(store.runs(None, 1).unwrap()[0].hint, result.hint);
+    }
+}
+
 /// An app the runtime guard stops: it loads hidden compiled code.
 const HIDDEN: &str = r#"
 import marshal

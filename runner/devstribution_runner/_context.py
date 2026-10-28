@@ -15,6 +15,15 @@ class Cancelled(BaseException):
     """
 
 
+class AppError(Exception):
+    """A problem the user can fix, with a message written for them.
+
+    Raise it when the app knows what went wrong: `raise AppError("The sheet has no 'Total'
+    column: choose the export from the orders system")`. The launcher shows the message as it
+    is, without a traceback, and does not tell the user to contact the author.
+    """
+
+
 class Secrets:
     def __init__(self, values: Dict[str, str], allowed: Iterable[str]):
         self._values = dict(values)

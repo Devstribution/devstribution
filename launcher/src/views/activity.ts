@@ -1,7 +1,7 @@
 import { FolderOpen, X } from "lucide";
 import type { RunRecord, RunStatus } from "../api";
 import type { Ctx, Rendered } from "../main";
-import { h, icon, appIcon, clear, duration, relTime, statusText, toast, errorText, plural, STATUS_LABEL } from "../ui";
+import { h, icon, appIcon, clear, duration, relTime, statusText, toast, errorText, runError, plural, STATUS_LABEL } from "../ui";
 import { runsChart } from "../charts";
 import { runOutcome } from "./home";
 
@@ -25,7 +25,7 @@ function details(ctx: Ctx, r: RunRecord) {
         statusText(r.status),
         h("button", { class: "icon-btn", "aria-label": "Close", onclick: close }, icon(X, 16))),
       h("div", { class: "modal-body" },
-        r.error ? h("div", { class: "error-box" }, r.error) : null,
+        runError(r, r.app_title, () => log.textContent ?? ""),
         outputs.length ? h("div", { class: "outputs" }, outputs.map(([k, v]) =>
           h("div", { class: "output-text" }, h("div", { class: "label" }, k), h("div", { class: "mono" }, typeof v === "string" ? v : JSON.stringify(v))))) : null,
         h("div", { class: "section-label" }, "Log"), log),

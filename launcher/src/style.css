@@ -603,6 +603,9 @@ kbd { font: inherit; font-size: var(--fs-xs); border: 1px solid var(--border-str
 /* An error message on its own: a solid danger box. Inside a filled state box: a plain card. */
 .error-box { padding: var(--sp-3) 14px; border-radius: var(--r-md); background: var(--danger); color: var(--on-danger); font-weight: var(--fw-semibold); overflow-wrap: anywhere; }
 .state-box .error-box { background: var(--surface); }
+.run-error { display: grid; gap: var(--sp-2); }
+.run-error .hint { font-size: var(--fs-sm); }
+.run-error .log { margin-bottom: var(--sp-2); }
 .log {
   background: var(--log-bg); color: var(--log-text); border-radius: var(--r-md); padding: var(--sp-3) 14px; max-height: 240px; overflow: auto;
   font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1.6; white-space: pre-wrap; word-break: break-word;

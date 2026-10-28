@@ -200,6 +200,9 @@ pub struct RunRecord {
     #[serde(default)]
     pub outputs: Map<String, Value>,
     pub error: Option<String>,
+    /// What the user can try about the error ([`RunResult::hint`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
     /// What the runtime guard did during the run.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub guard: Vec<GuardHit>,
@@ -335,7 +338,12 @@ impl Store {
             paths.staging(),
             paths.state(),
         ] {
-            fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+            fs::create_dir_all(&dir).with_context(|| {
+                format!(
+                    "cannot create {}: check that the disk has free space",
+                    dir.display()
+                )
+            })?;
         }
         // Packages left on the confirmation screen by a previous session.
         if let Ok(entries) = fs::read_dir(paths.staging()) {
@@ -605,7 +613,12 @@ impl Store {
         state: &State,
     ) -> Result<PendingInstall> {
         let size_bytes = fs::metadata(package_path)
-            .with_context(|| format!("cannot open {}", package_path.display()))?
+            .with_context(|| {
+                format!(
+                    "cannot open {}: check that the file is still there and not open in another program",
+                    package_path.display()
+                )
+            })?
             .len();
         // The package is read exactly once: the publisher's key and the app id checked below
         // are those of the very files that get installed. (Reading it a second time to check
@@ -823,7 +836,9 @@ impl Store {
             fs::remove_dir_all(&app_dir)?;
         }
         fs::create_dir_all(app_dir.parent().expect("has a parent"))?;
-        fs::rename(stage.join("app"), &app_dir).context("moving the app into place")?;
+        fs::rename(stage.join("app"), &app_dir).context(
+            "cannot move the app into place: close programs that may have its files open (antivirus scans included) and install it again",
+        )?;
         let _ = fs::remove_dir_all(&stage);
         self.staged().remove(token);
 
@@ -1035,7 +1050,7 @@ impl Store {
         let mut secrets = Map::new();
         for name in crate::run::secret_names(&app.manifest) {
             let value = crate::secrets::get(id, &name)?
-                .ok_or_else(|| anyhow!("the secret `{name}` is not set"))?;
+                .ok_or_else(|| anyhow!("the secret `{name}` is not set: enter it when the launcher asks, or in the app's panel"))?;
             secrets.insert(name, Value::String(value));
         }
         let python = uv::python_in(&app.env_dir, app.manifest.kind == Kind::Gui);
@@ -1072,6 +1087,7 @@ impl Store {
             duration_ms: 0,
             outputs: Map::new(),
             error: None,
+            hint: None,
             guard: Vec::new(),
             output_dir: output_dir.clone(),
             result_folders: run::result_folders(&app.manifest, &resolved, &output_dir),
@@ -1109,6 +1125,7 @@ impl Store {
         record.duration_ms = result.duration_ms;
         record.outputs = result.outputs.clone();
         record.error = result.error.clone();
+        record.hint = result.hint.clone();
         record.guard = result.guard.clone();
         let mut stop_unsaved = None;
         if let Some(hit) = result.guard_stop() {
@@ -1229,15 +1246,18 @@ impl Store {
 
     fn save_run(&self, record: &RunRecord) -> Result<()> {
         let path = self.paths.runs().join(&record.id).join("run.json");
-        fs::write(path, serde_json::to_vec_pretty(record)?).context("saving run.json")
+        fs::write(path, serde_json::to_vec_pretty(record)?)
+            .context("cannot save the run's record (run.json): check that the disk has free space")
     }
 
     pub fn run(&self, run_id: &str) -> Result<RunRecord> {
         if run_id.contains(['/', '\\', '.']) {
             bail!("invalid run id");
         }
-        let data = fs::read(self.paths.runs().join(run_id).join("run.json"))
-            .with_context(|| format!("no run `{run_id}`"))?;
+        let data =
+            fs::read(self.paths.runs().join(run_id).join("run.json")).with_context(|| {
+                format!("run `{run_id}` is no longer there: it may have been cleaned up")
+            })?;
         Ok(serde_json::from_slice(&data)?)
     }
 
@@ -1664,9 +1684,13 @@ fn build_env(app_dir: &Path, env_dir: &Path, on_line: &mut dyn FnMut(&str)) -> R
         return Err(e);
     }
     if env_dir.exists() {
-        fs::remove_dir_all(env_dir).context("replacing the old environment")?;
+        fs::remove_dir_all(env_dir).context(
+            "cannot replace the app's old Python environment: close the app if it is still open, then use Repair",
+        )?;
     }
-    fs::rename(&building, env_dir).context("moving the environment into place")
+    fs::rename(&building, env_dir).context(
+        "cannot move the app's new Python environment into place: close the app if it is still open, then use Repair",
+    )
 }
 
 /// Whether a verified package may be installed given what is installed and pinned: the
@@ -1852,6 +1876,7 @@ mod tests {
             duration_ms: 1000,
             outputs: Map::new(),
             error: None,
+            hint: None,
             guard: Vec::new(),
             output_dir,
             result_folders: Vec::new(),
