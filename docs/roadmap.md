@@ -115,8 +115,8 @@ What has to hold before our signature goes on it, roughly in this order.
 12. ☑ **uv can be stopped**: a timeout and Cancel during installs, and uv inside a Job Object
     like runs, so a stalled proxy cannot leave the install screen stuck (with B1). 28 October:
     uv starts suspended in a Job Object; Cancel (button or Escape) or 30 minutes end it and
-    everything it started, and the half-made environment is removed. Repair can be cancelled
-    through the same command; its screen has no Cancel button yet.
+    everything it started, and the half-made environment is removed. Repair's progress has a
+    Cancel too; the old environment stays until a new one is complete.
 13. ☐ **Release workflow hardened**: runs only from `main` after CI has passed, attests
     `SHA256SUMS.txt` (GitHub artifact attestations), says plainly what the checksums prove, and
     `releasing.md` lists refreshing the dependency data (section 5) before each release.

@@ -165,9 +165,12 @@ function toastsBox(): HTMLElement {
 }
 
 /** A toast that stays while something runs and shows its latest step; `end` removes it. */
-export function progressToast(message: string): { update(message: string): void; end(): void } {
+/** A toast that stays until `end()`. `stop` adds a button that runs once, then waits disabled
+ * ("Stopping…") until the work ends. */
+export function progressToast(message: string, stop?: { label: string; busy: string; run: () => void }): { update(message: string): void; end(): void } {
   const text = h("div", null, message);
-  const el = h("div", { class: "toast info" }, icon(Loader, 17, "spin"), text);
+  const btn = stop ? h("button", { class: "link", onclick: () => { btn!.disabled = true; btn!.textContent = stop.busy; stop.run(); } }, stop.label) as HTMLButtonElement : null;
+  const el = h("div", { class: "toast info" }, icon(Loader, 17, "spin"), text, btn);
   toastsBox().appendChild(el);
   return { update: (m) => { text.textContent = m; }, end: () => el.remove() };
 }

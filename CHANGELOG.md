@@ -17,7 +17,8 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 - The install window can be cancelled with its button or Escape at every step: while the
   package is checked, on the confirmation screen, and while Python and the packages are
   prepared. Cancelling then stops uv and everything it started (it runs in a Job Object, like
-  apps), keeps nothing half-made, and leaves an installed older version as it was.
+  apps), keeps nothing half-made, and leaves an installed older version as it was. Repair's
+  progress has a Cancel button too; the app keeps its old environment.
 - Preparing an app's Python stops after 30 minutes, with a message about the connection or a
   proxy, instead of waiting forever.
 - A launcher that cannot set itself up shows "devstribution could not start", with the reason and
