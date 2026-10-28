@@ -58,6 +58,9 @@ pub struct Policy {
     pub users_may_allow_guard_rules: bool,
     pub guard_report_only: Vec<String>,
     pub min_launcher_version: Option<String>,
+    /// Whether the launcher may look for its own updates and install them. IT that deploys the
+    /// launcher itself turns this off.
+    pub launcher_updates: bool,
     /// What could not be read (a policy file, a `.trust` file). Authors that could not be read
     /// are not approved.
     pub problems: Vec<String>,
@@ -75,6 +78,7 @@ struct PolicyFile {
     #[serde(default)]
     guard_report_only: Vec<String>,
     min_launcher_version: Option<String>,
+    launcher_updates: Option<bool>,
     trust_folder: Option<PathBuf>,
     #[serde(default)]
     trust_files: Vec<PathBuf>,
@@ -197,6 +201,11 @@ impl Policy {
                 .unwrap_or(false),
             guard_report_only,
             min_launcher_version,
+            launcher_updates: values
+                .dword("LauncherUpdates")
+                .map(|v| v != 0)
+                .or(file.launcher_updates)
+                .unwrap_or(true),
             problems,
         }
     }
@@ -577,6 +586,10 @@ mod tests {
         assert!(p.authors.is_empty() && p.problems.is_empty());
         assert_eq!(p.scan_danger, ScanDanger::Refuse);
         assert!(!p.dry_run && !p.users_may_allow_guard_rules);
+        assert!(
+            p.launcher_updates,
+            "updates stay on unless IT turns them off"
+        );
         assert!(!p.approves("acme", &key()));
     }
 
@@ -637,18 +650,24 @@ mod tests {
     fn registry_values_win_over_the_file() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("policy.toml");
-        fs::write(&file, "dry_run = true\ncontact = \"file\"\n").unwrap();
+        fs::write(
+            &file,
+            "dry_run = true\ncontact = \"file\"\nlauncher_updates = true\n",
+        )
+        .unwrap();
         let p = Policy::from_values(
             "test",
             &values(vec![
                 ("PolicyFile", Value::String(file.display().to_string())),
                 ("DryRun", Value::Dword(0)),
+                ("LauncherUpdates", Value::Dword(0)),
                 ("Contact", Value::String("registry".into())),
                 ("ScanDanger", Value::String("maybe".into())),
             ]),
             &loader(),
         );
         assert!(!p.dry_run);
+        assert!(!p.launcher_updates);
         assert_eq!(p.contact.as_deref(), Some("registry"));
         assert_eq!(p.scan_danger, ScanDanger::Refuse);
         assert_eq!(p.problems.len(), 1);

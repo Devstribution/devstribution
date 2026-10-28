@@ -101,8 +101,13 @@ What has to hold before our signature goes on it, roughly in this order.
    scrolling (section 2).
 4. ☐ **Signing in CI**, once SignPath (or Certum) has said yes, then the Windows checks again with
    the signed installer (section 3).
-5. ☐ **The launcher updates itself** (Tauri updater, signed update feed): without it every fix means
-   asking users to reinstall by hand (section 6).
+5. ☑ **The launcher updates itself** (Tauri updater, signed update feed): without it every fix means
+   asking users to reinstall by hand (section 6). 28 October: each release carries `latest.json`
+   with the installer's updater signature (a key of its own, in the repository's secrets); the
+   launcher looks at start and from Settings, shows the notes, and installs only an installer
+   signed for the version announced, not while apps run. Rolling out = publishing a release that
+   is not a pre-release. Users can turn the check at start off, IT can turn updates off
+   (`LauncherUpdates`). Still to see: a real update from one release to the next.
 6. ☐ **Revocation, first two steps** ([`revocation.md`](revocation.md), "Building it, in order"):
    the list check with a bundled copy and `revocations import`, then owners' withdrawal and
    rotation statements. A launcher that cannot read a list can never learn of a revoked key, so
@@ -354,7 +359,7 @@ The scan read only the package's own Python files. Extend it where attackers act
 
 ## 6. Updates and key lifecycle
 
-- ☐ The launcher updates itself (Tauri updater, signed update feed) → B5.
+- ☑ The launcher updates itself (Tauri updater, signed update feed) → B5.
 - ☐ App updates: a newer `.dsapp` already updates in place, with the diff from section 5; a clear
   "update available" path → B9.
 - ☐ Publisher key rotation and lost or compromised keys: the owner's signed statements, and a

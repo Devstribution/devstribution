@@ -45,6 +45,7 @@ empty key approves no one.
 | `UsersMayAllowGuardRules` | REG_DWORD | `1`: users may let a stopped app run past the rule that stopped it |
 | `GuardReportOnly` | REG_MULTI_SZ | Runtime guard rules that only report, never stop, for every app |
 | `MinLauncherVersion` | REG_SZ | Older launchers install and run nothing, and say why |
+| `LauncherUpdates` | REG_DWORD | `0`: the launcher neither looks for nor installs its own updates (for IT that deploys it) |
 
 A registry value wins over the same setting in the policy file. The launcher reads the policy
 when it starts: after a change, users restart devstribution (or sign in again).
@@ -60,6 +61,7 @@ scan_danger = "refuse"
 users_may_allow_guard_rules = false
 guard_report_only = []
 min_launcher_version = "0.2.0"
+launcher_updates = true
 trust_folder = '\\fileserver\it\devstribution\trust'
 trust_files = ['\\fileserver\it\devstribution\extra\finance.trust']
 

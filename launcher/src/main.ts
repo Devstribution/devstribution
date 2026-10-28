@@ -11,6 +11,7 @@ import { openAppPanel } from "./views/panel";
 import { toggleSettings } from "./views/settings";
 import { applyLook, cleanLook, onSystemThemeChange, type Look } from "./look";
 import { installFlow } from "./views/install";
+import { checkForUpdate } from "./views/update";
 
 /** Live state of runs started in this session, kept across page changes. */
 export interface LiveRun {
@@ -40,6 +41,8 @@ export interface Ctx {
   pins: { has(id: string): boolean; toggle(id: string): void };
   /** Theme, accent and status colours, from Settings. */
   look: { get(): Look; set(change: Partial<Look>): void; reset(): void };
+  /** Whether to look for a newer devstribution at start, from Settings. */
+  autoUpdate: { get(): boolean; set(on: boolean): void };
 }
 
 export interface Rendered {
@@ -187,6 +190,10 @@ async function boot() {
       set(change) { look = cleanLook({ ...look, ...change }); store("look", look); applyLook(look); },
       reset() { look = cleanLook(null); store("look", look); applyLook(look); },
     },
+    autoUpdate: {
+      get: () => stored("autoUpdate", true),
+      set(on) { store("autoUpdate", on); },
+    },
   };
 
   async function render() {
@@ -247,6 +254,9 @@ async function boot() {
 
   await ctx.refresh();
   api.settings().then((s) => {
+    // A little after start, so the first screen is not held up. Not in the browser demo, where
+    // there is nothing to update; Settings → "Look for updates" shows it there.
+    if (s.updates && ctx.autoUpdate.get() && !api.preview) window.setTimeout(() => checkForUpdate(ctx, false), 5000);
     const p = s.policy;
     if (!p) return;
     const n = p.authors.length;

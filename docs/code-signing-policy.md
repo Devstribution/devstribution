@@ -50,8 +50,13 @@ It connects to other systems only to do what you asked:
 - **Running an app** you installed: the app is the author's program and may use the network as
   its package declares. The runtime guard blocks network use it did not declare
   ([`security.md`](security.md)). What the app sends is up to its author, not devstribution.
-- **Later** (not built yet): checking the list of revoked publisher keys, and the launcher's own
-  updates. When those come, this section will say where they connect.
+- **Looking for a newer devstribution**, when it starts and from Settings: one request to
+  `github.com` for this repository's `latest.json` (the newest version and its notes), and, if you
+  choose to update, the installer from the release. Nothing about you or your apps is sent.
+  Settings → "Look for updates when devstribution starts" turns the check at start off; IT can
+  turn updates off entirely ([`managed-mode.md`](managed-mode.md), `LauncherUpdates`).
+- **Later** (not built yet): checking the list of revoked publisher keys. When that comes, this
+  section will say where it connects.
 
 In managed mode, the IT department's policy can limit which authors' apps run
 ([`managed-mode.md`](managed-mode.md)); it sends nothing to IT either.

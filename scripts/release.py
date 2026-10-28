@@ -4,6 +4,8 @@
     python scripts/release.py check v0.2.0         # the tag, every version and the changelog agree
     python scripts/release.py check v0.2.0 --notes notes.md   # and write the release notes
     python scripts/release.py version              # the workspace version
+    python scripts/release.py latest-json v0.2.0 dist/devstribution_0.2.0_x64-setup.exe --out dist/latest.json
+                                                   # the update feed installed launchers read
 
 The version lives in four files: the Cargo workspace, the launcher's `package.json` and
 `package-lock.json`, and `tauri.conf.json` (the installer's name and the version Windows shows).
@@ -11,6 +13,7 @@ The version lives in four files: the Cargo workspace, the launcher's `package.js
 """
 
 import argparse
+import datetime
 import json
 import re
 import sys
@@ -23,6 +26,10 @@ PACKAGE = ROOT / "launcher" / "package.json"
 LOCK = ROOT / "launcher" / "package-lock.json"
 TAURI = ROOT / "launcher" / "src-tauri" / "tauri.conf.json"
 CHANGELOG = ROOT / "CHANGELOG.md"
+
+# Installed launchers read `latest.json` from the latest published release (not a pre-release);
+# the installer it names must be in the same release.
+DOWNLOADS = "https://github.com/Devstribution/devstribution/releases/download"
 
 SEMVER = re.compile(r"\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?")
 
@@ -70,12 +77,43 @@ def check(tag: str, notes: Path = None) -> int:
     date, section = changelog_section(version)
     if not section:
         problems.append(f"CHANGELOG.md has no dated section '## [{version}] - YYYY-MM-DD' with text")
+    updater = json.loads(TAURI.read_text(encoding="utf-8")).get("plugins", {}).get("updater", {})
+    if not updater.get("pubkey", "").strip():
+        problems.append("tauri.conf.json has no updater public key (plugins.updater.pubkey)")
     if problems:
         print("Not releasing:", *problems, sep="\n  ", file=sys.stderr)
         return 1
     if notes:
         notes.write_text(f"{UNSIGNED}\n{section}\n", encoding="utf-8")
     print(f"{tag}: versions and changelog agree ({date})")
+    return 0
+
+
+def latest_json(tag: str, installer: Path, out: Path) -> int:
+    """The update feed: version, notes, and the installer with its updater signature (the
+    `.sig` file `tauri build` writes next to it when `createUpdaterArtifacts` is on)."""
+    version = tag[1:]
+    sig = installer.with_name(installer.name + ".sig")
+    if not installer.is_file() or not sig.is_file():
+        print(f"need {installer} and {sig}: was the installer built with tauri.updater.conf.json?", file=sys.stderr)
+        return 1
+    if version not in installer.name:
+        print(f"{installer.name} is not the installer of {version}", file=sys.stderr)
+        return 1
+    _, section = changelog_section(version)
+    feed = {
+        "version": version,
+        "notes": section or "",
+        "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "platforms": {
+            "windows-x86_64": {
+                "signature": sig.read_text(encoding="utf-8").strip(),
+                "url": f"{DOWNLOADS}/{tag}/{installer.name}",
+            }
+        },
+    }
+    out.write_text(json.dumps(feed, indent=2) + "\n", encoding="utf-8")
+    print(f"{out}: {version} -> {feed['platforms']['windows-x86_64']['url']}")
     return 0
 
 
@@ -114,9 +152,15 @@ def main() -> int:
     b = sub.add_parser("bump", help="set the version everywhere it is written")
     b.add_argument("version")
     sub.add_parser("version", help="print the workspace version")
+    j = sub.add_parser("latest-json", help="write the update feed for a release")
+    j.add_argument("tag")
+    j.add_argument("installer", type=Path)
+    j.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     if args.command == "check":
         return check(args.tag, args.notes)
+    if args.command == "latest-json":
+        return latest_json(args.tag, args.installer, args.out)
     if args.command == "version":
         print(versions()["Cargo.toml"])
         return 0

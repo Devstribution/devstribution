@@ -50,6 +50,12 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 
 ### Added
 
+- devstribution updates itself. When it starts it looks for a newer version on GitHub and offers
+  it with what is new; "Update and restart" downloads it, checks it against devstribution's own
+  update key, and installs it without administrator rights. Not while an app is running. Settings
+  has "Look for updates" and a switch for the check at start; IT can turn updates off with the
+  `LauncherUpdates` policy value. This version is the first that can update: earlier ones are
+  updated by hand once.
 - Apps can raise `devstribution_runner.AppError("…")` with a message for the user: the launcher
   shows it as written, with no traceback and no "send it to the author".
 - Settings has an About block (version, licence, where the log is, and the software inside

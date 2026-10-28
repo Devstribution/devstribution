@@ -1,6 +1,7 @@
 import { X, Check, Pipette, FolderOpen, Trash2, ClipboardCopy } from "lucide";
 import type { Ctx } from "../main";
 import { openCleanup } from "./cleanup";
+import { checkForUpdate } from "./update";
 import type { Policy, Settings } from "../api";
 import { h, icon, clear, relTime, toast, errorText, copyText, trapFocus, keepFocus } from "../ui";
 import { ACCENTS, DEFAULT_LOOK, textOn, type Look, type Theme, type StatusColours } from "../look";
@@ -126,6 +127,7 @@ function aboutGroup(ctx: Ctx, s: Settings) {
   return h("div", { class: "settings-group" },
     h("span", { class: "section-label" }, "About"),
     h("div", { class: "small soft-text" }, `devstribution ${s.version} · ${s.uv_version ?? "uv not found"} · ${s.platform}`),
+    updates(ctx, s),
     h("div", { class: "small soft-text" }, "Free software, MIT or Apache-2.0: github.com/Devstribution/devstribution"),
     h("div", { class: "muted tiny wrap-anywhere" }, `Log: ${s.log_file}`),
     h("details", { class: "disclosure" }, h("summary", null, "Software inside devstribution"),
@@ -133,6 +135,34 @@ function aboutGroup(ctx: Ctx, s: Settings) {
       h("button", { class: "link small", onclick: () => ctx.api.openNotices().catch((e) => toast(errorText(e), "error")) }, "Open all licence texts")),
     h("button", { class: "btn small self-start", onclick: copy }, icon(ClipboardCopy, 14), "Copy diagnostics"),
     h("div", { class: "muted tiny" }, "For a bug report or your IT: versions, your apps and the latest runs. No secrets, inputs or results."));
+}
+
+/** Looking for a newer devstribution: now, and at each start unless turned off. */
+function updates(ctx: Ctx, s: Settings) {
+  if (!s.updates) return h("div", { class: "small soft-text" }, "Your organisation updates devstribution itself.");
+  let checking = false;
+  const check = h("button", { class: "btn small self-start", onclick: async () => {
+    if (checking) return;
+    checking = true;
+    check.disabled = true;
+    check.textContent = "Looking…";
+    await checkForUpdate(ctx, true);
+    checking = false;
+    check.disabled = false;
+    check.textContent = "Look for updates";
+  } }, "Look for updates") as HTMLButtonElement;
+  const on = ctx.autoUpdate.get();
+  const sw = h("button", { class: `switch ${on ? "on" : ""}`, role: "switch", "aria-checked": String(on), "aria-label": "Look for updates when devstribution starts" });
+  sw.addEventListener("click", () => {
+    const now = !sw.classList.contains("on");
+    sw.classList.toggle("on", now);
+    sw.setAttribute("aria-checked", String(now));
+    ctx.autoUpdate.set(now);
+  });
+  return h("div", { class: "stack tight" },
+    check,
+    h("label", { class: "inline small soft-text" }, sw, "Look for updates when devstribution starts"),
+    h("div", { class: "muted tiny" }, "Asks github.com for the latest version. Nothing else is sent, and nothing installs without you."));
 }
 
 /** Managed mode: the policy IT set, and the authors it approves. */

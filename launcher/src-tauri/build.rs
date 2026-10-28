@@ -25,6 +25,8 @@ const COMMANDS: &[&str] = &[
     "uninstall_launcher",
     "take_pending_files",
     "save_trust_request",
+    "check_update",
+    "install_update",
 ];
 
 fn main() {

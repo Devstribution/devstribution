@@ -51,22 +51,55 @@ behaviour, a patch (0.1.1) only fixes. The package format has its own number (fo
    - `SHA256SUMS.txt`;
    - the changelog section as notes, under a notice that the build is not signed.
 
+   - `latest.json`, the update feed (below).
+
    Install the draft's installer on a Windows PC. Then publish it in GitHub's interface. Untick
-   *pre-release* only for a version meant for everyday use.
+   *pre-release* only for a version meant for everyday use: **that is what sends it to installed
+   launchers** (next section).
 
 A tag whose version does not match the four files, or without a dated changelog section, stops
 the workflow before anything is built. A wrong tag can be deleted (`git push --delete origin
 v0.2.0`) as long as the draft was not published. Once a version is published, it is never
 reused: fix forward with the next patch.
 
+## Launcher updates
+
+Installed launchers look for a newer version when they start (unless the user or IT turned it
+off), and from Settings → "Look for updates". They read
+`https://github.com/Devstribution/devstribution/releases/latest/download/latest.json`: GitHub's
+*latest* release is the newest one that is **published and not a pre-release**. So:
+
+- a draft, or a published pre-release, reaches no installed launcher;
+- unticking *pre-release* (or publishing without it) rolls the version out to everyone;
+- a bad release is stopped by marking it as a pre-release again (launchers that already updated
+  stay on it: fix forward with the next patch).
+
+`latest.json` holds the version, the changelog section as notes, and the installer's URL with its
+**updater signature**: a minisign signature made in the `installer` job with the updater key (the
+`TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` repository secrets). The
+public half is in `tauri.conf.json` (`plugins.updater.pubkey`), so a launcher installs only an
+installer signed with that key, and only the version the signature names (`requireSignedVersion`:
+a feed edited to pair a new version number with an older installer is refused). The launcher
+then runs the installer in passive mode: a progress window, no questions, no administrator
+rights, and it opens the new version.
+
+The key cannot be replaced without a manual reinstall everywhere: launchers trust only the
+public key they were built with. Keep the private key file and its password outside the
+repository, with a backup; generate it with
+`npx tauri signer generate -w ~/.tauri/devstribution-updater.key` (in `launcher/`). Without the
+secrets the `installer` job fails, and `release.py check` refuses a `tauri.conf.json` without a
+public key.
+
+Launchers up to 0.2.0 have no updater: their users install the next version by hand once.
+
 ## What the workflow does
 
 | Job | Runs on | What |
 |---|---|---|
 | `check` | Linux | The tag, the four versions and the changelog agree; writes the release notes |
-| `installer` | Windows | `npx tauri build --bundles nsis`; uv is downloaded and checked against `launcher/uv-pin.json` first |
+| `installer` | Windows | `npx tauri build --bundles nsis` with the updater signature (`tauri.updater.conf.json`); uv is downloaded and checked against `launcher/uv-pin.json` first |
 | `cli` | Windows, Linux, macOS (Apple silicon) | `cargo build --release --locked`, packed with the README and licences |
-| `release` | Linux | `SHA256SUMS.txt` and the draft pre-release; only for a tag |
+| `release` | Linux | `latest.json`, `SHA256SUMS.txt` and the draft pre-release; only for a tag |
 
 - **No build caches.** A cache filled by another run could change what goes into a release.
 - **`--locked`**: Cargo builds exactly what `Cargo.lock` lists; `npm ci` does the same for
@@ -82,3 +115,7 @@ Code signing waits on SignPath Foundation (or Certum as the fallback): see
 [`roadmap.md`](roadmap.md), stages A and B. SignPath signs builds that come from CI, so signing will
 be a step in the `installer` job, between the build and the attestation, with the signing done
 on SignPath's side. Until then the notes tell users what SmartScreen will show.
+
+The updater signature covers the installer's exact bytes, so it must be made **after** the
+Authenticode signature: once SignPath signs in CI, `createUpdaterArtifacts` comes off the build
+and the job signs the signed installer with `npx tauri signer sign --app-version <version>`.

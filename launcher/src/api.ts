@@ -274,6 +274,16 @@ export interface Settings {
   policy?: Policy | null;
   uv_version?: string | null;
   publishers: { namespace: string; key_id: string; pinned_at: number; source: string }[];
+  /** False when IT updates devstribution itself. */
+  updates: boolean;
+}
+
+/** A newer devstribution, from the latest release on GitHub. */
+export interface LauncherUpdate {
+  version: string;
+  current: string;
+  /** Release notes, Markdown. */
+  notes?: string | null;
 }
 
 type Unlisten = () => void;
@@ -318,6 +328,11 @@ export interface Api {
   takePendingFiles(): Promise<string[]>;
   /** Saves a .trust file for a refused package's author, to send to IT. False if cancelled. */
   saveTrustRequest(token: string): Promise<boolean>;
+  /** Asks GitHub for a newer devstribution; null when this one is the latest. */
+  checkUpdate(): Promise<LauncherUpdate | null>;
+  /** Downloads and checks the update found, then closes the launcher for its installer. */
+  installUpdate(): Promise<void>;
+  onUpdateProgress(cb: (downloaded: number, total: number | null) => void): Promise<Unlisten>;
   /** Run events arrive in batches (at most about ten a second), so a chatty app cannot flood the window. */
   onRunEvents(cb: (runId: string, events: RunEvent[]) => void): Promise<Unlisten>;
   onInstallStep(cb: (e: StepEvent) => void): Promise<Unlisten>;
@@ -384,6 +399,10 @@ async function tauriApi(): Promise<Api> {
     uninstallLauncher: () => invoke("uninstall_launcher"),
     takePendingFiles: () => invoke("take_pending_files"),
     saveTrustRequest: (token) => invoke("save_trust_request", { token }),
+    checkUpdate: () => invoke("check_update"),
+    installUpdate: () => invoke("install_update"),
+    onUpdateProgress: (cb) =>
+      listen<{ downloaded: number; total: number | null }>("update-progress", (e) => cb(e.payload.downloaded, e.payload.total)),
     onRunEvents: (cb) =>
       listen<{ run_id: string; events: RunEvent[] }>("run-events", (e) => cb(e.payload.run_id, e.payload.events)),
     onInstallStep: (cb) => listen<StepEvent>("install-step", (e) => cb(e.payload)),
