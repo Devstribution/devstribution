@@ -29,7 +29,7 @@ impl Paths {
         let root = match std::env::var_os("DEVSTRIBUTION_HOME") {
             Some(home) => PathBuf::from(home),
             None => dirs::data_local_dir()
-                .context("cannot find the local data folder")?
+                .context("cannot find the local application data folder (%LOCALAPPDATA%): ask your IT department, the user profile may be damaged")?
                 .join(BUNDLE_ID)
                 .join("data"),
         };
@@ -56,8 +56,14 @@ impl Paths {
                 if to.exists() {
                     std::fs::remove_dir_all(&to)?;
                 }
-                std::fs::rename(&from, &to)
-                    .with_context(|| format!("moving {} to {}", from.display(), to.display()))?;
+                std::fs::rename(&from, &to).with_context(|| {
+                    format!(
+                        "cannot move devstribution's data from {} to {}: close every app \
+                             started from devstribution and open it again",
+                        from.display(),
+                        to.display()
+                    )
+                })?;
             }
         }
         Ok(())

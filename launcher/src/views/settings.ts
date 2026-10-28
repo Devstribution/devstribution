@@ -2,7 +2,7 @@ import { X, Check, Pipette, FolderOpen, Trash2, ClipboardCopy } from "lucide";
 import type { Ctx } from "../main";
 import { openCleanup } from "./cleanup";
 import type { Policy, Settings } from "../api";
-import { h, icon, clear, relTime, toast, errorText } from "../ui";
+import { h, icon, clear, relTime, toast, errorText, copyText } from "../ui";
 import { ACCENTS, DEFAULT_LOOK, textOn, type Look, type Theme, type StatusColours } from "../look";
 
 const THEMES: [Theme, string][] = [["light", "Light"], ["dark", "Dark"], ["system", "System"]];
@@ -113,20 +113,6 @@ const COMPONENTS: [string, string][] = [
   ["Lucide, the icons", "ISC"],
   ["Python: downloaded by uv when an app is first set up", "PSF licence"],
 ];
-
-/** Copies text; the webview allows it from a click. */
-async function copyText(text: string) {
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch {
-    const box = h("textarea", { value: text, style: "position:fixed;opacity:0" }) as HTMLTextAreaElement;
-    document.body.appendChild(box);
-    box.select();
-    const ok = document.execCommand("copy");
-    box.remove();
-    if (!ok) throw new Error("the clipboard is not available");
-  }
-}
 
 function aboutGroup(ctx: Ctx, s: Settings) {
   const copy = async () => {

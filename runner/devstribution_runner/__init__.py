@@ -11,9 +11,9 @@ as a dev dependency for type hints and local tests:
 `devstribution_runner.ctx`.
 """
 
-from ._context import Cancelled, Context, local_context
+from ._context import AppError, Cancelled, Context, local_context
 
-__all__ = ["Cancelled", "Context", "ctx", "local_context"]
+__all__ = ["AppError", "Cancelled", "Context", "ctx", "local_context"]
 __version__ = "0.1.0"
 
 #: The context of the current run, set by the runner before the app starts (None otherwise).

@@ -108,6 +108,26 @@ class RunnerTest(RunnerBase):
         self.assertEqual(messages[-1]["status"], "error")
         self.assertIn("ValueError: boom", messages[-1]["error"])
         self.assertIn("Traceback", messages[-1]["traceback"])
+        self.assertNotIn("hint", messages[-1], "a bug in the app is the author's to fix")
+
+    def test_app_error_is_shown_as_written(self):
+        self.write_app(
+            """
+            from devstribution_runner import AppError
+
+            def run(ctx):
+                raise AppError("The sheet has no 'Total' column")
+            """
+        )
+        code, messages, _ = self.run_app()
+        self.assertEqual(code, 1)
+        self.assertEqual(messages[-1]["error"], "The sheet has no 'Total' column")
+        self.assertNotIn("traceback", messages[-1])
+
+    def test_common_errors_get_a_hint(self):
+        self.write_app("def run(ctx):\n    raise PermissionError(13, 'denied', 'C:/x.xlsx')\n")
+        _, messages, _ = self.run_app()
+        self.assertIn("close it and try again", messages[-1]["hint"])
 
     def test_output_outside_output_dir_is_refused(self):
         self.write_app(

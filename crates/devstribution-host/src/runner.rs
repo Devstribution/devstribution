@@ -70,14 +70,21 @@ pub fn install(paths: &crate::paths::Paths) -> Result<PathBuf> {
     for (name, content) in FILES {
         let path = tmp.join(name);
         fs::create_dir_all(path.parent().expect("has a parent"))?;
-        fs::write(&path, content).with_context(|| format!("writing {}", path.display()))?;
+        fs::write(&path, content).with_context(|| {
+            format!(
+                "cannot set up the runner in {}: check that the disk has free space, or reinstall devstribution",
+                path.display()
+            )
+        })?;
     }
     let _ = fs::remove_dir_all(&dir);
     if let Err(e) = fs::rename(&tmp, &dir) {
         let _ = fs::remove_dir_all(&tmp);
         // Another launcher may have written it at the same moment.
         if !is_intact(&dir) {
-            return Err(e).context("installing the runner");
+            return Err(e).context(
+                "cannot set up the runner that starts apps: close devstribution and open it again, or reinstall it",
+            );
         }
     }
     Ok(dir)

@@ -181,6 +181,43 @@ export function toast(message: string, kind: "info" | "error" | "ok" = "info", a
   setTimeout(() => el.remove(), kind === "error" || action ? 9000 : 4000);
 }
 
+/** Copies text; the webview allows it from a click. */
+export async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const box = h("textarea", { value: text, style: "position:fixed;opacity:0" }) as HTMLTextAreaElement;
+    document.body.appendChild(box);
+    box.select();
+    const ok = document.execCommand("copy");
+    box.remove();
+    if (!ok) throw new Error("the clipboard is not available");
+  }
+}
+
+/** A failed run's error: the message, what to try, and for a crash the details for the author.
+ * `log` gives the details where the traceback is not kept (a past run: it is in the run's log). */
+export function runError(r: { error?: string | null; hint?: string | null; traceback?: string | null }, app: string, log?: () => string): HTMLElement | null {
+  if (!r.error) return null;
+  const copy = async () => {
+    try {
+      await copyText(`${app}
+${r.error}
+
+${r.traceback ?? log?.() ?? ""}`.trim());
+      toast("Copied. Read it before you send it: it may show file names from your PC.", "ok");
+    } catch (e) { toast(errorText(e), "error"); }
+  };
+  return h("div", { class: "run-error" },
+    h("div", { class: "error-box" }, r.error),
+    r.hint ? h("div", { class: "hint" }, r.hint) : null,
+    r.traceback
+      ? h("details", { class: "disclosure" }, h("summary", null, "Details for the author"),
+          h("div", null, h("div", { class: "log" }, r.traceback),
+            h("button", { class: "btn small", onclick: copy }, "Copy details")))
+      : log && r.hint ? h("div", null, h("button", { class: "btn small", onclick: copy }, "Copy details")) : null);
+}
+
 export function errorText(e: unknown): string {
   if (typeof e === "string") return e;
   if (e instanceof Error) return e.message;

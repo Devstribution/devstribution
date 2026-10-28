@@ -45,10 +45,10 @@ import time
 import traceback
 import _thread
 from pathlib import Path
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
 from . import _guard
-from ._context import Cancelled, Context
+from ._context import AppError, Cancelled, Context
 
 PROTOCOL = 1
 
@@ -57,8 +57,32 @@ PROTOCOL = 1
 INTERRUPT_AFTER_SECONDS = 3.0
 
 
-class AppError(Exception):
-    """A mistake in the app or its inputs, reported without a runner traceback."""
+def _hint(exc: BaseException) -> Optional[str]:
+    """What the user can try when the app crashed with an exception it did not explain.
+
+    Only for errors that usually come from the PC, not from the app: a file open in Excel, a
+    file that was moved, no connection. Anything else is the author's to fix.
+    """
+    if isinstance(exc, PermissionError):
+        return ("The app was not allowed to open or change a file. If the file is open in Excel or "
+                "another program, close it and try again.")
+    if isinstance(exc, (FileNotFoundError, NotADirectoryError)):
+        return ("A file or folder the app needed was not there. Check that the files you chose "
+                "still exist and were not moved, then try again.")
+    if isinstance(exc, ImportError):
+        return "Part of the app's Python setup is missing. Use Repair on the app, then try again."
+    if isinstance(exc, MemoryError):
+        return "The PC ran out of memory. Close other programs, or try with a smaller file."
+    if isinstance(exc, (ConnectionError, TimeoutError)) or type(exc).__name__ in _NETWORK_ERRORS:
+        return ("The app could not reach a server. Check the internet connection or VPN, then try "
+                "again.")
+    return None
+
+
+#: Network errors from the standard library and common packages, by name, so the runner never
+#: imports them itself.
+_NETWORK_ERRORS = {"gaierror", "URLError", "ConnectionError", "ConnectTimeout", "ReadTimeout",
+                   "ConnectError", "SSLError", "ProxyError"}
 
 
 class Channel:
@@ -208,6 +232,9 @@ def main() -> int:
         sys.stderr.write(tb)
         error = f"{type(exc).__name__}: {exc}"
         result, code = {"type": "result", "status": "error", "error": error, "traceback": tb}, 1
+        hint = _hint(exc)
+        if hint:
+            result["hint"] = hint
     finally:
         finished.set()
     if children is not None:

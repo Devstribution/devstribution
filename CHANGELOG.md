@@ -21,6 +21,12 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
   "Try again", instead of a blank window. Several messages now say what to do: a damaged
   `state.json`, an install that is no longer pending, uv failing (usually the internet connection or
   a proxy), a Python that will not start, the credential store.
+- When an app fails, the launcher says what to try. For errors that usually come from the PC (a
+  file open in Excel, a moved file, no connection, a missing part of the app's Python, no memory)
+  it says what to do. For anything else, it says the problem is most likely in the app, and offers
+  "Copy details" (the error and traceback) to send to the author. The host's remaining messages
+  (data folder, output folders, the runner, moving an app or environment into place, the Windows
+  calls that watch a run) also say what to do now.
 - `devstribution trust export` asks before replacing an existing file. Without a terminal to ask
   on (CI, a pipe) it refuses; `--force` replaces it.
 
@@ -35,6 +41,8 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 
 ### Added
 
+- Apps can raise `devstribution_runner.AppError("…")` with a message for the user: the launcher
+  shows it as written, with no traceback and no "send it to the author".
 - Settings has an About block (version, licence, where the log is, and the software inside
   devstribution with its licences; "Open all licence texts" opens `THIRD-PARTY-NOTICES.txt`, which
   the installer ships) and a "Copy diagnostics" button: versions, installed apps, the latest runs,

@@ -185,6 +185,7 @@ function demoRuns(): RunRecord[] {
         duration_ms: dur,
         outputs: status === "ok" ? { report: `C:\\Users\\edo\\AppData\\Local\\devstribution\\runs\\${started}\\output\\report.xlsx` } : {},
         error: status === "error" ? "ValueError: column 'Amount' not found; the sheet has: Order, Customer, Total" : null,
+        hint: status === "error" ? "This is most likely a problem in the app, not something you did. Copy the details and send them to the app’s author." : null,
         output_dir: `C:\\Users\\edo\\AppData\\Local\\devstribution\\runs\\${started}\\output`,
       });
     }

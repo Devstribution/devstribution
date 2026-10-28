@@ -45,14 +45,16 @@ What a stranger downloading it meets first, and what the SignPath application ne
 4. ☑ **An About page**: version, licences of bundled software, where the data folder is
    (section 7). 27 October: in Settings, with the licence texts of everything shipped
    (`THIRD-PARTY-NOTICES.txt`, made by `scripts/third_party_notices.py`, shipped with the installer).
-5. ◐ **Error messages reviewed end to end**: every failure says what happened and what to do,
+5. ☑ **Error messages reviewed end to end**: every failure says what happened and what to do,
    and a launcher that fails to start shows an error screen, not a blank window (section 7).
    27 October: the window shows "devstribution could not start" with the error and "Try again"
    when it cannot set itself up (also when the first page fails to load), uncaught errors become
    a message, and the messages a user is most likely to meet say what to do: a damaged
    `state.json`, a failed save, an install that is no longer pending, uv missing or failing
-   (internet or proxy), a Python that will not start, the credential store. Still to do: the
-   rest of the host's messages and what apps print in their own errors.
+   (internet or proxy), a Python that will not start, the credential store. 28 October: the rest
+   of the host's messages; a failed run says what to try (a file open in Excel, no connection,
+   Repair) or that the problem is in the app, with "Copy details" for its author; apps can raise
+   `AppError` with a message written for the user.
 6. ☑ **"Copy diagnostics"**: logs a user can find and send, without secrets in them (section 8).
    27 October: the launcher writes `logs\launcher.log` (starts, failed commands, panics), Settings
    shows where, and "Copy diagnostics" puts versions, apps, the latest runs and the end of that log
@@ -376,7 +378,7 @@ The scan read only the package's own Python files. Extend it where attackers act
   installed launcher.
 - ☑ A `.dsapp` renamed to `.zip` by a download installs too (report: Launcher UX 5): picker, drag and
   drop and "Open with". `devstribution://` links (after 1.0) would avoid the renaming.
-- ◐ Error messages reviewed end to end → A5 (first pass done).
+- ☑ Error messages reviewed end to end → A5.
 - ☐ About page with version, licences of bundled software, and where the data folder is → A4.
 - ☐ Install dialog cancellable, no silent behaviour, keyboard and screen reader basics → A10–A12;
   smaller items → C.

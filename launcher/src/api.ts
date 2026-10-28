@@ -91,6 +91,8 @@ export interface RunRecord {
   duration_ms: number;
   outputs: Record<string, unknown>;
   error?: string | null;
+  /** What the user can try about the error. */
+  hint?: string | null;
   guard?: GuardHit[];
   output_dir: string;
   /** When a cleanup removed the results and log; the run stays in the history. */
@@ -141,6 +143,7 @@ export interface RunResult {
   outputs: Record<string, unknown>;
   error?: string | null;
   traceback?: string | null;
+  hint?: string | null;
   duration_ms: number;
   guard?: GuardHit[];
 }

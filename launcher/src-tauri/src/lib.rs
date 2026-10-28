@@ -345,6 +345,7 @@ async fn start_run(app: AppHandle, id: String, inputs: Map<String, Value>) -> Cm
                         outputs: Map::new(),
                         error: Some(format!("{e:#}")),
                         traceback: None,
+                        hint: None,
                         duration_ms: 0,
                         guard: Vec::new(),
                     },
