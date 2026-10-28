@@ -122,16 +122,19 @@ What has to hold before our signature goes on it, roughly in this order.
 10. ☐ **Security review again** for what changed since the last one (guard file rules, managed
     mode, updates), as section 8 asks before each such release. Weaknesses still open from the
     October scan are tracked privately until fixed, as `SECURITY.md` asks reporters to send them.
-11. ☐ **`state.json` survives a crash**: written to disk before the rename, with a backup the
-    launcher recovers from. Today a damaged file blocks every operation.
+11. ☑ **`state.json` survives a crash**: written to disk before the rename, with a backup the
+    launcher recovers from. 28 October: `state.json.bak` holds the list from before the latest
+    change; a file that cannot be read is moved to `state.json.damaged` and the copy takes its
+    place (noted in `launcher.log`). With no copy, the message says what to move away.
 12. ☑ **uv can be stopped**: a timeout and Cancel during installs, and uv inside a Job Object
     like runs, so a stalled proxy cannot leave the install screen stuck (with B1). 28 October:
     uv starts suspended in a Job Object; Cancel (button or Escape) or 30 minutes end it and
     everything it started, and the half-made environment is removed. Repair's progress has a
     Cancel too; the old environment stays until a new one is complete.
-13. ☐ **Release workflow hardened**: runs only from `main` after CI has passed, attests
+13. ☑ **Release workflow hardened**: runs only from `main` after CI has passed, attests
     `SHA256SUMS.txt` (GitHub artifact attestations), says plainly what the checksums prove, and
     `releasing.md` lists refreshing the dependency data (section 5) before each release.
+    28 October. Still to see: a real tag run (the first release after this one).
 14. ◐ **CI and tests**: done 28 October: the minimum Rust version (1.90) checked, `npm audit`
     including dev dependencies, job timeouts in `ci.yml`, Python 3.10 (the runner's minimum), and
     a `SAFETY` comment on each `unsafe` block (clippy refuses one without). Still to do:

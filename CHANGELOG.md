@@ -10,6 +10,12 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- A crash or a full disk in the middle of saving the list of installed apps no longer blocks the
+  launcher: the list is written to disk before it replaces the old one, a copy of the previous list
+  is kept (`state.json.bak`), and a damaged `state.json` is set aside and replaced by that copy.
+
 ## [0.3.0] - 2026-10-28
 
 The first version that updates itself: later versions arrive from inside the launcher. Getting
