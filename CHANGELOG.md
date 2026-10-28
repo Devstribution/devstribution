@@ -43,6 +43,9 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 
 - Apps can raise `devstribution_runner.AppError("…")` with a message for the user: the launcher
   shows it as written, with no traceback and no "send it to the author".
+- A guide for app authors, from `devstribution init` to a delivered `.dsapp`:
+  [`docs/authors.md`](docs/authors.md). The `AGENTS.md` that `init` writes links to it and
+  explains `AppError`.
 - Settings has an About block (version, licence, where the log is, and the software inside
   devstribution with its licences; "Open all licence texts" opens `THIRD-PARTY-NOTICES.txt`, which
   the installer ships) and a "Copy diagnostics" button: versions, installed apps, the latest runs,
