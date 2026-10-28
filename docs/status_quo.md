@@ -9,6 +9,11 @@ plan to a signed 1.0 is in [`roadmap.md`](roadmap.md).
 > message with a request for IT; see [`managed-mode.md`](managed-mode.md)). Managed mode still
 > needs checking on a real Windows PC. The rest of this page is from 22 October.
 
+> **Update, 28 October:** v0.1.0 (26 October) and v0.2.0 (27 October) are released as unsigned
+> pre-releases, from the release workflow. Stage A of the [roadmap](roadmap.md) is done except
+> the SignPath application. The Windows checks are in [`report.md`](report.md); the test counts
+> below are current.
+
 ## In one paragraph
 
 The proof of concept from [`plan.md`](plan.md) became a proper app:
@@ -79,32 +84,27 @@ Stated limits, kept on purpose and written in [`security.md`](security.md):
 
 | Part | State |
 |---|---|
-| `devstribution-core` | Format 1 with the amendment, install gate for `uv.lock`, fingerprints. 32 tests + frozen-package test |
-| `devstribution-host` | Install store with `admit` checks, hardened uv, crash-safe environments, runs with Job Object and result checks. 5 unit + 3 end-to-end tests with real uv |
-| `devstribution-cli` | `init`, `dev`, `pack` (same checks as install), `keygen`, `verify`. 2 integration tests |
-| `runner/` | Stdlib-only, protocol v1. 16 tests |
-| `launcher/` | Launchpad design, Settings with theme and colours, minimal window permissions. Release build verified on Linux: install, app panel, Settings, uninstaller mode |
+| `devstribution-core` | Format 1 with the amendment, install gate for `uv.lock`, fingerprints. 70 tests + frozen-package test |
+| `devstribution-host` | Install store with `admit` checks, hardened uv, crash-safe environments, runs with Job Object and result checks. 27 unit + 12 end-to-end tests with real uv |
+| `devstribution-cli` | `init`, `dev`, `pack` (same checks as install), `keygen`, `verify`. 5 integration tests |
+| `runner/` | Stdlib-only, protocol v1. 58 tests |
+| `launcher/` | Launchpad design, Settings with theme and colours, minimal window permissions. Installer verified on Windows (23 October, [`report.md`](report.md)); release build also on Linux |
 | CI | Windows, macOS, Linux: tests, launcher build and clippy, audits |
 
 ## Not done yet
 
 **Windows only**
 
-Built and type-checked for Windows but never run there:
-- suspended start in the Job Object;
-- the DLL load restrictions;
-- the data folder move;
-- the uninstaller hook;
-- uv behind a company proxy.
+Checked on Windows since 23 October ([`report.md`](report.md)): the suspended start in the Job
+Object, the DLL load restrictions, the uninstaller hook, the file association and Mark-of-the-Web
+from a real download. Still to check:
+- the data folder move with real old data;
+- uv behind a company proxy;
+- managed mode, and a locked-down company PC (roadmap B1 and B2).
 
-The same goes for these, which only the installer can test:
-- the file association;
-- Mark-of-the-Web from a real download.
+**Signing**
 
-**Installer and signing**
-
-`npx tauri build` on Windows, then a first unsigned public release, then SignPath (or Certum):
-SignPath only signs a project that is already released.
+The unsigned releases are out; next is the SignPath application (or Certum), then signing in CI.
 
 **Your real app**
 

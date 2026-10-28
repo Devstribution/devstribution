@@ -1,7 +1,7 @@
 // Small DOM helpers: element builder, icons, formatting, toasts and recurring bits of UI.
 
 import { createElement, type IconNode } from "lucide";
-import { CircleAlert, CircleCheck, Info, Loader, ShieldCheck, ShieldAlert, ShieldX } from "lucide";
+import { CircleAlert, CircleCheck, Info, Loader, ShieldCheck, ShieldAlert, ShieldX, X } from "lucide";
 import type { RunStatus } from "./api";
 
 type Child = Node | string | number | null | undefined | false | Child[];
@@ -154,6 +154,121 @@ export function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
+// ---------- keyboard and screen readers ----------
+
+const FOCUSABLE = "button, [href], input, select, textarea, summary, [tabindex]:not([tabindex='-1'])";
+
+function focusables(box: HTMLElement): HTMLElement[] {
+  return [...box.querySelectorAll<HTMLElement>(FOCUSABLE)]
+    .filter((el) => !(el as HTMLButtonElement).disabled && el.getClientRects().length > 0);
+}
+
+// The open dialogs, the topmost last: only it keeps Tab inside.
+const traps: HTMLElement[] = [];
+
+document.addEventListener("keydown", (e) => {
+  const box = traps[traps.length - 1];
+  if (e.key !== "Tab" || !box) return;
+  const items = focusables(box);
+  if (!items.length) { e.preventDefault(); box.focus(); return; }
+  const first = items[0], last = items[items.length - 1];
+  const at = document.activeElement;
+  if (e.shiftKey && (at === first || at === box || !box.contains(at))) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && (at === last || !box.contains(at))) { e.preventDefault(); first.focus(); }
+});
+
+/**
+ * Makes `box` a modal dialog: marked `aria-modal`, focus moves into it (to `initial`, or the
+ * dialog itself so its label is read) and Tab stays inside. When its content is replaced, focus
+ * goes back to the dialog. The returned function gives focus back to where it was before.
+ */
+export function trapFocus(box: HTMLElement, initial?: HTMLElement): () => void {
+  const before = document.activeElement as HTMLElement | null;
+  box.setAttribute("aria-modal", "true");
+  if (!box.hasAttribute("tabindex")) box.tabIndex = -1;
+  traps.push(box);
+  const watch = new MutationObserver(() => {
+    if (box.isConnected && !box.contains(document.activeElement)) box.focus();
+  });
+  watch.observe(box, { childList: true, subtree: true });
+  (initial ?? box).focus();
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    watch.disconnect();
+    traps.splice(traps.indexOf(box), 1);
+    if (before?.isConnected) before.focus();
+  };
+}
+
+/** Redraws with `draw`, then puts focus back on the control at the same place inside `boxes`,
+ * so clicking a segmented control or a chip that redraws its group does not drop the focus. */
+export function keepFocus(boxes: HTMLElement[], draw: () => void) {
+  const at = document.activeElement;
+  const box = boxes.find((b) => b.contains(at));
+  const i = box ? focusables(box).indexOf(at as HTMLElement) : -1;
+  draw();
+  if (box && i >= 0 && !box.contains(document.activeElement)) focusables(box)[i]?.focus();
+}
+
+// Arrow keys move between the options of a radio group and pick, as screen reader users expect.
+document.addEventListener("keydown", (e) => {
+  const at = e.target as HTMLElement;
+  const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+  const group = at.closest?.("[role=radiogroup]");
+  if (!step || !group || at.getAttribute("role") !== "radio") return;
+  const radios = [...group.querySelectorAll<HTMLElement>("[role=radio]")];
+  const next = radios[(radios.indexOf(at) + step + radios.length) % radios.length];
+  e.preventDefault();
+  next.focus();
+  next.click();
+});
+
+let liveBox: HTMLElement | null = null;
+
+/** Says `message` to screen readers without moving focus. */
+export function announce(message: string) {
+  if (!liveBox) {
+    liveBox = h("div", { class: "sr-only", "aria-live": "polite" });
+    document.body.appendChild(liveBox);
+  }
+  // Replaced, not appended: a reader announces the new text.
+  liveBox.textContent = "";
+  const box = liveBox;
+  window.setTimeout(() => { box.textContent = message; }, 50);
+}
+
+/** A `⋯` menu: the button opens it on the first item, arrow keys move, Escape and Tab close it
+ * and Escape gives focus back to the button. */
+export function menuButton(button: HTMLElement, menu: HTMLElement): { close(): void } {
+  const items = () => [...menu.querySelectorAll<HTMLElement>("[role=menuitem]")];
+  const open = (on: boolean, focusButton = false) => {
+    menu.hidden = !on;
+    button.setAttribute("aria-expanded", String(on));
+    if (on) items()[0]?.focus();
+    else if (focusButton) button.focus();
+  };
+  button.setAttribute("aria-haspopup", "menu");
+  button.setAttribute("aria-expanded", "false");
+  button.addEventListener("click", () => open(!!menu.hidden));
+  button.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); open(true); }
+  });
+  menu.addEventListener("keydown", (e) => {
+    const list = items();
+    const i = list.indexOf(document.activeElement as HTMLElement);
+    const go = (j: number) => { e.preventDefault(); list[(j + list.length) % list.length]?.focus(); };
+    if (e.key === "ArrowDown") go(i + 1);
+    else if (e.key === "ArrowUp") go(i - 1);
+    else if (e.key === "Home") go(0);
+    else if (e.key === "End") go(list.length - 1);
+    else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); open(false, true); }
+    else if (e.key === "Tab") open(false);
+  });
+  return { close: () => open(false) };
+}
+
 let toastBox: HTMLElement | null = null;
 
 function toastsBox(): HTMLElement {
@@ -164,7 +279,6 @@ function toastsBox(): HTMLElement {
   return toastBox;
 }
 
-/** A toast that stays while something runs and shows its latest step; `end` removes it. */
 /** A toast that stays until `end()`. `stop` adds a button that runs once, then waits disabled
  * ("Stopping…") until the work ends. */
 export function progressToast(message: string, stop?: { label: string; busy: string; run: () => void }): { update(message: string): void; end(): void } {
@@ -175,13 +289,15 @@ export function progressToast(message: string, stop?: { label: string; busy: str
   return { update: (m) => { text.textContent = m; }, end: () => el.remove() };
 }
 
+/** A short message at the bottom. Errors stay until closed, so there is time to read them. */
 export function toast(message: string, kind: "info" | "error" | "ok" = "info", action?: { label: string; run: () => void }) {
   const toastBox = toastsBox();
   const ic = kind === "error" ? CircleAlert : kind === "ok" ? CircleCheck : Info;
-  const el = h("div", { class: `toast ${kind}` }, icon(ic, 17), h("div", null, message),
-    action ? h("button", { class: "link", onclick: () => { el.remove(); action.run(); } }, action.label) : null);
+  const el = h("div", { class: `toast ${kind}`, role: kind === "error" ? "alert" : null }, icon(ic, 17), h("div", null, message),
+    action ? h("button", { class: "link", onclick: () => { el.remove(); action.run(); } }, action.label) : null,
+    kind === "error" ? h("button", { class: "toast-close", "aria-label": "Close", title: "Close", onclick: () => el.remove() }, icon(X, 15)) : null);
   toastBox.appendChild(el);
-  setTimeout(() => el.remove(), kind === "error" || action ? 9000 : 4000);
+  if (kind !== "error") setTimeout(() => el.remove(), action ? 9000 : 4000);
 }
 
 /** Copies text; the webview allows it from a click. */

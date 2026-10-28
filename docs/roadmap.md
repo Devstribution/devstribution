@@ -61,8 +61,8 @@ What a stranger downloading it meets first, and what the SignPath application ne
    on the clipboard.
 7. ☐ **Docs for app authors, the basics**: from `devstribution init` to a delivered `.dsapp`
    (section 8).
-8. ☐ **On GitHub (repository owner)**: private vulnerability reporting on (`SECURITY.md` points to
-   it), two-factor authentication for everyone with write access.
+8. ☑ **On GitHub (repository owner)**: private vulnerability reporting on (`SECURITY.md` points to
+   it), two-factor authentication for everyone with write access. 28 October.
 9. ☐ **Apply to SignPath Foundation**, with the release linked. If refused (the project is young),
    Certum's open-source certificate is the fallback.
 10. ☑ **The install dialog can be cancelled** (button and Escape) while it inspects or installs.
@@ -76,15 +76,17 @@ What a stranger downloading it meets first, and what the SignPath application ne
     - "Forget" asks before deleting a secret;
     - repair shows its progress (the events exist);
     - a missing log looks different from an empty one.
-12. ☐ **Keyboard and screen reader basics** (section 7):
-    - dialogs keep focus inside, give it back when they close, and are marked `aria-modal`;
-    - the segmented controls keep focus on click, and the `⋯` menu takes arrow keys and Escape;
-    - run progress and install steps are announced;
+12. ☑ **Keyboard and screen reader basics** (section 7; 28 October):
+    - dialogs (install, app panel, Settings, run details, clean-up, the secret prompt) keep focus
+      inside, give it back when they close, and are marked `aria-modal`;
+    - the segmented controls and chips keep focus on click, radio groups take arrow keys, and the
+      `⋯` menu opens on its first item, takes arrow keys, Home, End and Escape;
+    - run progress (each step, every quarter), a run's result and install steps are announced;
     - error toasts stay until closed;
     - motion follows `prefers-reduced-motion`.
-13. ☐ **Docs that match the release**: `README.md` ("pre-alpha") and `SECURITY.md` ("no release
-    yet") predate v0.1.0; the test counts in `status_quo.md`; `tauri.conf.json` still lists
-    Linux and macOS bundles.
+13. ☑ **Docs that match the release** (28 October): `README.md` and `SECURITY.md` describe the 0.x
+    pre-releases, `status_quo.md` has current test counts and Windows checks, and
+    `tauri.conf.json` builds only the Windows installer.
 
 ## B. Before a signed 1.0
 
@@ -382,8 +384,8 @@ The scan read only the package's own Python files. Extend it where attackers act
 - ☑ A `.dsapp` renamed to `.zip` by a download installs too (report: Launcher UX 5): picker, drag and
   drop and "Open with". `devstribution://` links (after 1.0) would avoid the renaming.
 - ☑ Error messages reviewed end to end → A5.
-- ☐ About page with version, licences of bundled software, and where the data folder is → A4.
-- ☐ Install dialog cancellable, no silent behaviour, keyboard and screen reader basics → A10–A12;
+- ☑ About page with version, licences of bundled software, and where the data folder is → A4.
+- ☑ Install dialog cancellable, no silent behaviour, keyboard and screen reader basics → A10–A12;
   smaller items → C.
 - ☐ **Results shown in the launcher**: preview Excel and CSV outputs as a table, show images and
   charts, without opening another program. With more input types (dates, choices, several
@@ -395,7 +397,7 @@ The scan read only the package's own Python files. Extend it where attackers act
   launcher's IPC surface and CSP, dependencies, CI): done before signing, findings and fixes in
   [`security.md`](security.md). Repeat before each release that changes these parts → B10.
 - ☑ **`SECURITY.md`**: how to report a vulnerability (privately, through GitHub), what is in
-  scope, and what we answer. Turning on private vulnerability reporting → A8.
+  scope, and what we answer. ☑ Private vulnerability reporting turned on → A8.
 - ☑ Versioning, changelog, release notes → A2. ☐ `docs/HANDOFF.md` and `status_quo.md` folded into a
   contributor guide, after the first release.
 - ☐ Logs a user can find and send (a "Copy diagnostics" button), without secrets in them → A6.

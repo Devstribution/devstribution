@@ -23,4 +23,5 @@ Anything that breaks it is in scope, for example:
 - an app reaching another app's files, secrets or environment through the platform;
 - code running at install time.
 
-The project is pre-alpha: there is no supported release yet, so reports apply to `main`.
+Releases are early pre-releases (0.x): reports apply to the latest release and to `main`. Fixes go
+into `main` and the next release; earlier 0.x releases are not patched.

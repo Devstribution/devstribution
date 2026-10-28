@@ -1,7 +1,7 @@
 import { FolderOpen, X } from "lucide";
 import type { RunRecord, RunStatus } from "../api";
 import type { Ctx, Rendered } from "../main";
-import { h, icon, appIcon, clear, duration, relTime, statusText, toast, errorText, runError, plural, STATUS_LABEL } from "../ui";
+import { h, icon, appIcon, clear, duration, relTime, statusText, toast, errorText, runError, plural, trapFocus, STATUS_LABEL } from "../ui";
 import { runsChart } from "../charts";
 import { runOutcome } from "./home";
 
@@ -13,7 +13,7 @@ function details(ctx: Ctx, r: RunRecord) {
   ctx.api.runLog(r.id)
     .then((t) => { log.textContent = t === null ? "No log was kept for this run." : t || "The app wrote nothing to its log."; })
     .catch(() => { log.textContent = "The log could not be read."; });
-  const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey); };
+  const close = () => { release(); overlay.remove(); document.removeEventListener("keydown", onKey); };
   const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
   document.addEventListener("keydown", onKey);
   const outputs = Object.entries(r.outputs);
@@ -33,6 +33,7 @@ function details(ctx: Ctx, r: RunRecord) {
         r.output_removed ? h("span", { class: "muted small grow" }, "Results removed by a cleanup") : h("button", { class: "btn", onclick: () => ctx.api.openOutput(r.id, null, false).catch((e) => toast(errorText(e), "error")) }, icon(FolderOpen, 16), "Open result folder"),
         h("button", { class: "btn primary", onclick: () => { close(); ctx.openApp(r.app_id); } }, "Open the app"))));
   document.body.appendChild(overlay);
+  const release = trapFocus(overlay.firstElementChild as HTMLElement);
 }
 
 export async function activityView(ctx: Ctx): Promise<Rendered> {

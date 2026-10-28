@@ -4,7 +4,7 @@ import {
 } from "lucide";
 import type { AppView, GuardHit, Input, RunRecord } from "../api";
 import type { Ctx, LiveRun } from "../main";
-import { h, icon, appIcon, clear, duration, fileName, relTime, statusText, toast, progressToast, errorText, runError, trustTag, KIND_LABEL } from "../ui";
+import { h, icon, appIcon, clear, duration, fileName, relTime, statusText, toast, progressToast, errorText, runError, trustTag, trapFocus, announce, menuButton, keepFocus, KIND_LABEL } from "../ui";
 
 /** Values the form starts with: last run's values, else the manifest defaults. */
 function initialValues(app: AppView): Record<string, unknown> {
@@ -48,7 +48,7 @@ async function startRun(ctx: Ctx, app: AppView, values: Record<string, unknown>)
 function askSecret(app: AppView, name: string): Promise<string | null> {
   return new Promise((resolve) => {
     const input = h("input", { class: "input", type: "password", autocomplete: "off", placeholder: "Paste the value", "aria-label": name });
-    const done = (v: string | null) => { overlay.remove(); resolve(v); };
+    const done = (v: string | null) => { release(); overlay.remove(); resolve(v); };
     const overlay = h("div", { class: "overlay", onclick: (e: Event) => { if (e.target === overlay) done(null); } },
       h("div", { class: "modal narrow", role: "dialog", "aria-label": `${app.title} needs ${name}` },
         h("div", { class: "modal-head" }, h("div", { class: "perm" }, h("div", { class: "pi" }, icon(KeyRound, 18))),
@@ -59,7 +59,7 @@ function askSecret(app: AppView, name: string): Promise<string | null> {
           h("button", { class: "btn primary", onclick: () => input.value && done(input.value) }, "Save and continue"))));
     input.addEventListener("keydown", (e) => { if (e.key === "Enter" && input.value) done(input.value); if (e.key === "Escape") done(null); });
     document.body.appendChild(overlay);
-    input.focus();
+    const release = trapFocus(overlay.firstElementChild as HTMLElement, input);
   });
 }
 
@@ -91,8 +91,8 @@ function field(ctx: Ctx, input: Input, values: Record<string, unknown>): HTMLEle
     case "choice": {
       if (input.choices.length <= 4) {
         const seg = h("div", { class: "segmented", role: "radiogroup", "aria-label": label });
-        const draw = () => seg.replaceChildren(...input.choices.map((c) =>
-          h("button", { class: values[input.name] === c ? "on" : "", role: "radio", "aria-checked": String(values[input.name] === c), onclick: () => { set(c); draw(); } }, c)));
+        const draw = () => keepFocus([seg], () => seg.replaceChildren(...input.choices.map((c) =>
+          h("button", { class: values[input.name] === c ? "on" : "", role: "radio", "aria-checked": String(values[input.name] === c), onclick: () => { set(c); draw(); } }, c))));
         draw();
         control = seg;
       } else {
@@ -133,12 +133,14 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
   const scrim = h("div", { class: "scrim" });
   const panel = h("aside", { class: "panel", role: "dialog", "aria-label": "App" });
   document.body.append(scrim, panel);
+  const release = trapFocus(panel);
   const disposers: (() => void)[] = [];
   let closed = false;
   const close = () => {
     if (closed) return;
     closed = true;
     disposers.forEach((d) => d());
+    release();
     scrim.remove();
     panel.remove();
     onClosed();
@@ -179,6 +181,10 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
       logBox.scrollTop = logBox.scrollHeight;
     }
 
+    // What screen readers last heard of this run.
+    let said = "";
+    const say = (text: string) => { if (text !== said) { said = text; announce(text); } };
+
     function draw() {
       window.clearInterval(timer);
       const running = !!run && !run.result;
@@ -197,7 +203,7 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
           live = {
             title: h("strong"), elapsed: h("span"), pct: h("span"),
             cancel: h("button", { class: "btn small", onclick: () => ctx.api.cancelRun(r.runId) }, icon(Square, 13), isForm ? "Cancel" : "Stop"),
-            bar: h("div", { class: "progress" }, h("div", { class: "fill" })),
+            bar: h("div", { class: "progress", role: "progressbar", "aria-label": `${app.title} progress` }, h("div", { class: "fill" })),
           };
           clear(stateBox, h("div", { class: "state-box" },
             h("div", { class: "row" }, h("div", { class: "grow" }, live.title, h("div", { class: "sub" }, live.elapsed, live.pct)), live.cancel),
@@ -210,6 +216,9 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
         (v.cancel as HTMLButtonElement).disabled = r.cancelling;
         v.bar.classList.toggle("indeterminate", pct === null);
         (v.bar.firstElementChild as HTMLElement).style.width = `${pct ?? 0}%`;
+        if (pct === null) v.bar.removeAttribute("aria-valuenow"); else v.bar.setAttribute("aria-valuenow", String(pct));
+        // The step, and every quarter of the way: more would talk over the user.
+        say(`${v.title.textContent}${pct === null ? "" : `, ${Math.floor(pct / 25) * 25}%`}`);
         timer = window.setInterval(() => { v.elapsed.textContent = duration(Date.now() - r.startedAt); }, 1000);
         return;
       }
@@ -243,6 +252,8 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
         cancelled: ["", "Cancelled", "Stopped before the end; cleanup ran."],
         running: ["", "Running", ""],
       }[res.status];
+      // Only a run followed here: opening the panel later does not read out an old result.
+      if (said) say(`${app.title}: ${head[1]}`);
       clear(stateBox, h("div", { class: `state-box ${head[0]}` },
         h("div", { class: "row" }, h("div", { class: "grow" }, h("strong", null, head[1]), head[2] ? h("div", { class: "sub" }, head[2]) : null),
           res.status === "ok" && app.outputs.some((o) => o.type === "file")
@@ -276,7 +287,7 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
       : null;
 
     async function uninstall() {
-      menu.hidden = true;
+      more.close();
       const ok = await ctx.api.ask(`Uninstall ${app.title}? Its environment and saved secrets are removed; past results stay in Activity.`, "Uninstall", "Uninstall");
       if (!ok) return;
       try { await ctx.api.uninstall(app.id); toast(`${app.title} uninstalled`, "ok"); close(); await ctx.refresh(); } catch (e) { toast(errorText(e), "error"); }
@@ -329,10 +340,10 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
     // ---------- more menu ----------
     const menu = h("div", { class: "menu", hidden: true, role: "menu" });
     const drawMenu = () => clear(menu,
-      h("button", { role: "menuitem", onclick: () => { ctx.pins.toggle(app.id); menu.hidden = true; drawMenu(); } },
+      h("button", { role: "menuitem", onclick: () => { ctx.pins.toggle(app.id); more.close(); drawMenu(); } },
         icon(ctx.pins.has(app.id) ? PinOff : Pin, 16), ctx.pins.has(app.id) ? "Unpin from sidebar" : "Pin to sidebar"),
       h("button", { role: "menuitem", onclick: async () => {
-        menu.hidden = true;
+        more.close();
         // Cancel stops uv; the old environment stays in place until a new one is complete.
         let stopped = false;
         const progress = progressToast("Rebuilding the environment…", {
@@ -346,10 +357,10 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
       } }, icon(Wrench, 16), "Repair"),
       h("button", { role: "menuitem", class: "danger", onclick: () => uninstall() }, icon(Trash2, 16), "Uninstall"));
     drawMenu();
-    const menuWrap = h("div", { class: "menu-wrap" },
-      h("button", { class: "btn big square", "aria-label": "More", "aria-haspopup": "menu", onclick: () => { menu.hidden = !menu.hidden; } }, icon(MoreHorizontal, 18)),
-      menu);
-    const closeMenu = (e: Event) => { if (!menuWrap.contains(e.target as Node)) menu.hidden = true; };
+    const moreBtn = h("button", { class: "btn big square", "aria-label": "More" }, icon(MoreHorizontal, 18));
+    const more = menuButton(moreBtn, menu);
+    const menuWrap = h("div", { class: "menu-wrap" }, moreBtn, menu);
+    const closeMenu = (e: Event) => { if (!menuWrap.contains(e.target as Node)) more.close(); };
     document.addEventListener("click", closeMenu);
     disposers.push(() => document.removeEventListener("click", closeMenu));
 
