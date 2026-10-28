@@ -19,12 +19,42 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     outputs:
       version: ${{ steps.tag.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      # A tag can be pushed on any commit by anyone who may write to the repository. Only a
+      # commit that is on `main` (so it went through a reviewed PR) and passed CI there is built.
+      - name: The tag is on main, and CI passed there
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
+            echo "::error::$GITHUB_SHA is not on main: tag the merge commit of the release PR"
+            exit 1
+          fi
+          runs=$(gh run list --workflow ci.yml --branch main --commit "$GITHUB_SHA" \
+            --json status,conclusion --jq '.[] | .status + ":" + (.conclusion // "")')
+          echo "CI runs for $GITHUB_SHA on main: ${runs:-none}"
+          if [ -z "$runs" ]; then
+            echo "::error::CI never ran on $GITHUB_SHA on main"
+            exit 1
+          fi
+          for r in $runs; do
+            if [ "$r" != "completed:success" ]; then
+              echo "::error::CI has not passed on $GITHUB_SHA (wait for it to finish, or fix it)"
+              exit 1
+            fi
+          done
       - name: The tag, the versions and the changelog agree
         id: tag
         env:
@@ -144,6 +174,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -164,6 +196,11 @@ jobs:
           mv notes.md ../notes.md
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
+      # The list names every other file of the release by its hash, so this one attestation
+      # covers the whole release, `latest.json` included.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/SHA256SUMS.txt
       - name: Draft pre-release
         env:
           GH_TOKEN: ${{ github.token }}

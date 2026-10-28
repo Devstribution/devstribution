@@ -28,7 +28,9 @@ behaviour, a patch (0.1.1) only fixes. The package format has its own number (fo
 2. **Version.** `python scripts/release.py bump 0.2.0`, then `cargo update --workspace`.
    Then `python scripts/third_party_notices.py`: it rewrites `THIRD-PARTY-NOTICES.txt`, which the
    installer ships, for the dependency versions of this release (it needs a network connection).
-   Commit the file if it changed.
+   Commit the file if it changed. Also `python scripts/update_dep_data.py`: it refreshes the lists
+   the dependency check bundles (malicious and popular PyPI packages), which go stale within
+   weeks (it needs a network connection). Commit them if they changed.
 3. **Check.** `python scripts/release.py check v0.2.0` must say the versions and the changelog
    agree. Open a PR with these changes and merge it when CI passes.
 4. **Dry run (optional).** Actions → Release → *Run workflow* on `main`: it builds everything
@@ -57,8 +59,13 @@ behaviour, a patch (0.1.1) only fixes. The package format has its own number (fo
    *pre-release* only for a version meant for everyday use: **that is what sends it to installed
    launchers** (next section).
 
-A tag whose version does not match the four files, or without a dated changelog section, stops
-the workflow before anything is built. A wrong tag can be deleted (`git push --delete origin
+A tag stops the workflow before anything is built when:
+
+- its commit is not on `main` (a tag on a PR branch, or on a commit nobody reviewed);
+- CI has not finished and passed on that commit, on `main`: after merging, wait for the checks;
+- the version does not match the four files, or there is no dated changelog section.
+
+A wrong tag can be deleted (`git push --delete origin
 v0.2.0`) as long as the draft was not published. Once a version is published, it is never
 reused: fix forward with the next patch.
 
@@ -107,7 +114,19 @@ Launchers up to 0.2.0 have no updater: their users install the next version by h
 - **Provenance.** For a tag, every file gets a GitHub build attestation: a signed record that this
   repository's release workflow built it from that commit. Anyone can check a download with
   `gh attestation verify <file> --repo Devstribution/devstribution`.
+- `SHA256SUMS.txt` has an attestation of its own. It lists every other file of the release by
+  its hash, so one `gh attestation verify SHA256SUMS.txt --repo Devstribution/devstribution`
+  plus `sha256sum -c SHA256SUMS.txt` covers the whole download.
 - Only the `release` job can write to the repository, and only to create the release.
+
+### What the checksums prove
+
+That the files you downloaded are the ones the release workflow produced, byte for byte: not
+damaged on the way, not swapped on a mirror, and (with the attestation) built by this repository's
+workflow from the tagged commit. They do **not** prove the code is safe, only that it is the
+code in the repository; and they do not replace code signing: until the installer is signed,
+Windows still cannot tell who made it. A checksum read from the same page as the download proves
+nothing against someone who controls that page, which is why the list is attested.
 
 ## Signing (not yet)
 
