@@ -480,21 +480,69 @@ impl Store {
         self.paths.state().join("state.json")
     }
 
-    fn load(&self) -> Result<State> {
-        match fs::read(self.state_file()) {
-            Ok(data) => serde_json::from_slice(&data).context(STATE_UNREADABLE),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(State::default()),
-            Err(e) => Err(e).context(STATE_UNREADABLE),
+    /// The copy of the state from before the latest save, which `load` falls back to.
+    fn state_backup(&self) -> PathBuf {
+        self.paths.state().join("state.json.bak")
+    }
+
+    /// `None` when the file does not exist.
+    fn read_state(path: &Path) -> Result<Option<State>> {
+        match fs::read(path) {
+            Ok(data) => Ok(Some(serde_json::from_slice(&data)?)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e.into()),
         }
+    }
+
+    /// Reads the state. A `state.json` that cannot be read (a crash or a full disk in the middle
+    /// of a save, an editor, a virus scanner) is set aside as `state.json.damaged` and the
+    /// copy from before the latest save is used, so the launcher keeps working.
+    fn load(&self) -> Result<State> {
+        let path = self.state_file();
+        let damage = match Self::read_state(&path) {
+            Ok(state) => return Ok(state.unwrap_or_default()),
+            Err(e) => e,
+        };
+        let Ok(Some(backup)) = Self::read_state(&self.state_backup()) else {
+            return Err(damage).context(STATE_UNREADABLE);
+        };
+        let damaged = path.with_extension("json.damaged");
+        let _ = fs::remove_file(&damaged);
+        fs::rename(&path, &damaged).context(STATE_UNREADABLE)?;
+        self.write_state(&backup)?;
+        crate::applog::write(&format!(
+            "state.json could not be read ({damage:#}); restored the copy from before the latest change, the damaged file is state.json.damaged"
+        ));
+        Ok(backup)
     }
 
     fn save(&self, state: &State) -> Result<()> {
         let path = self.state_file();
+        // The copy is of a file that `load` has just read, so it is never a damaged one.
+        if path.is_file() {
+            let _ = fs::copy(&path, self.state_backup());
+        }
+        self.write_state(state)
+    }
+
+    /// Writes to the disk before the rename, so that a crash leaves the old file or the new one,
+    /// never half of either.
+    fn write_state(&self, state: &State) -> Result<()> {
+        use std::io::Write;
+        let path = self.state_file();
         let tmp = path.with_extension("json.tmp");
-        fs::write(&tmp, serde_json::to_vec_pretty(state)?)?;
+        let mut file = fs::File::create(&tmp)?;
+        file.write_all(&serde_json::to_vec_pretty(state)?)?;
+        file.sync_all()?;
+        drop(file);
         fs::rename(&tmp, &path).context(
             "cannot save the list of installed apps (state.json): check that the data folder can be written and has free space",
-        )
+        )?;
+        #[cfg(unix)]
+        if let Some(dir) = path.parent().and_then(|d| fs::File::open(d).ok()) {
+            let _ = dir.sync_all();
+        }
+        Ok(())
     }
 
     /// Loads the state, lets `f` change it and saves it, all under the state lock. Nothing is
@@ -1846,7 +1894,7 @@ fn fingerprint_of(key: &str) -> Option<String> {
 }
 
 /// What a user sees when `state.json` cannot be read: what it is, and what to do about it.
-const STATE_UNREADABLE: &str = "the list of installed apps (state.json) cannot be read. If the file is damaged, close devstribution and move it out of the state folder: it then starts with no apps, and you install them again";
+const STATE_UNREADABLE: &str = "the list of installed apps (state.json) cannot be read. If the file is damaged, close devstribution and move state.json and state.json.bak out of the state folder: it then starts with no apps, and you install them again";
 
 fn is_token(token: &str) -> bool {
     token.len() == 24 && token.bytes().all(|b| b.is_ascii_hexdigit())
@@ -1886,6 +1934,52 @@ mod tests {
         })
         .unwrap();
         (dir, store)
+    }
+
+    fn remember(store: &Store, app: &str, version: &str) {
+        store
+            .update_state(|s| {
+                s.highest.insert(app.into(), version.into());
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn a_damaged_state_file_is_replaced_by_the_copy_before_the_latest_save() {
+        let (_dir, store) = store();
+        remember(&store, "alice/hello", "1.0.0");
+        remember(&store, "alice/hello", "1.1.0");
+        // A crash in the middle of a write that bypassed the rename.
+        fs::write(store.state_file(), b"{\"apps\": {\"alice/he").unwrap();
+        let state = store.load().unwrap();
+        assert_eq!(state.highest["alice/hello"], "1.0.0");
+        assert!(store.state_file().with_extension("json.damaged").is_file());
+        // The restored file is the one in use from now on.
+        assert_eq!(store.load().unwrap().highest["alice/hello"], "1.0.0");
+        remember(&store, "alice/hello", "1.2.0");
+        assert_eq!(store.load().unwrap().highest["alice/hello"], "1.2.0");
+    }
+
+    #[test]
+    fn damage_with_no_copy_still_says_what_to_do() {
+        let (_dir, store) = store();
+        fs::write(store.state_file(), b"not json").unwrap();
+        let err = format!("{:#}", store.load().unwrap_err());
+        assert!(err.contains("state.json.bak"), "{err}");
+        assert!(
+            store.state_file().is_file(),
+            "the file is left where it was"
+        );
+    }
+
+    #[test]
+    fn no_state_file_means_no_apps_even_with_an_old_copy() {
+        let (_dir, store) = store();
+        remember(&store, "alice/hello", "1.0.0");
+        remember(&store, "alice/hello", "1.1.0");
+        fs::remove_file(store.state_file()).unwrap();
+        assert!(store.load().unwrap().highest.is_empty());
     }
 
     /// A finished run with `kb` kilobytes of results and a log, journaled as a real one is.
