@@ -451,6 +451,7 @@ mod system {
 
     impl Drop for Key {
         fn drop(&mut self) {
+            // SAFETY: `self.0` was opened by `open` and is closed only here, once.
             unsafe { RegCloseKey(self.0) };
         }
     }
@@ -463,6 +464,8 @@ mod system {
     pub fn open() -> Option<Key> {
         let mut key: HKEY = null_mut();
         let path = wide(POLICY_KEY);
+        // SAFETY: `path` is a NUL-terminated UTF-16 string that outlives the call, and `key` is a
+        // valid place for the handle.
         let status = unsafe {
             RegOpenKeyExW(
                 HKEY_LOCAL_MACHINE,
@@ -480,6 +483,8 @@ mod system {
         fn raw(&self, name: &str, flags: u32) -> Option<Vec<u8>> {
             let name = wide(name);
             let mut size: u32 = 0;
+            // SAFETY: `self.0` is an open key; `name` is NUL-terminated and outlives the call; the
+            // data pointer is null, so only the size is written, to `size`.
             let status = unsafe {
                 RegGetValueW(
                     self.0,
@@ -497,6 +502,7 @@ mod system {
             // The value can grow between the two calls (a policy refresh): leave room.
             let mut buf = vec![0u8; size as usize + 64];
             let mut size = buf.len() as u32;
+            // SAFETY: as above, and `buf` has `size` writable bytes, which the call does not exceed.
             let status = unsafe {
                 RegGetValueW(
                     self.0,
