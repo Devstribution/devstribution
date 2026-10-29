@@ -33,7 +33,9 @@ cargo test
 python3 -m unittest discover -s runner/tests
 ```
 
-For a launcher change, also `npm run build` in `launcher/` (it type-checks the UI).
+For a launcher change, also `npm run build` and `npm run lint` in `launcher/` (type check, then
+Biome), and `cargo test -p devstribution-launcher`. A dependency change: `cargo deny check`
+(advisories, licences, sources; see `deny.toml`).
 
 ## What a good change looks like
 

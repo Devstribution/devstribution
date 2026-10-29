@@ -70,7 +70,7 @@ installer) plus a dependency and CI audit. The most important fixes:
   - a tighter CSP.
 - **Dependencies and CI:**
   - zip 9; Tauri 2.12 on the Rust and JavaScript sides;
-  - `cargo audit` and `npm audit` clean and running in CI;
+  - `cargo deny` (advisories, licences, sources) and `npm audit` clean and running in CI;
   - actions pinned to commit SHAs;
   - Dependabot.
 
@@ -89,7 +89,7 @@ Stated limits, kept on purpose and written in [`security.md`](security.md):
 | `devstribution-cli` | `init`, `dev`, `pack` (same checks as install), `keygen`, `verify`. 5 integration tests |
 | `runner/` | Stdlib-only, protocol v1. 58 tests |
 | `launcher/` | Launchpad design, Settings with theme and colours, minimal window permissions. Installer verified on Windows (23 October, [`report.md`](report.md)); release build also on Linux |
-| CI | Windows, macOS, Linux: tests, launcher build and clippy, audits |
+| CI | Windows, macOS, Linux: tests, launcher build, clippy, Biome and its own tests; the minimum Rust version; `cargo deny` and `npm audit`; the examples packed, verified and scanned |
 
 ## Not done yet
 

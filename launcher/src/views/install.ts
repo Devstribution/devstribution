@@ -44,7 +44,7 @@ ${f.message}`;
         h("div", { class: "ps" }, `${p.scan.files_scanned} Python file${p.scan.files_scanned === 1 ? "" : "s"} checked`))));
   }
   const deps = p.scan.dependencies;
-  if (deps && deps.packages && !p.scan.findings.some((f) => f.rule === "malicious-package")) {
+  if (deps?.packages && !p.scan.findings.some((f) => f.rule === "malicious-package")) {
     rows.push(h("div", { class: "perm" }, h("div", { class: "pi" }, icon(PackageCheck, 16)),
       h("div", null, h("div", { class: "pt" }, "No package reported as malicious"),
         h("div", { class: "ps" }, `${deps.packages} package${deps.packages === 1 ? "" : "s"} checked against PyPI's malicious-package reports up to ${new Date(`${deps.list_date}T00:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`))));

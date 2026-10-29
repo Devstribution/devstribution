@@ -135,11 +135,14 @@ What has to hold before our signature goes on it, roughly in this order.
     `SHA256SUMS.txt` (GitHub artifact attestations), says plainly what the checksums prove, and
     `releasing.md` lists refreshing the dependency data (section 5) before each release.
     28 October. Still to see: a real tag run (the first release after this one).
-14. ◐ **CI and tests**: done 28 October: the minimum Rust version (1.90) checked, `npm audit`
+14. ☑ **CI and tests**: done 28 October: the minimum Rust version (1.90) checked, `npm audit`
     including dev dependencies, job timeouts in `ci.yml`, Python 3.10 (the runner's minimum), and
-    a `SAFETY` comment on each `unsafe` block (clippy refuses one without). Still to do:
-    `cargo-deny`, timeouts in `release.yml`, the examples packed and scanned, tests for the
-    launcher's Rust commands, a TypeScript linter.
+    a `SAFETY` comment on each `unsafe` block (clippy refuses one without). 29 October:
+    `cargo deny` in place of `cargo audit` (also licences we can ship and crates.io as the only
+    source, `deny.toml`; the crates are marked unpublished), timeouts in `release.yml`, the
+    examples packed, verified and scanned in CI, tests for the checks the launcher's commands make
+    themselves ("open result" opens only a run's results, when it may update, which arguments
+    are packages), and Biome linting the UI.
 
 ## C. After 1.0
 

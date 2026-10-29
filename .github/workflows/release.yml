@@ -19,6 +19,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       actions: read
@@ -72,6 +73,7 @@ jobs:
   installer:
     needs: check
     runs-on: windows-latest
+    timeout-minutes: 60
     permissions:
       contents: read
       id-token: write
@@ -127,6 +129,7 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write
@@ -172,6 +175,7 @@ jobs:
     if: github.ref_type == 'tag'
     needs: [check, installer, cli]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
       id-token: write

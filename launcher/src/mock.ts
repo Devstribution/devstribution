@@ -279,7 +279,7 @@ export function mockApi(): Api {
   const changed: Listener<void>[] = [];
   const timers = new Map<string, number>();
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-  const emit = (id: string, e: RunEvent) => runListeners.forEach((l) => l([id, e]));
+  const emit = (id: string, e: RunEvent) => { for (const l of runListeners) l([id, e]); };
   const off = <T>(list: T[], item: T) => () => { const i = list.indexOf(item); if (i >= 0) list.splice(i, 1); };
 
   return {
@@ -351,7 +351,7 @@ export function mockApi(): Api {
       for (const [step, message] of steps) {
         await sleep(450);
         if (envCancelled) throw new Error("preparing the Python environment was cancelled");
-        stepListeners.forEach((l) => l({ key: "demo", step, message }));
+        for (const l of stepListeners) l({ key: "demo", step, message });
       }
       const app: AppView = {
         ...base,
@@ -382,7 +382,7 @@ export function mockApi(): Api {
       for (const m of ["Rebuilding the Python environment", "Installed 3 packages in 31ms", "Ready"]) {
         await sleep(400);
         if (envCancelled) throw new Error("preparing the Python environment was cancelled");
-        stepListeners.forEach((l) => l({ key: id, step: m === "Ready" ? "ready" : "environment", message: m }));
+        for (const l of stepListeners) l({ key: id, step: m === "Ready" ? "ready" : "environment", message: m });
       }
     },
     async startRun(id, inputs) {
@@ -427,7 +427,7 @@ export function mockApi(): Api {
         };
         Object.assign(record, { status: "ok", outputs: result.outputs, duration_ms: result.duration_ms, finished_at: now(), guard: result.guard });
         emit(record.id, { type: "finished", result });
-        changed.forEach((l) => l());
+        for (const l of changed) l();
       }, 650);
       timers.set(record.id, timer);
       return structuredClone(record);
@@ -442,7 +442,7 @@ export function mockApi(): Api {
       const r = runs.find((x) => x.id === runId)!;
       Object.assign(r, { status: "cancelled", finished_at: now() });
       emit(runId, { type: "finished", result: { status: "cancelled", outputs: {}, error: "the app was stopped", duration_ms: 1200 } });
-      changed.forEach((l) => l());
+      for (const l of changed) l();
     },
     async listRuns(appId, limit) { return runs.filter((r) => !appId || r.app_id === appId).slice(0, limit ?? 200); },
     async runLog() {
@@ -504,7 +504,7 @@ export function mockApi(): Api {
     },
     async installUpdate() {
       const total = 14_200_000;
-      for (let done = 0; done <= total; done += 1_420_000) { updateListeners.forEach((l) => l([done, total])); await sleep(250); }
+      for (let done = 0; done <= total; done += 1_420_000) { for (const l of updateListeners) l([done, total]); await sleep(250); }
       throw new Error("The browser demo cannot install updates: in the launcher, devstribution closes here and the new version installs.");
     },
     async onUpdateProgress(cb) { const l: Listener<[number, number | null]> = ([d, t]) => cb(d, t); updateListeners.push(l); return off(updateListeners, l); },

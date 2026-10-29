@@ -1,0 +1,42 @@
+# `cargo deny check` (CI, the `audit` job): known vulnerabilities, licences, and where crates
+# come from. Every dependency ships inside the launcher or the CLI, so its licence must let us
+# ship it (THIRD-PARTY-NOTICES.txt carries the texts).
+
+[graph]
+all-features = true
+
+[advisories]
+# RustSec advisories: a vulnerable or yanked crate fails. Unmaintained crates deep in Tauri's tree
+# are reported only for crates we depend on ourselves.
+yanked = "deny"
+unmaintained = "workspace"
+
+[licenses]
+# Permissive licences, and MPL-2.0 (file-level copyleft: fine to ship unchanged with its notice).
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.9
+
+[bans]
+# Tauri brings several versions of some crates (windows-sys, toml, …); not ours to fix.
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+# Only crates.io: no git dependencies, no other registries.
+unknown-registry = "deny"
+unknown-git = "deny"

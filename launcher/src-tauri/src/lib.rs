@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::{Read, Seek, SeekFrom};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -434,11 +434,9 @@ async fn run_log(app: AppHandle, run_id: String) -> CmdResult<Option<String>> {
     .await
 }
 
-/// Opens a run's result: its output folder, or a file the run returned as a result. Nothing
-/// else can be opened, whatever the page asks: the path must be one of the run's recorded
-/// results and resolve inside its output folder or a folder chosen for the run. With no file
-/// given, it opens the output folder, or the chosen folder when the app left its own empty.
-/// Files Windows would run (programs, scripts, shortcuts) are only shown in their folder.
+/// Opens a run's result: its output folder, or a file the run returned as a result (see
+/// [`output_target`]). Files Windows would run (programs, scripts, shortcuts) are only shown in
+/// their folder.
 #[tauri::command]
 async fn open_output(
     app: AppHandle,
@@ -448,49 +446,9 @@ async fn open_output(
 ) -> CmdResult<()> {
     blocking(move || {
         let record = state(&app).store.run(&run_id)?;
-        if record.output_removed.is_some() {
-            return Err(anyhow::anyhow!(
-                "this run's results were removed by a cleanup"
-            ));
-        }
-        // `dunce` gives `C:\...` rather than `\\?\C:\...`, which Explorer cannot always open.
-        let output_dir = dunce::canonicalize(&record.output_dir)?;
-        let target = match path {
-            // An app that works in a folder the user chose usually leaves its own output folder
-            // empty: then the result is in the chosen folder, so open that one.
-            None if is_empty_dir(&output_dir) => record
-                .result_folders
-                .iter()
-                .skip(1)
-                .find_map(|dir| dunce::canonicalize(dir).ok().filter(|d| d.is_dir()))
-                .unwrap_or_else(|| output_dir.clone()),
-            None => output_dir.clone(),
-            Some(p) => {
-                if !record
-                    .outputs
-                    .values()
-                    .any(|v| v.as_str() == Some(p.as_str()))
-                {
-                    anyhow::bail!("this file is not a result of the run");
-                }
-                // The resolved path is the one opened, so it cannot change after the check.
-                let resolved = dunce::canonicalize(&p)?;
-                let allowed = std::iter::once(&record.output_dir)
-                    .chain(&record.result_folders)
-                    .filter_map(|dir| dunce::canonicalize(dir).ok())
-                    .any(|dir| resolved.starts_with(dir));
-                if !allowed || !resolved.is_file() {
-                    anyhow::bail!("this file is not a result of the run");
-                }
-                resolved
-            }
-        };
-        let runnable = target
-            .extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| RUNNABLE.iter().any(|r| r.eq_ignore_ascii_case(e)));
+        let (target, reveal) = output_target(&record, path.as_deref(), reveal)?;
         let opener = app.opener();
-        if reveal || (runnable && target != output_dir) {
+        if reveal {
             opener.reveal_item_in_dir(&target)?;
         } else {
             opener.open_path(target.to_string_lossy(), None::<&str>)?;
@@ -498,6 +456,54 @@ async fn open_output(
         Ok(())
     })
     .await
+}
+
+/// What "open result" may open, and whether to show it in its folder instead of opening it.
+/// Nothing else can be opened, whatever the page asks: the path must be one of the run's
+/// recorded results and resolve inside its output folder or a folder chosen for the run. With
+/// no file given, it is the output folder, or the chosen folder when the app left its own empty.
+fn output_target(
+    record: &RunRecord,
+    path: Option<&str>,
+    reveal: bool,
+) -> anyhow::Result<(PathBuf, bool)> {
+    if record.output_removed.is_some() {
+        anyhow::bail!("this run's results were removed by a cleanup");
+    }
+    // `dunce` gives `C:\...` rather than `\\?\C:\...`, which Explorer cannot always open.
+    let output_dir = dunce::canonicalize(&record.output_dir)?;
+    let target = match path {
+        // An app that works in a folder the user chose usually leaves its own output folder
+        // empty: then the result is in the chosen folder, so open that one.
+        None if is_empty_dir(&output_dir) => record
+            .result_folders
+            .iter()
+            .skip(1)
+            .find_map(|dir| dunce::canonicalize(dir).ok().filter(|d| d.is_dir()))
+            .unwrap_or_else(|| output_dir.clone()),
+        None => output_dir.clone(),
+        Some(p) => {
+            if !record.outputs.values().any(|v| v.as_str() == Some(p)) {
+                anyhow::bail!("this file is not a result of the run");
+            }
+            // The resolved path is the one opened, so it cannot change after the check.
+            let resolved = dunce::canonicalize(p)?;
+            let allowed = std::iter::once(&record.output_dir)
+                .chain(&record.result_folders)
+                .filter_map(|dir| dunce::canonicalize(dir).ok())
+                .any(|dir| resolved.starts_with(dir));
+            if !allowed || !resolved.is_file() {
+                anyhow::bail!("this file is not a result of the run");
+            }
+            resolved
+        }
+    };
+    let runnable = target
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| RUNNABLE.iter().any(|r| r.eq_ignore_ascii_case(e)));
+    let reveal = reveal || (runnable && target != output_dir);
+    Ok((target, reveal))
 }
 
 fn is_empty_dir(dir: &Path) -> bool {
@@ -812,19 +818,8 @@ async fn check_update(app: AppHandle) -> CmdResult<Option<UpdateView>> {
 async fn install_update(app: AppHandle) -> CmdResult<()> {
     let s = state(&app);
     updates_allowed(&s.store)?;
-    let running = lock(&s.runs).len();
-    if running > 0 {
-        return Err(format!(
-            "{} still running: updating closes devstribution, which would stop {}. Update when \
-             {} finished.",
-            if running == 1 {
-                "An app is"
-            } else {
-                "Some apps are"
-            },
-            if running == 1 { "it" } else { "them" },
-            if running == 1 { "it has" } else { "they have" },
-        ));
+    if let Some(refusal) = runs_block_update(lock(&s.runs).len()) {
+        return Err(refusal);
     }
     let Some(update) = lock(&s.update).clone() else {
         return Err("There is no update to install: look for updates again.".into());
@@ -853,6 +848,23 @@ async fn install_update(app: AppHandle) -> CmdResult<()> {
         })?;
     // On Windows the installer has taken over and the launcher has already exited.
     app.restart();
+}
+
+/// Why the launcher cannot update now: updating closes it, which would stop running apps.
+fn runs_block_update(running: usize) -> Option<String> {
+    (running > 0).then(|| {
+        format!(
+            "{} still running: updating closes devstribution, which would stop {}. Update when \
+             {} finished.",
+            if running == 1 {
+                "An app is"
+            } else {
+                "Some apps are"
+            },
+            if running == 1 { "it" } else { "them" },
+            if running == 1 { "it has" } else { "they have" },
+        )
+    })
 }
 
 #[tauri::command]
@@ -1027,3 +1039,6 @@ pub fn run() {
         std::process::exit(1);
     }
 }
+
+#[cfg(test)]
+mod tests;

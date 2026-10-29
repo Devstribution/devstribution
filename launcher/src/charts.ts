@@ -14,7 +14,7 @@ function s<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, s
 /** A maximum with 4 whole-number gridline steps: 4, 8, 12, 20, 40, 100... */
 function niceMax(v: number): number {
   const raw = Math.max(1, Math.ceil(v / 4));
-  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const mag = 10 ** Math.floor(Math.log10(raw));
   const step = [1, 2, 3, 5, 10].map((m) => m * mag).find((x) => x >= raw) ?? raw;
   return step * 4;
 }
@@ -50,7 +50,7 @@ export function runsChart(days: Stats["per_day"]): SVGSVGElement {
         : `M${x},${y + bh} V${y} H${x + bw} V${y + bh} Z`;
       svg.append(s("path", { d: path, class: cls }));
     });
-    const date = new Date(d.date + "T12:00:00");
+    const date = new Date(`${d.date}T12:00:00`);
     const hit = s("rect", { x: L + slot * i, y: T, width: slot, height: plotH, class: "bar-hit" });
     hit.append(s("title", {}, `${date.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}: ${total} runs (${d.ok} done, ${d.error} didn’t work, ${d.cancelled} cancelled)`));
     svg.append(hit);
