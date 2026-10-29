@@ -105,8 +105,8 @@ pub fn pack(dir: &Path, key: Option<PathBuf>, out: Option<PathBuf>) -> Result<()
     let app_dir = env::absolute(dir)?;
     let runner_dir = devstribution_host::runner::install(&env::paths()?)?;
 
-    if let Err(e) = env::run_uv(&["lock", "--check", "--quiet"], &app_dir) {
-        bail!("{e}: uv.lock does not match pyproject.toml; run `uv lock` and try again");
+    if !env::uv_succeeds(&["lock", "--check", "--quiet"], &app_dir)? {
+        bail!("uv.lock does not match pyproject.toml: run `uv lock` and try again");
     }
     let checked = checks::check_app(&app_dir, &runner_dir)?;
     checks::print_warnings(&checked.warnings);
