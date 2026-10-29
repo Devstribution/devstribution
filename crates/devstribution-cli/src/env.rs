@@ -22,6 +22,15 @@ pub fn keys_dir() -> Result<PathBuf> {
 
 /// Runs `uv` and fails if it fails (its output goes to the terminal).
 pub fn run_uv(args: &[&str], dir: &Path) -> Result<()> {
+    if !uv_succeeds(args, dir)? {
+        bail!("`uv {}` failed", args.join(" "));
+    }
+    Ok(())
+}
+
+/// Runs `uv` and says whether it succeeded; an error only when uv cannot be started, so the
+/// caller does not blame its own check for a missing uv.
+pub fn uv_succeeds(args: &[&str], dir: &Path) -> Result<bool> {
     let status = devstribution_host::uv::command()
         .args(args)
         .current_dir(dir)
@@ -31,10 +40,7 @@ pub fn run_uv(args: &[&str], dir: &Path) -> Result<()> {
                 "cannot start uv ({e}): install it from https://docs.astral.sh/uv/ or set DEVSTRIBUTION_UV"
             )
         })?;
-    if !status.success() {
-        bail!("`uv {}` failed", args.join(" "));
-    }
-    Ok(())
+    Ok(status.success())
 }
 
 pub fn absolute(path: &Path) -> Result<PathBuf> {
