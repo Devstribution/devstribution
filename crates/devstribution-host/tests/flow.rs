@@ -170,6 +170,11 @@ fn install_run_update_and_refusals() {
     assert!(changes.files.iter().any(|f| f.path == "pyproject.toml"));
     store.install(&pending.token, &mut |_| {}).unwrap();
     assert_eq!(store.app("alice/hello").unwrap().record.version, "2.0.0");
+    // What was typed in the form is still there for the next run.
+    assert_eq!(
+        store.app("alice/hello").unwrap().record.last_inputs["name"],
+        json!("Ada")
+    );
 
     // Downgrade: refused.
     let err = store.inspect(&v1).unwrap_err().to_string();
