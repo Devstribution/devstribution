@@ -13,7 +13,7 @@ use crate::env;
 
 const PASSWORD_ENV: &str = "DEVSTRIBUTION_KEY_PASSWORD";
 
-fn validate_namespace(namespace: &str) -> Result<()> {
+pub(crate) fn validate_namespace(namespace: &str) -> Result<()> {
     format!("{namespace}/x")
         .parse::<AppId>()
         .map(|_| ())
@@ -89,7 +89,7 @@ fn write_private(path: &Path, data: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn load_signer(path: &Path) -> Result<Signer> {
+pub(crate) fn load_signer(path: &Path) -> Result<Signer> {
     let text = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     if let Some(signer) = Signer::from_unencrypted(&text)? {
         return Ok(signer);

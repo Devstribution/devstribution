@@ -195,6 +195,17 @@ devstribution keygen --namespace yourname
 - **Back up the `.key` file and its password.** Users accept updates only when they are signed
   with the same key. A lost key means your users must uninstall and install again, and a leaked
   key lets someone else publish "your" updates.
+- **Moving to a new key** (the old one still works, you only want to change):
+  `devstribution keys rotate --namespace yourname --new-key new.key` writes a `.dskey` file signed
+  with both keys. Give it to your users with the first release signed with the new key: a launcher
+  that has it accepts the new key instead of refusing the update.
+- **A lost or stolen key:** `devstribution keys withdraw --namespace yourname --reason stolen`
+  (or `lost`, `retired`) writes a `.dskey` file signed with that key. A launcher that has it
+  (Settings, *Revoked keys*, *Import*) refuses everything signed with the key and warns before
+  running apps it signed. Send it to your users and their IT, report it as `SECURITY.md` says, and
+  sign your releases again with a new key. Anyone holding the key can withdraw it, a thief
+  included, but nobody can switch it back on: keep the withdrawal for the day you need it only if
+  you can keep it safe.
 
 Then, for each release:
 

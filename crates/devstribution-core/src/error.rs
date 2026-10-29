@@ -18,6 +18,9 @@ pub enum Error {
     #[error("signature: {0}")]
     Signature(String),
 
+    #[error("revocation: {0}")]
+    Revocation(String),
+
     /// The package uses a later format than this version reads. Every launcher keeps reading
     /// every earlier format (docs/format.md), so updating devstribution is always the fix.
     #[error(

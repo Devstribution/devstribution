@@ -8,6 +8,8 @@ const DAY = 86_400;
 /** `?managed` in the address shows the demo in managed mode, with an example policy. */
 const MANAGED = typeof location !== "undefined" && new URLSearchParams(location.search).has("managed");
 const UPDATE = typeof location !== "undefined" && new URLSearchParams(location.search).has("update");
+/** `?revoked` shows an installed app whose publisher withdrew its key. */
+const REVOKED = typeof location !== "undefined" && new URLSearchParams(location.search).has("revoked");
 const MANAGED_POLICY: Policy = {
   source: "HKLM\\SOFTWARE\\Policies\\devstribution · \\\\fileserver\\it\\devstribution\\policy.toml",
   authors: [
@@ -25,7 +27,7 @@ const MANAGED_POLICY: Policy = {
   log_file: "C:\\Users\\edo\\AppData\\Local\\dev.devstribution.launcher\\data\\state\\policy.log",
 };
 
-const base = { trust: (MANAGED ? "approved" : "first_use") as Trust, requires: [], origin: null, last_inputs: {}, secrets: [], quarantine: null, guard_allow: [] as string[], may_allow_guard_rules: !MANAGED };
+const base = { trust: (MANAGED ? "approved" : "first_use") as Trust, requires: [], origin: null, last_inputs: {}, secrets: [], quarantine: null, guard_allow: [] as string[], may_allow_guard_rules: !MANAGED, revoked: null, revocation_acknowledged: false };
 const noPerms = { network: [], folders: [], sap: false, secrets: [] };
 
 const apps: AppView[] = [
@@ -151,6 +153,12 @@ const apps: AppView[] = [
     installed_at: now() - 1 * DAY,
   },
 ];
+if (REVOKED) {
+  apps.find((a) => a.id === "ops/sap-stock-check")!.revoked = {
+    status: "withdrawn", id: "statement:5c1e0a9d77f2b4e1", evidence: [],
+    message: "The publisher of `ops` says this key (51E0-AB77-33C9-D2F4-7F02-8C61-A9E4-0D17) is no longer safe (stolen) since 2026-10-27.",
+  };
+}
 
 function seeded(seed: number) {
   return () => {
@@ -370,6 +378,16 @@ export function mockApi(): Api {
     },
     async discardInstall() {},
     async cancelEnvironment() { envCancelled = true; },
+    async acknowledgeRevocation(id) {
+      const app = apps.find((a) => a.id === id)!;
+      if (MANAGED) throw new Error("your organisation decides about revoked apps. Ask the IT service desk.");
+      app.revocation_acknowledged = true;
+      return structuredClone(app);
+    },
+    async importRevocations() {
+      await sleep(300);
+      return { kind: "statement", statement: "withdrawal", namespace: "acme", key_id: "C3F1-9A0B-66D2-E871-0B44-9C12-7D3E-55A1" };
+    },
     async releaseQuarantine(id, allow) {
       const app = apps.find((a) => a.id === id)!;
       if (app.quarantine && allow) app.guard_allow = [...app.guard_allow, app.quarantine.hit.rule];
@@ -387,6 +405,7 @@ export function mockApi(): Api {
     },
     async startRun(id, inputs) {
       const app = apps.find((a) => a.id === id)!;
+      if (app.revoked && (MANAGED || !app.revocation_acknowledged)) throw new Error(`${app.title} was revoked: ${app.revoked.message}`);
       app.last_inputs = { ...inputs };
       const record: RunRecord = {
         id: `${now()}-${id.split("/")[1]}-${Math.random().toString(16).slice(2, 6)}`,
@@ -484,6 +503,7 @@ export function mockApi(): Api {
         policy: MANAGED ? MANAGED_POLICY : null,
         uv_version: "uv 0.13.4",
         updates: true,
+        revocations: { serial: null, issued: null, expires: null, expired: false, source: null, entries: 0, statements: REVOKED ? 1 : 0, can_check_lists: false },
         publishers: [
           { namespace: "devstribution", key_id: "2972B9E777FFC794", pinned_at: now() - 9 * DAY, source: "first-use" },
           { namespace: "finance", key_id: "8D41C0A9F2B37E10", pinned_at: now() - 21 * DAY, source: "first-use" },
