@@ -105,7 +105,7 @@ async function boot() {
       }
     }
     if (r.lines.length > 2000) r.lines.splice(0, r.lines.length - 2000);
-    liveListeners.forEach((l) => l(r));
+    for (const l of liveListeners) l(r);
     drawLiveDot();
   });
 
@@ -207,7 +207,7 @@ async function boot() {
       page = "home";
       if (id) ctx.openApp(id);
     }
-    nav.forEach((b) => b.classList.toggle("active", b.dataset.hash === `#/${page}`));
+    for (const b of nav) b.classList.toggle("active", b.dataset.hash === `#/${page}`);
     try {
       const view = page === "apps" ? await appsView(ctx) : page === "activity" ? await activityView(ctx) : await homeView(ctx);
       if (seq !== renderSeq) { view.cleanup?.(); return; }

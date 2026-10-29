@@ -139,7 +139,7 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
   const close = () => {
     if (closed) return;
     closed = true;
-    disposers.forEach((d) => d());
+    for (const d of disposers) d();
     release();
     scrim.remove();
     panel.remove();

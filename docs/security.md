@@ -38,7 +38,7 @@ apps, within the limits listed below.
 | A downloaded package without a warning | Mark-of-the-Web is read (also UTF-16); a mark that cannot be understood counts as "from the internet". |
 | Managed mode: an author IT has not approved, or an approved namespace signed with another key | Only namespaces and full keys listed in the HKLM policy install and run; checked at inspect, again at install, and before every run. No trust on first use, no "Install anyway". |
 | Managed mode: a user or an app pointing the launcher at its own policy | The policy is only read from `HKLM`, which users cannot write. Policy files, trust folders and `.trust` files the user could write are refused (Windows is asked whether the user could open them for writing). A policy that cannot be read approves no one. |
-| A tampered CI pipeline (once it signs releases) | Actions pinned to commit SHAs, read-only token, `cargo audit` and `npm audit` on every change, Dependabot updates. |
+| A tampered CI pipeline (once it signs releases) | Actions pinned to commit SHAs, read-only token, `cargo deny` and `npm audit` on every change, Dependabot updates. |
 
 ## What is not covered (stated limits)
 

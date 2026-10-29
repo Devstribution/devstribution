@@ -70,10 +70,14 @@ jobs:
       - run: npm ci
       - name: UI type check and build
         run: npm run build
+      - name: UI lint (Biome)
+        run: npm run lint
       - name: uv sidecar
         run: npm run sidecar
       - name: Launcher lint
         run: cargo clippy -p devstribution-launcher --all-targets -- -D warnings
+      - name: Launcher tests
+        run: cargo test -p devstribution-launcher
 
   msrv:
     # The oldest Rust that Cargo.toml promises (`rust-version`) still builds the crates.
@@ -88,7 +92,8 @@ jobs:
       - run: cargo check --locked -p devstribution-core -p devstribution-host -p devstribution-cli
 
   audit:
-    # Known vulnerabilities in the Rust and npm dependencies fail the build.
+    # Known vulnerabilities in the Rust and npm dependencies fail the build; so does a Rust crate
+    # under a licence we cannot ship, or from somewhere other than crates.io (deny.toml).
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -99,10 +104,37 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-      - name: cargo audit
+      - name: cargo deny (advisories, licences, sources)
         run: |
-          cargo install cargo-audit --locked
-          cargo audit
+          cargo install cargo-deny --locked
+          cargo deny check
       - name: npm audit
         working-directory: launcher
         run: npm audit --audit-level=moderate
+
+  examples:
+    # The example apps go through what an author does: packed and signed with a throwaway key,
+    # verified against it, and scanned (a finding that looks like malware fails).
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      # `pack` checks that uv.lock matches pyproject.toml with uv.
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - run: cargo build --locked -p devstribution-cli
+      - name: Pack, verify and scan each example
+        run: |
+          ds=target/debug/devstribution
+          $ds keygen --namespace devstribution --dir "$RUNNER_TEMP/keys" --no-password
+          for dir in examples/*/; do
+            name=$(basename "$dir")
+            echo "::group::$name"
+            $ds pack "$dir" --key "$RUNNER_TEMP/keys/devstribution.key" --out "$RUNNER_TEMP/$name.dsapp"
+            $ds verify "$RUNNER_TEMP/$name.dsapp" --key "$RUNNER_TEMP/keys/devstribution.pub"
+            $ds scan "$RUNNER_TEMP/$name.dsapp"
+            echo "::endgroup::"
+          done

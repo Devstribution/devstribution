@@ -46,7 +46,7 @@ export function openCleanup(ctx: Ctx, apps: AppView[]) {
   }
 
   async function remove() {
-    if (!plan || !plan.runs.length || busy) return;
+    if (!plan?.runs.length || busy) return;
     const n = plan.runs.length;
     const ok = await ctx.api.ask(
       records
@@ -89,7 +89,7 @@ export function openCleanup(ctx: Ctx, apps: AppView[]) {
         h("input", { type: "checkbox", checked: records, onchange: (e: Event) => { records = (e.target as HTMLInputElement).checked; load(); } }),
         h("span", null, "Also remove these runs from Activity")),
       h("div", { class: "strong" }, summary),
-      plan && plan.runs.length ? h("div", { class: "muted tiny" },
+      plan?.runs.length ? h("div", { class: "muted tiny" },
         `${plural(new Set(plan.runs.map((r) => r.app_id)).size, "app")}. Oldest run: ${new Date(Math.min(...plan.runs.map((r) => r.started_at)) * 1000).toLocaleDateString()}.`) : null,
       h("div", { class: "muted tiny" }, "Runs in progress are skipped. Files in folders you chose for an app are never touched: only what devstribution kept for the run."));
     clear(foot,
