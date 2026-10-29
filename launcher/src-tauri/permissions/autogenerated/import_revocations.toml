@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-import-revocations"
+description = "Enables the import_revocations command without any pre-configured scope."
+commands.allow = ["import_revocations"]
+
+[[permission]]
+identifier = "deny-import-revocations"
+description = "Denies the import_revocations command without any pre-configured scope."
+commands.deny = ["import_revocations"]

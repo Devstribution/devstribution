@@ -2,7 +2,8 @@
 
 How a publisher key that should no longer be trusted (lost, stolen, or used to sign malware) stops
 being trusted on every PC, without devstribution becoming a registry of publishers. Status:
-**design, agreed October 2026, not built.** It replaces the "public revocation list" idea that was
+**steps 1 and 2 built (29 October 2026): the list check and owners' statements. The root keys
+and the first list (step 3) are not made yet, so no list verifies until then.** It replaces the "public revocation list" idea that was
 under "Possibilities" in [`roadmap.md`](roadmap.md); the first two build steps come before 1.0
 (roadmap, B6), the rest after. Where [`plan.md`](plan.md) differs (the catalog
 key signing the list), this page wins.
@@ -171,6 +172,26 @@ next run. Our list is the alert that tells IT to do so, and enforces it where IT
    empty at serial 1, the GitHub Pages address.
 4. **Fetching and the policy values.**
 5. **Later:** two-of-three signing, and the catalog's "known publisher" binding (Phase 2).
+
+## As built (steps 1 and 2)
+
+- **Formats.** `devstribution-core::revocation`: `revoked.json` and `list-key.json` as above, each
+  signed with minisign under a trusted comment naming what it is (`devstribution
+  revocation-list`, `devstribution list-key`), so a signature over one kind of file is refused
+  for another. A key is named by the SHA-256 of the whole public key. A `.dskey` statement holds
+  the statement's exact JSON and its signatures (`devstribution key-withdrawal`, or for a
+  rotation `devstribution key-rotation` by the old key and `... new-key` by the new one).
+- **Where it lives.** The newest accepted list in `state\revocations\`, statements in
+  `state\statements\`. A list next to the launcher (`revocations\` beside the exe) is used
+  while its serial is higher. The root keys are `ROOT_KEYS` in
+  `devstribution-host::revocations`: empty until step 3.
+- **A withdrawal's new key** is only shown: a thief can sign a withdrawal too. Trust moves only
+  with a rotation, signed by both keys, and a rotation stops counting once either key is revoked
+  (a thief's rotation does not outlive the owner's withdrawal).
+- **Free mode before a run** asks once per app and keeps the answer (`revocation_acks` in
+  `state.json`); a `malicious` entry installs only with "Install anyway". Managed mode refuses both
+  at install and before runs, as one of the policy's reasons. The policy values (`RevocationList`
+  and the others) are step 4.
 
 ## Open questions
 

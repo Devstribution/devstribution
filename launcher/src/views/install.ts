@@ -161,7 +161,7 @@ export async function installFlow(ctx: Ctx, path?: string) {
   const verb = p.action === "update" ? "Update" : p.action === "reinstall" ? "Reinstall" : "Install";
   const newPublisher = p.trust === "new_publisher";
   const internet = p.origin && p.origin.zone_id >= 3;
-  const danger = p.scan.findings.some((f) => f.severity === "danger");
+  const danger = p.scan.findings.some((f) => f.severity === "danger") || !!p.revoked;
   const asksMore = p.changes ? widened(p.changes) : false;
   if (p.blocked) return blockedScreen(ctx, p, modal, cancel);
 
@@ -172,7 +172,14 @@ export async function installFlow(ctx: Ctx, path?: string) {
         h("div", { class: "muted" }, `from “${p.namespace}” · version ${p.version} · ${KIND_LABEL[p.kind] ?? p.kind}`))),
     h("div", { class: "modal-body" },
       p.description ? h("div", { class: "soft-text center" }, p.description) : null,
-      danger
+      p.revoked
+        ? h("div", { class: "banner red", role: "alert" }, h("div", { class: "bi" }, icon(ShieldX, 18)),
+            h("div", { class: "grow" }, h("strong", null, "Reported as harmful"),
+              h("div", null, p.revoked.message.replace(/`([^`]+)`/g, "“$1”")),
+              p.revoked.evidence.length ? h("div", { class: "mono detail wrap-anywhere" }, p.revoked.evidence.join("\n")) : null,
+              h("div", null, "Install only if you know the report is wrong.")))
+        : null,
+      danger && !p.revoked
         ? h("div", { class: "banner red" }, h("div", { class: "bi" }, icon(ShieldX, 18)),
             h("div", null, h("strong", null, "The code does things malware does"),
               "See “What the code does” below. Install only if the publisher can explain each one."))
@@ -185,6 +192,11 @@ export async function installFlow(ctx: Ctx, path?: string) {
         ? h("div", { class: "banner amber" }, h("div", { class: "bi" }, icon(ShieldAlert, 18)),
             h("div", null, h("strong", null, `“${p.namespace}” isn’t approved by your organisation`),
               "Your IT department is only trying out its policy, so you can still install it. Key ", h("span", { class: "mono" }, p.key_id), "."))
+        : p.trust === "rotated"
+        ? h("div", { class: "banner green" }, h("div", { class: "bi" }, icon(ShieldCheck, 18)),
+            h("div", null, h("strong", null, "Same publisher, new key"),
+              `“${p.namespace}” moved to a new key, and the key of the apps you already have signed the hand-over. New key `,
+              h("span", { class: "mono" }, p.key_id), "."))
         : newPublisher
         ? h("div", { class: "banner amber" }, h("div", { class: "bi" }, icon(ShieldAlert, 18)),
             h("div", null, h("strong", null, `New publisher: “${p.namespace}”`),
@@ -197,7 +209,7 @@ export async function installFlow(ctx: Ctx, path?: string) {
         ? h("div", { class: "banner blue" }, h("div", { class: "bi" }, icon(Download, 18)),
             h("div", { class: "grow wrap-anywhere" }, h("strong", null, "Downloaded from the internet"), p.origin?.host_url ?? "Unknown address"))
         : null,
-      p.warnings.filter((w) => !w.startsWith("First app") && !w.startsWith("This file was downloaded")).map((w) =>
+      p.warnings.filter((w) => !w.startsWith("First app") && !w.startsWith("This file was downloaded") && !w.includes("moved to a new key")).map((w) =>
         h("div", { class: "banner amber" }, h("div", { class: "bi" }, icon(ShieldAlert, 18)), h("div", null, w))),
       asksMore
         ? h("div", { class: "banner amber" }, h("div", { class: "bi" }, icon(ShieldAlert, 18)),

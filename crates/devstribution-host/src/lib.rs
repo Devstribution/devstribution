@@ -6,6 +6,7 @@ pub mod guard;
 pub mod journal;
 pub mod paths;
 pub mod policy;
+pub mod revocations;
 pub mod run;
 pub mod runner;
 pub mod secrets;

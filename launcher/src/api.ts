@@ -35,7 +35,17 @@ export interface Origin {
 
 /** Free mode: `first_use` (key pinned before) or `new_publisher`. Managed mode: whether the
  * organisation's policy approves the author and key. */
-export type Trust = "first_use" | "new_publisher" | "approved" | "not_approved";
+/** `rotated`: signed with a new key the publisher's pinned key handed over to. */
+export type Trust = "first_use" | "new_publisher" | "rotated" | "approved" | "not_approved";
+
+/** Why a key or a package should no longer be trusted (docs/revocation.md). */
+export interface Revoked {
+  /** `withdrawn`: its owner says the key is no longer safe; `malicious`: the list says what it signed did harm. */
+  status: "withdrawn" | "malicious";
+  id: string;
+  message: string;
+  evidence: string[];
+}
 
 export interface AppView {
   id: string;
@@ -57,6 +67,10 @@ export interface AppView {
   secrets: { name: string; set: boolean }[];
   /** Set when the runtime guard stopped a run: the app does not run until the user decides. */
   quarantine?: Quarantine | null;
+  /** Set when its key, or this version, was revoked. */
+  revoked?: Revoked | null;
+  /** The user saw why, and runs it anyway (free mode). */
+  revocation_acknowledged: boolean;
   /** Guard rules the user allowed for this app after a stop. */
   guard_allow: string[];
   /** False when the organisation keeps "Allow and run again" for IT. */
@@ -243,7 +257,27 @@ export interface PendingInstall {
   changes?: AppDiff | null;
   /** Set when the organisation's policy refuses the package: it cannot be installed. */
   blocked?: { reasons: string[]; contact?: string | null; author_not_approved: boolean } | null;
+  /** Reported as harmful by the revocation list: installing takes an explicit "anyway". */
+  revoked?: Revoked | null;
 }
+
+/** What this launcher knows of revoked keys. */
+export interface RevocationStatus {
+  serial?: number | null;
+  issued?: string | null;
+  expires?: string | null;
+  expired: boolean;
+  source?: "bundled" | "imported" | null;
+  entries: number;
+  /** Publishers' own withdrawals and rotations. */
+  statements: number;
+  /** False until this version ships the root keys lists are checked with. */
+  can_check_lists: boolean;
+}
+
+export type Imported =
+  | { kind: "list"; serial: number; entries: number }
+  | { kind: "statement"; statement: "withdrawal" | "rotation"; namespace: string; key_id: string };
 
 export interface StepEvent {
   key: string;
@@ -276,6 +310,7 @@ export interface Settings {
   publishers: { namespace: string; key_id: string; pinned_at: number; source: string }[];
   /** False when IT updates devstribution itself. */
   updates: boolean;
+  revocations: RevocationStatus;
 }
 
 /** A newer devstribution, from the latest release on GitHub. */
@@ -305,6 +340,10 @@ export interface Api {
   repair(id: string): Promise<void>;
   /** Ends a quarantine; `allow` lets the rule that stopped the app pass from now on. */
   releaseQuarantine(id: string, allow: boolean): Promise<AppView>;
+  /** The user saw why an installed app was revoked and runs it anyway (free mode). */
+  acknowledgeRevocation(id: string): Promise<AppView>;
+  /** Imports a revocation list or a key statement the user picks; null when none was picked. */
+  importRevocations(): Promise<Imported | null>;
   startRun(id: string, inputs: Record<string, unknown>): Promise<RunRecord>;
   cancelRun(runId: string): Promise<void>;
   listRuns(appId?: string, limit?: number): Promise<RunRecord[]>;
@@ -382,6 +421,8 @@ async function tauriApi(): Promise<Api> {
     uninstall: (id) => invoke("uninstall_app", { id }),
     repair: (id) => invoke("repair_app", { id }),
     releaseQuarantine: (id, allow) => invoke("release_quarantine", { id, allow }),
+    acknowledgeRevocation: (id) => invoke("acknowledge_revocation", { id }),
+    importRevocations: () => invoke("import_revocations"),
     startRun: (id, inputs) => invoke("start_run", { id, inputs }),
     cancelRun: (runId) => invoke("cancel_run", { runId }),
     listRuns: (appId, limit) => invoke("list_runs", { appId: appId ?? null, limit: limit ?? null }),

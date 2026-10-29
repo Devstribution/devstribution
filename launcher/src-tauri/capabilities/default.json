@@ -35,6 +35,8 @@
     "allow-take-pending-files",
     "allow-save-trust-request",
     "allow-check-update",
-    "allow-install-update"
+    "allow-install-update",
+    "allow-acknowledge-revocation",
+    "allow-import-revocations"
   ]
 }

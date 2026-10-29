@@ -6,6 +6,7 @@ mod diff;
 mod env;
 mod init;
 mod keys;
+mod revoke;
 mod scan;
 mod trust;
 
@@ -109,6 +110,17 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Statements about your own key: withdraw it (lost, stolen, retired) or hand your
+    /// namespace over to a new one
+    Keys {
+        #[command(subcommand)]
+        command: KeysCommand,
+    },
+    /// What this computer's launcher knows of revoked keys: import a list or a key statement
+    Revocations {
+        #[command(subcommand)]
+        command: RevocationsCommand,
+    },
     /// Make or read the `.trust` files IT approves authors with (managed mode)
     Trust {
         #[command(subcommand)]
@@ -121,6 +133,54 @@ enum Command {
         #[arg(long)]
         key: Option<PathBuf>,
     },
+}
+
+#[derive(Subcommand)]
+enum KeysCommand {
+    /// Write a statement, signed with the key, that it is no longer safe: launchers that have
+    /// it refuse everything signed with the key
+    Withdraw {
+        /// Your namespace (the part before `/` in app ids)
+        #[arg(long)]
+        namespace: String,
+        /// The secret key to withdraw (default: the key created by `keygen` for the namespace)
+        #[arg(long)]
+        key: Option<PathBuf>,
+        /// `lost`, `stolen` or `retired`
+        #[arg(long)]
+        reason: devstribution_core::revocation::Reason,
+        /// Your new public key (.pub), shown to users; it moves no trust by itself
+        #[arg(long)]
+        new_key: Option<PathBuf>,
+        /// Output file (default: `<namespace>-withdraw-<key>.dskey`)
+        #[arg(long, short)]
+        out: Option<PathBuf>,
+    },
+    /// Write a statement, signed with both keys, that your namespace moves to a new key:
+    /// launchers that pinned the old key accept the new one
+    Rotate {
+        /// Your namespace (the part before `/` in app ids)
+        #[arg(long)]
+        namespace: String,
+        /// The old secret key (default: the key created by `keygen` for the namespace)
+        #[arg(long)]
+        old_key: Option<PathBuf>,
+        /// The new secret key
+        #[arg(long)]
+        new_key: PathBuf,
+        /// Output file (default: `<namespace>-rotate-<new key>.dskey`)
+        #[arg(long, short)]
+        out: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum RevocationsCommand {
+    /// Add a revocation list (`revoked.json`, with `list-key.json` and both signatures beside
+    /// it) or a publisher's key statement (`.dskey`)
+    Import { file: PathBuf },
+    /// Which list is in use, and how many key statements
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -210,6 +270,31 @@ fn main() -> ExitCode {
         Command::Trust {
             command: TrustCommand::Show { file },
         } => trust::show(&file).map(|_| 0),
+        Command::Keys {
+            command:
+                KeysCommand::Withdraw {
+                    namespace,
+                    key,
+                    reason,
+                    new_key,
+                    out,
+                },
+        } => revoke::withdraw(&namespace, key, reason, new_key, out).map(|_| 0),
+        Command::Keys {
+            command:
+                KeysCommand::Rotate {
+                    namespace,
+                    old_key,
+                    new_key,
+                    out,
+                },
+        } => revoke::rotate(&namespace, old_key, &new_key, out).map(|_| 0),
+        Command::Revocations {
+            command: RevocationsCommand::Import { file },
+        } => revoke::import(&file).map(|_| 0),
+        Command::Revocations {
+            command: RevocationsCommand::Status,
+        } => revoke::status().map(|_| 0),
     };
     match result {
         Ok(code) => ExitCode::from(code),

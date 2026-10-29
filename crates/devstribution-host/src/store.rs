@@ -15,8 +15,9 @@ use devstribution_core::manifest::{AppId, Kind, Manifest, Version};
 use devstribution_core::package::{
     self, Limits, PYPROJECT, SignatureStatus, VerifiedPackage, VerifyOptions,
 };
+use devstribution_core::revocation::ListFiles;
 use devstribution_core::scan::{self, ScanReport};
-use devstribution_core::signing::{parse_public_key, public_key_base64, public_key_id};
+use devstribution_core::signing::{PublicKey, parse_public_key, public_key_base64, public_key_id};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
@@ -24,6 +25,7 @@ use crate::guard::GuardHit;
 use crate::journal::{self, Journal};
 use crate::paths::Paths;
 use crate::policy::{self, Policy, ScanDanger};
+use crate::revocations::{self, Imported, Known, RevocationStatus, Revoked};
 use crate::run::{self, RunResult, RunSpec, RunStatus};
 use crate::time::{date, now_secs, random_hex, stamp};
 use crate::uv::{self, LockMode};
@@ -67,6 +69,10 @@ pub struct AppRecord {
     /// approved authors cannot be read (a laptop away from the network share).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub policy_approved: bool,
+    /// Revocations (list entries, owners' statements) the user was shown for this app and ran
+    /// it anyway, by id: free mode asks once per app.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub revocation_acks: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -94,6 +100,8 @@ pub struct InstalledApp {
     pub manifest: Manifest,
     pub icon: Option<String>,
     pub trust: Trust,
+    /// Set when the key that signed it, or this version, was revoked.
+    pub revoked: Option<Revoked>,
     #[serde(skip)]
     pub app_dir: PathBuf,
     #[serde(skip)]
@@ -108,6 +116,8 @@ pub enum Trust {
     FirstUse,
     /// First time this publisher's key is seen.
     NewPublisher,
+    /// Signed with a new key the pinned key handed over to (an owner's rotation statement).
+    Rotated,
     /// Managed mode: the policy approves this author and key.
     Approved,
     /// Managed mode: the policy does not approve this author and key.
@@ -119,6 +129,7 @@ impl Trust {
         match self {
             Trust::FirstUse => "first_use",
             Trust::NewPublisher => "new_publisher",
+            Trust::Rotated => "rotated",
             Trust::Approved => "approved",
             Trust::NotApproved => "not_approved",
         }
@@ -175,6 +186,10 @@ pub struct PendingInstall {
     /// Set when the organisation's policy refuses the package: it cannot be installed.
     #[serde(default)]
     pub blocked: Option<Blocked>,
+    /// Set when the revocation list says what this key signed did harm: installing it takes
+    /// the user's explicit "anyway" (a withdrawn key is refused outright).
+    #[serde(default)]
+    pub revoked: Option<Revoked>,
     // Kept for the install step, not shown.
     pub publisher_key: String,
     pub content_hash: String,
@@ -328,6 +343,10 @@ pub struct Store {
     /// Raised by [`Store::cancel_environment`]: an environment being prepared stops when this
     /// is no longer the value it started with, so a Cancel never reaches a later install.
     env_cancel: AtomicU64,
+    /// The root keys revocation lists are checked against, and the list that came with the
+    /// launcher (docs/revocation.md).
+    revocation_roots: Vec<PublicKey>,
+    bundled_revocations: Option<ListFiles>,
 }
 
 /// This launcher's version, compared with the policy's minimum.
@@ -362,6 +381,8 @@ impl Store {
             unsaved_stops: Mutex::new(BTreeMap::new()),
             staged: Mutex::new(BTreeMap::new()),
             env_cancel: AtomicU64::new(0),
+            revocation_roots: revocations::root_keys(),
+            bundled_revocations: None,
         };
         store.close_interrupted_runs();
         Ok(store)
@@ -390,6 +411,66 @@ impl Store {
     /// before rolling it out.
     pub fn set_policy(&mut self, policy: Option<Policy>) {
         self.policy = policy;
+    }
+
+    // -- revocation --------------------------------------------------------------------------
+
+    /// The list that came with the launcher, used while it is newer than any imported one.
+    pub fn set_bundled_revocations(&mut self, files: Option<ListFiles>) {
+        self.bundled_revocations = files;
+    }
+
+    /// Replaces the built-in root keys: for tests.
+    pub fn set_revocation_roots(&mut self, roots: Vec<PublicKey>) {
+        self.revocation_roots = roots;
+    }
+
+    fn known(&self) -> Known {
+        Known::load(
+            &self.paths,
+            &self.revocation_roots,
+            self.bundled_revocations.as_ref(),
+            &date(now_secs()),
+        )
+    }
+
+    pub fn revocation_status(&self) -> RevocationStatus {
+        self.known()
+            .status(!self.revocation_roots.is_empty(), &date(now_secs()))
+    }
+
+    /// Adds a revocation list or an owner's key statement (see [`revocations::import`]).
+    pub fn import_revocations(&self, file: &Path) -> Result<Imported> {
+        revocations::import(
+            &self.paths,
+            &self.revocation_roots,
+            self.bundled_revocations.as_ref(),
+            file,
+            &date(now_secs()),
+        )
+    }
+
+    /// The user saw why an installed app was revoked and runs it anyway (free mode only).
+    pub fn acknowledge_revocation(&self, id: &str) -> Result<InstalledApp> {
+        if let Some(p) = &self.policy {
+            bail!(
+                "your organisation decides about revoked apps. {}",
+                p.ask_whom()
+            );
+        }
+        let app = self.app(id)?;
+        let Some(revoked) = app.revoked else {
+            return Ok(app);
+        };
+        self.update_state(|state| {
+            if let Some(r) = state.apps.get_mut(id)
+                && !r.revocation_acks.contains(&revoked.id)
+            {
+                r.revocation_acks.push(revoked.id.clone());
+            }
+            Ok(())
+        })?;
+        self.app(id)
     }
 
     /// Why the policy refuses `app` signed by `key`; empty when it does not (or in free mode).
@@ -575,10 +656,11 @@ impl Store {
 
     pub fn installed(&self) -> Result<Vec<InstalledApp>> {
         let state = self.load()?;
+        let known = self.known();
         let mut apps: Vec<InstalledApp> = state
             .apps
             .values()
-            .filter_map(|r| self.describe(r, &state).ok())
+            .filter_map(|r| self.describe(r, &state, &known).ok())
             .collect();
         apps.sort_by(|a, b| {
             a.manifest
@@ -595,10 +677,10 @@ impl Store {
             .apps
             .get(id)
             .ok_or_else(|| anyhow!("`{id}` is not installed"))?;
-        self.describe(record, &state)
+        self.describe(record, &state, &self.known())
     }
 
-    fn describe(&self, record: &AppRecord, state: &State) -> Result<InstalledApp> {
+    fn describe(&self, record: &AppRecord, state: &State, known: &Known) -> Result<InstalledApp> {
         let id: AppId = record.id.parse().map_err(|e: String| anyhow!(e))?;
         let app_dir = self.paths.app_dir(&id, &record.content_hash);
         let manifest = Manifest::parse(&fs::read_to_string(app_dir.join(PYPROJECT))?)?;
@@ -619,7 +701,12 @@ impl Store {
         if let Some(fp) = pin.and_then(|p| fingerprint_of(&p.key)) {
             record.key_id = fp;
         }
+        let revoked = known.verdict(
+            &self.publisher_key(&record, &app_dir),
+            &record.content_sha256,
+        );
         Ok(InstalledApp {
+            revoked,
             icon: icon_data_url(&app_dir, &manifest),
             env_dir: self.paths.env_dir(&id, &record.content_hash),
             record,
@@ -690,9 +777,11 @@ impl Store {
                 "this app needs downloadable resources, which this version of the launcher does not support yet"
             );
         }
+        let known = self.known();
         let (action, trust) = admit(
             state,
             self.policy.as_ref(),
+            &known,
             &m.id,
             &m.version,
             &verified.publisher_key,
@@ -707,6 +796,13 @@ impl Store {
         };
         let trust = trust.as_str();
         let mut warnings = Vec::new();
+        if trust == "rotated" {
+            warnings.push(format!(
+                "`{}` moved to a new key: the key of the apps you installed from them before \
+                 signed a statement handing over to this one ({}).",
+                m.id.namespace, key_id
+            ));
+        }
         if trust == "new_publisher" {
             warnings.push(format!(
                 "First app from `{}` on this computer. Its name is not verified: install it only if \
@@ -736,8 +832,19 @@ impl Store {
                 let new = AppFolder::new(&stage.join("app"), verified.files.paths());
                 diff::diff(&old, &new).ok()
             });
-        let reasons =
+        let revoked = known.verdict(&verified.publisher_key, &verified.content_sha256);
+        let mut reasons =
             self.policy_reasons(&m.id.namespace, &verified.publisher_key, Some(&scan), false);
+        match &revoked {
+            Some(r) if self.policy.is_some() => reasons.push(revocation_reason(r)),
+            // The owner asked: nothing signed with the key installs, whatever the user says.
+            Some(r) if !r.is_malicious() => bail!(
+                "{} Packages signed with it are refused: ask the publisher for this app signed \
+                 with their new key.",
+                r.message
+            ),
+            _ => {}
+        }
         let blocked = self
             .policy_verdict(
                 "install",
@@ -781,6 +888,7 @@ impl Store {
             scan,
             changes,
             blocked,
+            revoked,
             publisher_key: verified.publisher_key.clone(),
             content_hash: verified.content_hash.clone(),
             content_sha256: verified.content_sha256.clone(),
@@ -845,9 +953,11 @@ impl Store {
         if pending.blocked.is_some() {
             bail!("your organisation's policy does not allow this app");
         }
+        let known = self.known();
         admit(
             &self.load()?,
             self.policy.as_ref(),
+            &known,
             &id,
             &version,
             &pending.publisher_key,
@@ -855,15 +965,30 @@ impl Store {
             &pending.content_hash,
         )
         .context("this install is no longer valid")?;
+        // A list or statement imported while the confirmation screen was open counts too.
+        let revoked = known.verdict(&pending.publisher_key, &pending.content_sha256);
+        if self.policy.is_none()
+            && let Some(r) = &revoked
+        {
+            if !r.is_malicious() {
+                bail!("{} Packages signed with it are refused.", r.message);
+            }
+            if pending.revoked.as_ref().map(|p| &p.id) != Some(&r.id) {
+                bail!(
+                    "this app was reported after the confirmation screen: open the package again"
+                );
+            }
+        }
         if let Some(p) = &self.policy
             && !p.dry_run
         {
-            let reasons = self.policy_reasons(
+            let mut reasons = self.policy_reasons(
                 &id.namespace,
                 &pending.publisher_key,
                 Some(&pending.scan),
                 false,
             );
+            reasons.extend(revoked.as_ref().map(revocation_reason));
             if !reasons.is_empty() {
                 bail!(
                     "your organisation's policy does not allow this app: {}",
@@ -918,9 +1043,10 @@ impl Store {
 
         let replaced = self
             .update_state(|state| {
-                admit(
+                let (_, trust) = admit(
                     state,
                     self.policy.as_ref(),
+                    &known,
                     &id,
                     &version,
                     &pending.publisher_key,
@@ -932,6 +1058,14 @@ impl Store {
                 let last_inputs = previous.map(|r| r.last_inputs.clone()).unwrap_or_default();
                 let quarantine = previous.and_then(|r| r.quarantine.clone());
                 let guard_allow = previous.map(|r| r.guard_allow.clone()).unwrap_or_default();
+                let mut revocation_acks = previous
+                    .map(|r| r.revocation_acks.clone())
+                    .unwrap_or_default();
+                if let Some(r) = &pending.revoked
+                    && !revocation_acks.contains(&r.id)
+                {
+                    revocation_acks.push(r.id.clone());
+                }
                 let pin = Pin {
                     key: pending.publisher_key.clone(),
                     key_id: pending.key_id.clone(),
@@ -954,7 +1088,11 @@ impl Store {
                         state.pins.insert(id.namespace.clone(), pin);
                     }
                 } else {
-                    state.pins.entry(id.namespace.clone()).or_insert(pin);
+                    if trust == Trust::Rotated {
+                        state.pins.insert(id.namespace.clone(), pin);
+                    } else {
+                        state.pins.entry(id.namespace.clone()).or_insert(pin);
+                    }
                 }
                 let replaced = state.apps.insert(
                     pending.id.clone(),
@@ -971,6 +1109,7 @@ impl Store {
                         guard_allow,
                         publisher_key: pending.publisher_key.clone(),
                         policy_approved,
+                        revocation_acks,
                     },
                 );
                 let newer = state
@@ -1094,12 +1233,24 @@ impl Store {
         let _ = self.save_unsaved_stops();
         let app = self.app(id)?;
         let key = self.publisher_key(&app.record, &app.app_dir);
-        let reasons = self.policy_reasons(
+        let mut reasons = self.policy_reasons(
             &app.manifest.id.namespace,
             &key,
             None,
             app.record.policy_approved,
         );
+        if let Some(r) = &app.revoked {
+            if self.policy.is_some() {
+                reasons.push(revocation_reason(r));
+            } else if !app.record.revocation_acks.contains(&r.id) {
+                // Free mode: the user decides, once, having seen why.
+                bail!(
+                    "{} was revoked: {} Look at it in the app's panel before running it again.",
+                    app.manifest.title,
+                    r.message
+                );
+            }
+        }
         if let Some(reasons) = self.policy_verdict(
             "run",
             id,
@@ -1782,9 +1933,11 @@ fn build_env(
 ///
 /// In managed mode the policy, not the pins, says which key a namespace uses: the trust is
 /// `Approved` or `NotApproved` (what the policy then does is decided by the caller).
+#[allow(clippy::too_many_arguments)]
 fn admit(
     state: &State,
     policy: Option<&Policy>,
+    known: &Known,
     id: &AppId,
     version: &Version,
     publisher_key: &str,
@@ -1794,7 +1947,7 @@ fn admit(
     let trust = match (policy, state.pins.get(&id.namespace)) {
         (Some(p), _) if p.approves(&id.namespace, publisher_key) => Trust::Approved,
         (Some(_), _) => Trust::NotApproved,
-        (None, pin) => trust_on_first_use(pin, id, publisher_key)?,
+        (None, pin) => trust_on_first_use(pin, id, publisher_key, known)?,
     };
     let key = id.to_string();
     let action = match state.apps.get(&key) {
@@ -1826,9 +1979,16 @@ fn admit(
 }
 
 /// Free mode: the publisher's key must be the one pinned for the namespace, if any.
-fn trust_on_first_use(pin: Option<&Pin>, id: &AppId, publisher_key: &str) -> Result<Trust> {
+/// An owner's rotation statement hands the pin on to the new key.
+fn trust_on_first_use(
+    pin: Option<&Pin>,
+    id: &AppId,
+    publisher_key: &str,
+    known: &Known,
+) -> Result<Trust> {
     match pin {
         Some(pin) if same_key(&pin.key, publisher_key) => Ok(Trust::FirstUse),
+        Some(pin) if known.rotation(&pin.key, publisher_key).is_some() => Ok(Trust::Rotated),
         Some(pin) => bail!(
             "this package is signed with key {}, but the apps from `{}` you installed before were \
              signed with key {}: it may not come from the same publisher, so it was refused",
@@ -1838,6 +1998,17 @@ fn trust_on_first_use(pin: Option<&Pin>, id: &AppId, publisher_key: &str) -> Res
         ),
         None => Ok(Trust::NewPublisher),
     }
+}
+
+/// Managed mode refuses whatever is revoked, as one of the policy's reasons.
+fn revocation_reason(revoked: &Revoked) -> String {
+    let m = revoked.message.trim_end_matches('.');
+    let mut chars = m.chars();
+    let m = chars
+        .next()
+        .map(|c| c.to_lowercase().collect::<String>() + chars.as_str())
+        .unwrap_or_default();
+    format!("it was revoked: {m}")
 }
 
 fn same_key(a: &str, b: &str) -> bool {
