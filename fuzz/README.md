@@ -18,9 +18,11 @@ writes (`state.json`, the policy).
 
 ## Running
 
-Needs Linux or macOS with a nightly toolchain (`rustup toolchain install nightly`) and
-`cargo install cargo-fuzz`. On Windows, linking needs Visual Studio's AddressSanitizer files;
-WSL is simpler.
+Needs a nightly toolchain (`rustup toolchain install nightly`) and `cargo install cargo-fuzz`.
+On Windows, run from a Visual Studio developer prompt whose installation has the C++ AddressSanitizer
+component: linking fails without it, also with `-s none`. With several Visual Studio installations
+Rust may otherwise pick one that lacks it. Extraction is worth running there too: names like
+`..\x`, `C:\x` or `CON` only mean something on Windows.
 
 ```bash
 fuzz/run.sh 60

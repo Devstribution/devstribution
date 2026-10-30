@@ -2,7 +2,6 @@
 # Runs every fuzz target for a while: fuzz/run.sh [seconds per target, default 60] [targets...]
 # Starts each from real files (the examples and the frozen format-1 package), plus what earlier
 # runs found. A crash stops the run, with the input in fuzz/artifacts/<target>/.
-# On Windows without Visual Studio's AddressSanitizer files: FUZZ_SANITIZER=none fuzz/run.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -25,6 +24,6 @@ done
 for target in "${targets[@]}"; do
     echo "== $target (${seconds}s)"
     # One input taking 10 seconds is a hang; 4 GB is far above what the small limits allow.
-    cargo +nightly fuzz run -s "${FUZZ_SANITIZER:-address}" "$target" -- \
+    cargo +nightly fuzz run "$target" -- \
         -max_total_time="$seconds" -timeout=10 -rss_limit_mb=4096 -max_len=65536 -len_control=0 -print_final_stats=1
 done

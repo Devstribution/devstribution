@@ -124,7 +124,8 @@ What has to hold before our signature goes on it, roughly in this order.
    ([`fuzz/README.md`](../fuzz/README.md)), also signed packages with hostile contents, file lists,
    key statements and revocation lists; nightly in CI (`fuzz.yml`), on Linux. The first runs, 5 to
    7 minutes per target, found nothing; with the path check taken out on purpose, the extraction
-   target found the escape within a minute.
+   target found the escape within a minute (Linux). The two extraction targets also ran by hand on
+   Windows and found nothing; CI does not fuzz on Windows.
 8. ☐ **False positives measured**: the scan over a corpus of ordinary open-source scripts, so a
    warning still means something (section 5).
 9. ☑ **An "update available" path** for apps: a newer `.dsapp` already updates in place with the
