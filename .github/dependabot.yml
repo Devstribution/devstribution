@@ -13,6 +13,10 @@ updates:
     groups:
       tauri:
         patterns: ["tauri*"]
+  - package-ecosystem: cargo
+    directory: /fuzz
+    schedule:
+      interval: weekly
   - package-ecosystem: npm
     directory: /launcher
     schedule:

@@ -35,7 +35,8 @@ python3 -m unittest discover -s runner/tests
 
 For a launcher change, also `npm run build` and `npm run lint` in `launcher/` (type check, then
 Biome), and `cargo test -p devstribution-launcher`. A dependency change: `cargo deny check`
-(advisories, licences, sources; see `deny.toml`).
+(advisories, licences, sources; see `deny.toml`). A change to how packages, manifests, lockfiles
+or the scan read their input: a run of the fuzz targets ([`fuzz/README.md`](fuzz/README.md)).
 
 ## What a good change looks like
 

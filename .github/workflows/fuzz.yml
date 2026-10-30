@@ -1,0 +1,52 @@
+name: Fuzz
+
+# Separate from CI: a new input can fail on any day, without a change to blame, and the release
+# gate looks at CI. See fuzz/README.md.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Seconds per target
+        default: "300"
+  pull_request:
+    paths:
+      - crates/devstribution-core/**
+      - fuzz/**
+      - .github/workflows/fuzz.yml
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: fuzz
+      - name: cargo-fuzz
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
+      # What earlier runs found is kept between them, so each continues where the last stopped.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-${{ github.run_id }}
+          restore-keys: fuzz-corpus-
+      - name: Fuzz
+        env:
+          SECONDS_PER_TARGET: ${{ inputs.seconds || (github.event_name == 'pull_request' && '60' || '300') }}
+        run: bash fuzz/run.sh "$SECONDS_PER_TARGET"
+      - name: Keep the input that failed
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts
+          retention-days: 30

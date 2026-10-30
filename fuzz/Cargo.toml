@@ -1,0 +1,66 @@
+# Not part of the workspace: it needs a nightly toolchain and libFuzzer. See fuzz/README.md.
+[package]
+name = "devstribution-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+arbitrary = { version = "1", features = ["derive"] }
+devstribution-core = { path = "../crates/devstribution-core" }
+libfuzzer-sys = "0.4"
+serde_json = "1"
+tempfile = "3"
+walkdir = "2"
+zip = { version = "9", default-features = false, features = ["deflate"] }
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "package"
+path = "fuzz_targets/package.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "signed_package"
+path = "fuzz_targets/signed_package.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "manifest"
+path = "fuzz_targets/manifest.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lockfile"
+path = "fuzz_targets/lockfile.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "scan"
+path = "fuzz_targets/scan.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "documents"
+path = "fuzz_targets/documents.rs"
+test = false
+doc = false
+bench = false
