@@ -1,5 +1,12 @@
 //! `devstribution`: developer tools for devstribution apps.
 
+/// `println!` for text that can come from a package or a `.trust` file.
+macro_rules! say {
+    ($($arg:tt)*) => {
+        println!("{}", crate::clean(&format!($($arg)*)))
+    };
+}
+
 mod checks;
 mod dev;
 mod diff;
@@ -14,6 +21,24 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+
+/// Without control characters and text-direction marks: terminal escape codes in a package could
+/// rewrite what a reviewer sees.
+pub(crate) fn clean(text: &str) -> String {
+    text.chars()
+        .filter(|c| {
+            matches!(c, '\n' | '\t')
+                || !(c.is_control()
+                    || matches!(c, '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+#[test]
+fn package_text_cannot_steer_the_terminal() {
+    assert_eq!(clean("a\u{1b}[2Jb\u{202e}c\n\td\r"), "a[2Jbc\n\td");
+}
 
 #[derive(Parser)]
 #[command(
@@ -299,7 +324,7 @@ fn main() -> ExitCode {
     match result {
         Ok(code) => ExitCode::from(code),
         Err(err) => {
-            eprintln!("error: {err:#}");
+            eprintln!("error: {}", clean(&format!("{err:#}")));
             ExitCode::from(read_error_code)
         }
     }

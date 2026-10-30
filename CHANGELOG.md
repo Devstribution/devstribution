@@ -17,6 +17,30 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
   count, and "pip install" in a message is only a warning when the app can start programs.
   `[..., "-m", "pip", "install", ...]`, which it missed, now counts.
 
+### Security
+
+From the security review of 30 October ([`docs/security.md`](docs/security.md)).
+
+- Managed mode: the check that users cannot change the trust folder never worked for folders, and
+  it asked for several rights at once, so a user holding only one passed. A folder or file users can
+  change in any way (add, replace, delete, change permissions) now approves no one. **After
+  updating, check Settings on a managed PC**: a trust folder with loose permissions now shows a
+  problem, and its authors are no longer approved.
+- Managed mode: an approved app keeps running only while the approved authors cannot be reached. A
+  broken `.trust` file or policy file no longer keeps a removed author's apps running.
+- The runtime guard reads a path as Windows does: 8.3 short names, NTFS streams and `file:` database
+  names no longer get past its rules for saved passwords.
+- A secret's value is taken out of a run's log, result and messages when the app prints or returns it.
+- Uninstalling an app removes all its secrets, also ones a later version stopped declaring.
+- What an app was allowed past the guard no longer carries over to an update signed with a new key.
+- The code scan says so when it cannot read Python (a file that is not UTF-8, a `# coding:` line that
+  can hide code, a very large file, f-strings nested too deep), and flags `.reg`, `.url`, `.inf`,
+  `.xll` and Office files with macros. An update adding a second `exec` to a file that had one now
+  shows as new.
+- A package whose zip index is far too large is refused before the index is read.
+- The CLI strips terminal escape codes from what it prints of packages and `.trust` files.
+- A revocation list goes on applying after its signing key's end date.
+
 ### Added
 
 - Revoked keys. A publisher whose key is lost or stolen can withdraw it

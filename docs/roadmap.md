@@ -97,7 +97,10 @@ What has to hold before our signature goes on it, roughly in this order.
    WDAC, a proxy with TLS inspection, no admin rights), uv behind the company proxy included. If
    uv or the runner fails there, it comes before everything else (section 3).
 2. ☐ **Managed mode checked on Windows**: the registry read, the permission check on a local
-   folder and on a network share, and the screens (section 10).
+   folder and on a network share, and the screens (section 10). The B10 review found the folder
+   check never worked and fixed it, so this is the first real test of it: a trust folder users can
+   change must show a problem and approve no one; one only administrators can change must work,
+   including when an administrator owns it and the user does not.
 3. ☐ **The remaining Windows checks**: the data folder move with real old data; no sideways
    scrolling (section 2).
 4. ☐ **Signing in CI**, once SignPath (or Certum) has said yes, then the Windows checks again with
@@ -134,9 +137,15 @@ What has to hold before our signature goes on it, roughly in this order.
    diff (section 6). 29 October: folders the user chooses and one IT sets are checked at start;
    newer versions signed by the app's publisher show on the app, and installing one still goes
    through the install screen and its diff. Still to see: a real network share.
-10. ☐ **Security review again** for what changed since the last one (guard file rules, managed
-    mode, updates), as section 8 asks before each such release. Weaknesses still open from the
-    October scan are tracked privately until fixed, as `SECURITY.md` asks reporters to send them.
+10. ☑ **Security review again** for what changed since the last one (guard file rules, managed
+    mode, updates), as section 8 asks before each such release. 30 October: done, 14 findings and
+    their fixes in [`security.md`](security.md), with the October scan's list for this stage. The
+    three serious ones: managed mode's check that users cannot change the trust folder never worked
+    for folders (every release so far), and an 8.3 short path or a SQLite `file:` name got past the
+    guard's rules for saved keys and browser passwords. Smaller weaknesses still open are tracked
+    privately until fixed, as `SECURITY.md` asks reporters to send them. Worth repeating if these
+    parts change again before signing. Not done locally: the launcher run with the fixes, and
+    fuzzing of the changed scan and zip code (nightly in CI). A release with the fixes → B15.
 11. ☑ **`state.json` survives a crash**: written to disk before the rename, with a backup the
     launcher recovers from. 28 October: `state.json.bak` holds the list from before the latest
     change; a file that cannot be read is moved to `state.json.damaged` and the copy takes its
@@ -158,6 +167,9 @@ What has to hold before our signature goes on it, roughly in this order.
     examples packed, verified and scanned in CI, tests for the checks the launcher's commands make
     themselves ("open result" opens only a run's results, when it may update, which arguments
     are packages), and Biome linting the UI.
+15. ☐ **A release with the B10 fixes**, soon after they merge: they are public, and users stay
+    exposed until they have them. The notes say that v0.1.0 to v0.3.0 are affected, and that a trust
+    folder with loose permissions stops approving its authors after the update.
 
 ## C. After 1.0
 
@@ -440,7 +452,8 @@ The scan read only the package's own Python files. Extend it where attackers act
 
 - ☑ Security review of install and run (extraction, signature checks, process supervision, the
   launcher's IPC surface and CSP, dependencies, CI): done before signing, findings and fixes in
-  [`security.md`](security.md). Repeat before each release that changes these parts → B10.
+  [`security.md`](security.md). Repeated 30 October, 14 findings fixed → B10. Repeat before each
+  release that changes these parts.
 - ☑ **`SECURITY.md`**: how to report a vulnerability (privately, through GitHub), what is in
   scope, and what we answer. ☑ Private vulnerability reporting turned on → A8.
 - ☑ Versioning, changelog, release notes → A2. ☐ `docs/HANDOFF.md` and `status_quo.md` folded into a

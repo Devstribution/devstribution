@@ -87,7 +87,8 @@ A policy that cannot be read is not ignored: the launcher stays in managed mode 
 approve the authors it could not read. Settings shows the problem, and the dot in the sidebar
 turns amber. One exception keeps laptops working away from the office: when the approved
 authors cannot be read at all (for example the share is out of reach), apps that were installed
-under the policy keep running. Nothing new installs until the share is back.
+under the policy keep running. Nothing new installs until the share is back. A file that was read
+and is wrong does not count: it approves no one, and it does not keep a removed author's apps running.
 
 ## Approving an author
 

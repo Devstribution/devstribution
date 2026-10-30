@@ -26,6 +26,45 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(2 * 3600);
 /// Longest line kept from the app's output; the rest of a longer line is dropped.
 const MAX_LINE: usize = 16 * 1024;
 
+/// The values of a run's secrets, taken out of what the launcher keeps or shows of the run: its
+/// log, its result and its messages, where an app that prints a secret would leave it in plain
+/// text. Only the value as given: a secret the app encodes first stays as it was.
+#[derive(Clone)]
+struct Mask(Arc<Vec<String>>);
+
+const MASKED: &str = "[secret]";
+/// Shorter values are not masked: they would blank out ordinary words without protecting much.
+const MIN_MASKED_CHARS: usize = 4;
+
+impl Mask {
+    fn new(secrets: &Map<String, Value>) -> Mask {
+        let mut values: Vec<String> = secrets
+            .values()
+            .filter_map(Value::as_str)
+            .filter(|s| s.chars().count() >= MIN_MASKED_CHARS)
+            .map(String::from)
+            .collect();
+        // Longest first: one secret may contain another.
+        values.sort_by_key(|v| std::cmp::Reverse(v.len()));
+        Mask(Arc::new(values))
+    }
+
+    fn text(&self, text: &str) -> String {
+        self.0
+            .iter()
+            .fold(text.to_string(), |out, v| out.replace(v.as_str(), MASKED))
+    }
+
+    fn value(&self, value: &mut Value) {
+        match value {
+            Value::String(s) => *s = self.text(s),
+            Value::Array(items) => items.iter_mut().for_each(|v| self.value(v)),
+            Value::Object(map) => map.values_mut().for_each(|v| self.value(v)),
+            _ => {}
+        }
+    }
+}
+
 /// Size at which `app.log` stops growing for the run.
 const MAX_LOG_BYTES: u64 = 20 << 20;
 
@@ -441,22 +480,26 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
         });
     }
 
+    let mask = Mask::new(&spec.secrets);
     let stdout = child.stdout.take().expect("piped");
     let stdout_thread = {
-        let (on_event, result_msg, com, report) = (
+        let (on_event, result_msg, com, report, mask) = (
             on_event.clone(),
             result_msg.clone(),
             com_processes.clone(),
             report.clone(),
+            mask.clone(),
         );
         let run_start = platform::filetime(started_at);
         std::thread::spawn(move || {
             for_each_line(stdout, |line| {
                 let Ok(msg) = serde_json::from_str::<Value>(&line) else {
-                    on_event(RunEvent::Output { line });
+                    on_event(RunEvent::Output {
+                        line: mask.text(&line),
+                    });
                     return;
                 };
-                let text = |k: &str| msg[k].as_str().unwrap_or("").to_string();
+                let text = |k: &str| mask.text(msg[k].as_str().unwrap_or(""));
                 match msg["type"].as_str() {
                     Some("progress") => on_event(RunEvent::Progress {
                         value: msg["value"].as_f64(),
@@ -479,7 +522,9 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
                         }
                     }
                     Some("guard") => {
-                        if let Ok(hit) = serde_json::from_value::<GuardHit>(msg) {
+                        if let Ok(mut hit) = serde_json::from_value::<GuardHit>(msg) {
+                            hit.message = mask.text(&hit.message);
+                            hit.detail = mask.text(&hit.detail);
                             report(hit);
                         }
                     }
@@ -493,11 +538,12 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
     let stderr = child.stderr.take().expect("piped");
     let log_path = spec.run_dir.join("app.log");
     let stderr_thread = {
-        let on_event = on_event.clone();
+        let (on_event, mask) = (on_event.clone(), mask.clone());
         std::thread::spawn(move || {
             let mut log = fs::File::create(&log_path).ok();
             let mut written = 0u64;
             for_each_line(stderr, |line| {
+                let line = mask.text(&line);
                 if let Some(f) = log.as_mut() {
                     written += line.len() as u64 + 1;
                     if written > MAX_LOG_BYTES {
@@ -584,9 +630,9 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
                     _ => RunStatus::Error,
                 },
                 outputs: m["outputs"].as_object().cloned().unwrap_or_default(),
-                error: m["error"].as_str().map(String::from),
-                traceback: m["traceback"].as_str().map(String::from),
-                hint: m["hint"].as_str().map(String::from),
+                error: m["error"].as_str().map(|s| mask.text(s)),
+                traceback: m["traceback"].as_str().map(|s| mask.text(s)),
+                hint: m["hint"].as_str().map(|s| mask.text(s)),
                 duration_ms,
                 guard: Vec::new(),
             },
@@ -617,6 +663,7 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
                 guard: Vec::new(),
             },
         };
+        result.outputs.values_mut().for_each(|v| mask.value(v));
         result.guard = std::mem::take(&mut *guard_hits.lock().unwrap());
         if let Some(stop) = result.guard_stop().cloned() {
             result.status = RunStatus::Error;
@@ -1140,6 +1187,29 @@ pub(crate) mod platform {
     }
 
     pub fn terminate_if_same(_pid: u32, _created: Option<u64>) {}
+}
+
+#[cfg(test)]
+mod mask_tests {
+    use super::*;
+
+    #[test]
+    fn secret_values_are_taken_out_of_what_is_kept() {
+        let mut secrets = Map::new();
+        secrets.insert("token".into(), json!("s3cret-value"));
+        secrets.insert("longer".into(), json!("s3cret-value-2"));
+        secrets.insert("short".into(), json!("abc"));
+        let mask = Mask::new(&secrets);
+        assert_eq!(mask.text("key=s3cret-value;"), "key=[secret];");
+        assert_eq!(mask.text("key=s3cret-value-2"), "key=[secret]");
+        assert_eq!(mask.text("abc stays"), "abc stays");
+        let mut result = json!({"a": ["s3cret-value"], "b": {"c": "x s3cret-value"}, "d": 1});
+        mask.value(&mut result);
+        assert_eq!(
+            result,
+            json!({"a": ["[secret]"], "b": {"c": "x [secret]"}, "d": 1})
+        );
+    }
 }
 
 #[cfg(test)]

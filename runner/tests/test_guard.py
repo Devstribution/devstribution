@@ -21,6 +21,36 @@ from test_runner import BOOTSTRAP, RunnerBase  # noqa: E402
 STOPPED = _guard.STOP_EXIT_CODE
 
 
+class PathSpellingTest(unittest.TestCase):
+    """One file has many spellings on Windows: the guard compares them as one."""
+
+    def test_spellings_of_a_path_compare_as_one(self):
+        if os.name != "nt":
+            self.skipTest("Windows paths")
+        plain = _guard._normal(r"C:\Users\x\key.kdbx")
+        for other in (
+            r"C:\Users\x\KEY.KDBX",
+            r"C:\Users\x\key.kdbx::$DATA",
+            r"C:\Users\x\key.kdbx:stream",
+            "C:\\Users\\x\\key.kdbx.",
+            "C:\\Users\\x\\key.kdbx ",
+            "\\\\?\\C:\\Users\\x\\key.kdbx",
+            "\\\\.\\C:\\Users\\x\\key.kdbx",
+        ):
+            self.assertEqual(_guard._normal(other), plain, other)
+        self.assertEqual(_guard._normal("C:\\"), "c:\\")
+        self.assertEqual(_guard._normal("\\\\.\\nul"), "\\\\.\\nul")
+
+    def test_a_sqlite_uri_names_its_file(self):
+        for uri in (
+            "file:C:/x/Login%20Data?mode=ro",
+            "file:///C:/x/Login%20Data?mode=ro",
+            "FILE://localhost/C:/x/Login%20Data",
+        ):
+            self.assertEqual(_guard._sqlite_path(uri), "C:/x/Login Data", uri)
+        self.assertEqual(_guard._sqlite_path(":memory:"), ":memory:")
+
+
 class GuardTest(RunnerBase):
     def run_guarded(self, body, guard=None, **overrides):
         lines = textwrap.dedent(body).strip("\n").splitlines()

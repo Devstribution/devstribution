@@ -998,6 +998,8 @@ fn forget_secrets() {
             let _ = secrets::delete(&id, &name);
         }
     }
+    // Also those of apps that can no longer be read, and that a later version stopped naming.
+    let _ = secrets::delete_every_app();
 }
 
 /// Makes Windows load DLLs only from System32 and the launcher's own folder, never from the

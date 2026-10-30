@@ -61,12 +61,12 @@ pub fn keygen(namespace: &str, dir: Option<PathBuf>, no_password: bool) -> Resul
     fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
     write_private(&secret_path, keys.secret_key.as_bytes())?;
     fs::write(&public_path, &keys.public_key)?;
-    println!("Key {} created for namespace `{namespace}`", keys.key_id);
-    println!(
+    say!("Key {} created for namespace `{namespace}`", keys.key_id);
+    say!(
         "  secret key: {}  (keep it private and backed up)",
         secret_path.display()
     );
-    println!(
+    say!(
         "  public key: {}  (publish it; launchers use it to verify you)",
         public_path.display()
     );
@@ -135,7 +135,7 @@ pub fn pack(dir: &Path, key: Option<PathBuf>, out: Option<PathBuf>) -> Result<()
     });
     let result = package::pack(&app_dir, &signer, &out)?;
     checks::print_warnings(&result.lock_warnings);
-    println!(
+    say!(
         "Packed {} {} ({} files, {} KB), signed with key {}",
         result.manifest.id,
         result.manifest.version,
@@ -144,9 +144,9 @@ pub fn pack(dir: &Path, key: Option<PathBuf>, out: Option<PathBuf>) -> Result<()
         result.key_id
     );
     if !result.excluded.is_empty() {
-        println!("  left out: {}", result.excluded.join(", "));
+        say!("  left out: {}", result.excluded.join(", "));
     }
-    println!("  {}", out.display());
+    say!("  {}", out.display());
     Ok(())
 }
 
@@ -154,23 +154,23 @@ pub fn pack(dir: &Path, key: Option<PathBuf>, out: Option<PathBuf>) -> Result<()
 pub fn list(dir: &Path) -> Result<()> {
     let app_dir = env::absolute(dir)?;
     let app = package::collect_app_files(&app_dir)?;
-    println!("Would pack {} file(s):", app.files.len());
+    say!("Would pack {} file(s):", app.files.len());
     for rel in app.files.keys() {
         let mark = if app.unconfirmed_data.contains(rel) {
             "  ! "
         } else {
             "    "
         };
-        println!("{mark}{rel}");
+        say!("{mark}{rel}");
     }
     if !app.excluded.is_empty() {
-        println!("Left out:");
+        say!("Left out:");
         for rel in &app.excluded {
-            println!("    {rel}");
+            say!("    {rel}");
         }
     }
     if !app.unconfirmed_data.is_empty() {
-        println!(
+        say!(
             "! {} file(s) look like data: `pack` refuses them until {} leaves them out, or names \
              them with `!path` if the app ships them on purpose",
             app.unconfirmed_data.len(),
@@ -196,23 +196,23 @@ pub fn verify(file: &Path, key: Option<PathBuf>) -> Result<()> {
     };
     let verified = package::extract_and_verify(file, &tmp.path().join("app"), &opts)?;
     let m = &verified.manifest;
-    println!(
+    say!(
         "{} {}: \"{}\" ({})",
         m.id,
         m.version,
         m.title,
         m.kind.as_str()
     );
-    println!(
+    say!(
         "  {} files, hashes OK, content hash {}",
         verified.files.len(),
         verified.content_hash
     );
     match verified.signature {
         SignatureStatus::Trusted { key_id } => {
-            println!("  signature OK: made by the given key {key_id}")
+            say!("  signature OK: made by the given key {key_id}")
         }
-        SignatureStatus::NewKey { key_id } => println!(
+        SignatureStatus::NewKey { key_id } => say!(
             "  signature valid, made by key {key_id} carried in the package; \
              pass --key <publisher>.pub to check it is the publisher you expect"
         ),

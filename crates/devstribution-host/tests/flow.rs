@@ -483,6 +483,17 @@ fn managed_mode_installs_only_approved_authors() {
     assert_eq!(run_recorded(&store).unwrap().status, RunStatus::Ok);
     assert!(store.inspect(&stranger).unwrap().blocked.is_some());
 
+    // A source that was read and is wrong is IT's to fix: it does not keep a removed author going.
+    let broken = tmp.path().join("broken.toml");
+    fs::write(&broken, "not a policy").unwrap();
+    store.set_policy(Some(managed(vec![(
+        "PolicyFile",
+        Value::String(broken.display().to_string()),
+    )])));
+    assert_eq!(store.policy().unwrap().problems.len(), 1);
+    let err = run_recorded(&store).unwrap_err().to_string();
+    assert!(err.contains("cannot run"), "{err}");
+
     // A dry run refuses nothing, warns, and logs what it would have refused.
     store.set_policy(Some(policy(vec![("DryRun", Value::Dword(1))])));
     let pending = store.inspect(&stranger).unwrap();
@@ -720,6 +731,62 @@ def run(name: str, ctx) -> dict:
     assert!(started.elapsed() < std::time::Duration::from_secs(15));
     let app = store.app("alice/hello").unwrap();
     assert_eq!(app.record.quarantine.unwrap().hit.rule, "saved-secrets");
+}
+
+/// A secret an app prints or raises stays out of what the launcher keeps and shows.
+#[test]
+fn secret_values_stay_out_of_the_log_and_the_result() {
+    const LEAKY: &str = r#"
+import sys
+
+def run(name: str, ctx) -> dict:
+    print("on stdout s3cret-value-123")
+    print("on stderr s3cret-value-123", file=sys.stderr)
+    raise ValueError("failed with s3cret-value-123")
+"#;
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Store::open(Paths {
+        root: tmp.path().join("home"),
+    })
+    .unwrap();
+    install_app(&store, tmp.path(), LEAKY);
+
+    let runner_dir = runner::install(&store.paths).unwrap();
+    let (mut spec, mut record) = store
+        .prepare_run("alice/hello", &Map::new(), &runner_dir)
+        .unwrap();
+    spec.secrets
+        .insert("token".into(), "s3cret-value-123".into());
+    let log = spec.run_dir.join("app.log");
+    let events = Arc::new(std::sync::Mutex::new(String::new()));
+    let sink = events.clone();
+    let result = run::start(
+        spec,
+        Arc::new(move |e| {
+            let text = serde_json::to_string(&e).unwrap();
+            sink.lock().unwrap().push_str(&text);
+        }),
+    )
+    .unwrap()
+    .wait();
+    store.finish_run(&mut record, &result).unwrap();
+
+    let kept = [
+        events.lock().unwrap().clone(),
+        fs::read_to_string(&log).unwrap(),
+        fs::read_to_string(
+            tmp.path()
+                .join("home/runs")
+                .join(&record.id)
+                .join("run.json"),
+        )
+        .unwrap(),
+    ];
+    for text in &kept {
+        assert!(!text.contains("s3cret-value-123"), "{text}");
+    }
+    assert!(kept[1].contains("on stderr [secret]"), "{}", kept[1]);
+    assert!(kept[2].contains("failed with [secret]"), "{}", kept[2]);
 }
 
 /// A Python started behind the runner's back (straight through the Windows API, so not
