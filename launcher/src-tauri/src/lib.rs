@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use devstribution_core::manifest::{Input, Output, Permissions};
 use devstribution_host::policy::{self, Policy, ScanDanger};
+use devstribution_host::revocations::{Imported, RevocationStatus, Revoked};
 use devstribution_host::run::{self, RunEvent};
 use devstribution_host::store::{
     CleanupPlan, CleanupResult, InstallStep, InstalledApp, JournalReport, PendingInstall,
@@ -111,6 +112,10 @@ struct AppView {
     last_inputs: Map<String, Value>,
     secrets: Vec<SecretView>,
     quarantine: Option<Quarantine>,
+    /// Set when its key, or this version, was revoked (docs/revocation.md).
+    revoked: Option<Revoked>,
+    /// Free mode: the user saw why and runs it anyway.
+    revocation_acknowledged: bool,
     guard_allow: Vec<String>,
     /// Whether the user may let the app run past a guard rule that stopped it (managed mode
     /// can keep that decision for IT).
@@ -146,6 +151,11 @@ impl AppView {
             last_inputs: app.record.last_inputs,
             secrets,
             quarantine: app.record.quarantine,
+            revocation_acknowledged: app
+                .revoked
+                .as_ref()
+                .is_some_and(|r| app.record.revocation_acks.contains(&r.id)),
+            revoked: app.revoked,
             may_allow_guard_rules: store.users_may_allow_guard_rules(),
             guard_allow: app.record.guard_allow,
             id,
@@ -603,6 +613,7 @@ struct SettingsView {
     publishers: Vec<PinView>,
     /// False when IT updates the launcher itself (policy `LauncherUpdates` = 0).
     updates: bool,
+    revocations: RevocationStatus,
     /// The folders the user asked to be checked for new versions of apps.
     update_folders: Vec<String>,
 }
@@ -635,6 +646,7 @@ async fn settings(app: AppHandle) -> CmdResult<SettingsView> {
                 })
                 .collect(),
             updates: updates_allowed(&s.store).is_ok(),
+            revocations: s.store.revocation_status(),
             update_folders: update_folder_list(&s.store)?,
         })
     })
@@ -726,6 +738,41 @@ async fn save_trust_request(app: AppHandle, token: String) -> CmdResult<bool> {
         std::fs::write(&path, text)?;
         app.opener().reveal_item_in_dir(&path)?;
         Ok(true)
+    })
+    .await
+}
+
+/// The user saw why an installed app was revoked, and runs it anyway (free mode).
+#[tauri::command]
+async fn acknowledge_revocation(app: AppHandle, id: String) -> CmdResult<AppView> {
+    blocking(move || {
+        let s = state(&app);
+        let _guard = lock(&s.write_lock);
+        Ok(AppView::new(s.store.acknowledge_revocation(&id)?, &s.store))
+    })
+    .await
+}
+
+/// Adds a revocation list or a publisher's key statement. The backend asks which file, so the
+/// page cannot name a path; `None` when the user chose none.
+#[tauri::command]
+async fn import_revocations(app: AppHandle) -> CmdResult<Option<Imported>> {
+    blocking(move || {
+        use tauri_plugin_dialog::DialogExt;
+        let Some(file) = app
+            .dialog()
+            .file()
+            .set_title("Import a revocation list or a key statement")
+            .add_filter("Revocation list or key statement", &["json", "dskey"])
+            .blocking_pick_file()
+        else {
+            return Ok(None);
+        };
+        let s = state(&app);
+        let _guard = lock(&s.write_lock);
+        let imported = s.store.import_revocations(&file.into_path()?)?;
+        applog::write(&format!("revocations imported: {imported:?}"));
+        Ok(Some(imported))
     })
     .await
 }
@@ -996,7 +1043,18 @@ fn open_store() -> anyhow::Result<Store> {
         );
         uv::use_only(uv);
     }
-    let store = Store::open(paths)?;
+    let mut store = Store::open(paths)?;
+    // The revocation list that came with this launcher, next to it (docs/revocation.md).
+    let bundled = std::env::current_exe()?
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("revocations");
+    if bundled.is_dir() {
+        match devstribution_core::revocation::ListFiles::read(&bundled) {
+            Ok(files) => store.set_bundled_revocations(Some(files)),
+            Err(e) => applog::write(&format!("the bundled revocation list is ignored: {e}")),
+        }
+    }
     // Here too, so a data folder the launcher cannot write fails at start.
     runner::install(&store.paths)?;
     Ok(store)
@@ -1082,6 +1140,8 @@ pub fn run() {
             save_trust_request,
             check_update,
             install_update,
+            acknowledge_revocation,
+            import_revocations,
             check_app_updates,
             add_update_folder,
             remove_update_folder,

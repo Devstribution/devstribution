@@ -109,10 +109,16 @@ What has to hold before our signature goes on it, roughly in this order.
    signed for the version announced, not while apps run. Rolling out = publishing a release that
    is not a pre-release. Users can turn the check at start off, IT can turn updates off
    (`LauncherUpdates`). Still to see: a real update from one release to the next.
-6. ☐ **Revocation, first two steps** ([`revocation.md`](revocation.md), "Building it, in order"):
+6. ☑ **Revocation, first two steps** ([`revocation.md`](revocation.md), "Building it, in order"):
    the list check with a bundled copy and `revocations import`, then owners' withdrawal and
    rotation statements. A launcher that cannot read a list can never learn of a revoked key, so
-   this goes in before many launchers are out there (section 6).
+   this goes in before many launchers are out there (section 6). 29 October: lists (the chain from
+   a root key, serials that only go up, expiry), a list next to the launcher used while it is the
+   newest, `devstribution keys withdraw` / `keys rotate` / `revocations import`, Settings'
+   *Revoked keys* with *Import*; checked at inspect, install and before every run, as the table in
+   `revocation.md` says (free mode asks once per app before a run, managed mode refuses). The root
+   keys and the first list are step 3: until then no list verifies, and owners' statements are
+   what works.
 7. ☐ **Fuzzing** (`cargo-fuzz`) of extraction, the manifest and lockfile parsers and the scan's
    tokenizer: the parts that read untrusted bytes (section 8).
 8. ☐ **False positives measured**: the scan over a corpus of ordinary open-source scripts, so a

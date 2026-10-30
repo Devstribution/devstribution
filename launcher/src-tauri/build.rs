@@ -27,6 +27,8 @@ const COMMANDS: &[&str] = &[
     "save_trust_request",
     "check_update",
     "install_update",
+    "acknowledge_revocation",
+    "import_revocations",
     "check_app_updates",
     "add_update_folder",
     "remove_update_folder",

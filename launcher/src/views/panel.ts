@@ -1,8 +1,8 @@
 import {
   X, Square, MoreHorizontal, Wrench, Trash2, FolderOpen, ExternalLink, Pin, PinOff,
-  Loader, Globe, Folder, KeyRound, Database, Puzzle, Sparkles, ShieldX, Download,
+  Loader, Globe, Folder, KeyRound, Database, Puzzle, Sparkles, ShieldX, ShieldAlert, Download,
 } from "lucide";
-import type { AppView, GuardHit, Input, RunRecord } from "../api";
+import type { AppView, GuardHit, Input, Revoked, RunRecord } from "../api";
 import type { Ctx, LiveRun } from "../main";
 import { h, icon, appIcon, clear, duration, fileName, relTime, statusText, toast, progressToast, errorText, runError, trustTag, trapFocus, announce, menuButton, keepFocus, KIND_LABEL } from "../ui";
 
@@ -42,6 +42,40 @@ async function startRun(ctx: Ctx, app: AppView, values: Record<string, unknown>)
   } catch (e) {
     toast(errorText(e), "error");
     return null;
+  }
+}
+
+/** What the revocation says, on the app's panel. */
+function revokedBanner(r: Revoked, title: string, uninstall: () => void): HTMLElement {
+  const malicious = r.status === "malicious";
+  return h("div", { class: `banner ${malicious ? "red" : "amber"}`, role: "alert" },
+    h("div", { class: "bi" }, icon(malicious ? ShieldX : ShieldAlert, 18)),
+    h("div", { class: "grow" },
+      h("strong", null, malicious ? "Reported as harmful" : "Its publisher withdrew the signing key"),
+      h("div", null, r.message.replace(/`([^`]+)`/g, "“$1”")),
+      r.evidence.length ? h("div", { class: "mono detail wrap-anywhere" }, r.evidence.join("\n")) : null,
+      h("div", null, malicious
+        ? `Uninstall ${title} unless you know the report is wrong.`
+        : "Updates signed with that key are refused. Run it only if you trust this copy, and ask the publisher for a version signed with their new key."),
+      h("div", { class: "banner-actions" }, h("button", { class: "btn small", onclick: uninstall }, icon(Trash2, 14), "Uninstall"))));
+}
+
+/** Free mode asks once per app before running something revoked; managed mode refuses (the backend says why). */
+async function revocationAccepted(ctx: Ctx, app: AppView): Promise<boolean> {
+  if (!app.revoked || app.revocation_acknowledged) return true;
+  const malicious = app.revoked.status === "malicious";
+  const ok = await ctx.api.ask(
+    `${app.revoked.message.replace(/`([^`]+)`/g, "“$1”")}\n\n${malicious
+      ? `Run ${app.title} anyway? Only if you know the report is wrong: it may harm your files or accounts.`
+      : `Run ${app.title} anyway? This copy may be fine, but anyone holding the key could have made it.`} You are asked once.`,
+    malicious ? "Reported as harmful" : "Signing key withdrawn", "Run anyway");
+  if (!ok) return false;
+  try {
+    Object.assign(app, await ctx.api.acknowledgeRevocation(app.id));
+    return true;
+  } catch (e) {
+    toast(errorText(e), "error");
+    return false;
   }
 }
 
@@ -170,6 +204,7 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
       const missing = missingRequired(app, values);
       if (missing.length) { toast(`Fill in: ${missing.map((i) => i.label ?? i.name).join(", ")}`, "error"); return; }
       runButton.disabled = true;
+      if (!(await revocationAccepted(ctx, app))) { runButton.disabled = false; return; }
       const r = await startRun(ctx, app, { ...values });
       runButton.disabled = false;
       if (r) { run = r; draw(); stateBox.scrollIntoView({ behavior: "smooth", block: "nearest" }); }
@@ -286,6 +321,9 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
               } }, "Allow and run again"))))
       : null;
 
+    // ---------- revoked ----------
+    // Its key, or this version, should no longer be trusted: said every time the panel opens.
+    const revoked = app.revoked ? revokedBanner(app.revoked, app.title, () => uninstall()) : null;
     // ---------- a newer version in an update folder ----------
     const newer = ctx.appUpdates.get(app.id);
     const updateBanner = newer
@@ -380,9 +418,11 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
         h("div", { class: "top" }, appIcon(app, "lg"),
           h("div", { class: "actions" }, h("button", { class: "icon-btn", "aria-label": "Close", onclick: close }, icon(X, 16)))),
         h("div", null, h("h2", null, app.title),
-          h("div", { class: "by" }, `by ${app.namespace} · v${app.version} · ${KIND_LABEL[app.kind] ?? app.kind}`, trustTag(app.trust))),
+          h("div", { class: "by" }, `by ${app.namespace} · v${app.version} · ${KIND_LABEL[app.kind] ?? app.kind}`, app.revoked
+            ? h("span", { class: `tag ${app.revoked.status === "malicious" ? "red" : "amber"}` }, icon(ShieldAlert, 12), app.revoked.status === "malicious" ? "Reported as harmful" : "Key withdrawn")
+            : trustTag(app.trust))),
         app.description ? h("div", { class: "desc" }, app.description) : null),
-      h("div", { class: "panel-body" }, quarantine, updateBanner, form, secrets, stateBox, logCard, history, about),
+      h("div", { class: "panel-body" }, quarantine, revoked, updateBanner, form, secrets, stateBox, logCard, history, about),
       h("div", { class: "panel-foot" }, runButton, menuWrap));
 
     draw();

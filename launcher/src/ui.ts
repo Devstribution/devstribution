@@ -134,7 +134,7 @@ export function trustTag(trust: string): HTMLElement {
   if (trust === "not_approved") {
     return h("span", { class: "tag red", title: "Your organisation's policy does not approve this author and key" }, icon(ShieldX, 12), "Not approved");
   }
-  return trust === "first_use"
+  return trust === "first_use" || trust === "rotated"
     ? h("span", { class: "tag green", title: "Signed with the key pinned when you installed this publisher's first app" },
         icon(ShieldCheck, 12), "Signature verified")
     : h("span", { class: "tag amber", title: "First app seen from this publisher" }, icon(ShieldAlert, 12), "New publisher");

@@ -5,6 +5,7 @@ use std::fs;
 use std::path::Path;
 
 use devstribution_core::package::pack;
+use devstribution_core::revocation::{self, Reason};
 use devstribution_core::signing::{Signer, generate_keys, public_key_base64};
 use devstribution_host::Paths;
 use devstribution_host::policy::{Loader, Policy, Value, Values};
@@ -122,6 +123,33 @@ fn only_real_newer_versions_are_offered() {
     assert_eq!(store.check_app_updates().unwrap().problems.len(), 1);
     store.remove_update_folder(&gone).unwrap();
     assert!(store.check_app_updates().unwrap().problems.is_empty());
+}
+
+#[test]
+fn a_version_signed_with_a_withdrawn_key_is_not_offered() {
+    let tmp = tempfile::tempdir().unwrap();
+    let work = tmp.path();
+    let store = Store::open(Paths {
+        root: work.join("home"),
+    })
+    .unwrap();
+    let key = signer();
+    let folder = work.join("updates");
+    fs::create_dir(&folder).unwrap();
+    package(work, "1.0.0", &key, &work.join("v1.dsapp"));
+    install(&store, &work.join("v1.dsapp"));
+    store.add_update_folder(&folder).unwrap();
+    package(work, "2.0.0", &key, &folder.join("v2.dsapp"));
+    assert_eq!(found(&store), ["alice/hello 2.0.0"]);
+
+    let statement = work.join("withdraw.dskey");
+    fs::write(
+        &statement,
+        revocation::withdrawal(&key, "alice", Reason::Stolen, None, "2026-10-29").unwrap(),
+    )
+    .unwrap();
+    store.import_revocations(&statement).unwrap();
+    assert!(found(&store).is_empty());
 }
 
 #[test]

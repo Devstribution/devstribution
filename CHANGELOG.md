@@ -10,6 +10,15 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 
 ## [Unreleased]
 
+### Added
+
+- Revoked keys. A publisher whose key is lost or stolen can withdraw it
+  (`devstribution keys withdraw`), and one who moves to a new key can hand over to it
+  (`devstribution keys rotate`); the launcher takes these statements from Settings, *Revoked
+  keys*, *Import*. Packages signed with a withdrawn key are refused, apps it signed ask once
+  before they run, and an update signed with the new key of a rotation installs as the same
+  publisher. Signed revocation lists are checked the same way, once devstribution publishes them.
+
 ### Fixed
 
 - A crash or a full disk in the middle of saving the list of installed apps no longer blocks the

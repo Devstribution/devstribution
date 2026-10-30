@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-acknowledge-revocation"
+description = "Enables the acknowledge_revocation command without any pre-configured scope."
+commands.allow = ["acknowledge_revocation"]
+
+[[permission]]
+identifier = "deny-acknowledge-revocation"
+description = "Denies the acknowledge_revocation command without any pre-configured scope."
+commands.deny = ["acknowledge_revocation"]

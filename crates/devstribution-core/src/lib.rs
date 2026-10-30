@@ -12,6 +12,7 @@ pub mod lock;
 pub mod manifest;
 pub mod package;
 pub mod paths;
+pub mod revocation;
 pub mod scan;
 pub mod signing;
 pub mod trust;

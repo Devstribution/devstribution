@@ -1,4 +1,4 @@
-import { X, Check, Pipette, FolderOpen, FolderPlus, Trash2, ClipboardCopy } from "lucide";
+import { X, Check, Pipette, FolderOpen, FolderPlus, Trash2, ClipboardCopy, FileUp } from "lucide";
 import type { Ctx } from "../main";
 import { openCleanup } from "./cleanup";
 import { checkForUpdate } from "./update";
@@ -92,6 +92,7 @@ export function toggleSettings(ctx: Ctx) {
     ];
     pop.append(
       ...(s.policy ? managedGroups(s.policy) : free),
+      revocationsGroup(ctx, s),
       appUpdatesGroup(ctx, s),
       h("div", { class: "settings-group" },
         h("span", { class: "section-label" }, "Storage"),
@@ -169,6 +170,34 @@ function aboutGroup(ctx: Ctx, s: Settings) {
       h("button", { class: "link small", onclick: () => ctx.api.openNotices().catch((e) => toast(errorText(e), "error")) }, "Open all licence texts")),
     h("button", { class: "btn small self-start", onclick: copy }, icon(ClipboardCopy, 14), "Copy diagnostics"),
     h("div", { class: "muted tiny" }, "For a bug report or your IT: versions, your apps and the latest runs. No secrets, inputs or results."));
+}
+
+/** Revoked keys: which list is in use, publishers' statements, and an import by hand. */
+function revocationsGroup(ctx: Ctx, s: Settings) {
+  const r = s.revocations;
+  const date = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  const list = r.serial != null && r.issued && r.expires
+    ? `Revocations known up to ${date(r.issued)} (list ${r.serial}, ${r.entries} ${r.entries === 1 ? "entry" : "entries"}${r.source === "bundled" ? ", came with devstribution" : ""}).`
+    : r.can_check_lists ? "No revocation list yet." : "Revocation lists come with a later version of devstribution.";
+  const statements = r.statements
+    ? `${r.statements} key ${r.statements === 1 ? "statement" : "statements"} from publishers (a withdrawn key, or a move to a new key).`
+    : "Publishers can withdraw a lost or stolen key, or move to a new one, with a statement you import here.";
+  const importFile = async () => {
+    try {
+      const done = await ctx.api.importRevocations();
+      if (!done) return;
+      toast(done.kind === "list"
+        ? `Revocation list ${done.serial} imported`
+        : `Key ${done.statement} from “${done.namespace}” imported`, "ok");
+      await ctx.refresh();
+    } catch (e) { toast(errorText(e), "error"); }
+  };
+  return h("div", { class: "settings-group" },
+    h("span", { class: "section-label" }, "Revoked keys"),
+    h("div", { class: "small soft-text" }, list),
+    r.expired && r.expires ? h("div", { class: "small soft-text" }, `This list expired on ${date(r.expires)}: newer revocations may be missing.`) : null,
+    h("div", { class: "muted tiny" }, statements),
+    h("button", { class: "btn small self-start", onclick: importFile }, icon(FileUp, 14), "Import…"));
 }
 
 /** Looking for a newer devstribution: now, and at each start unless turned off. */

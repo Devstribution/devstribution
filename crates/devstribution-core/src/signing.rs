@@ -5,7 +5,8 @@
 
 use std::io::Cursor;
 
-use minisign::{KeyPair, PublicKey, PublicKeyBox, SecretKey, SecretKeyBox, SignatureBox};
+pub use minisign::PublicKey;
+use minisign::{KeyPair, PublicKeyBox, SecretKey, SecretKeyBox, SignatureBox};
 
 use crate::manifest::{AppId, Version};
 use crate::{Error, Result};
@@ -91,6 +92,21 @@ impl Signer {
         .map_err(sig_err)?;
         Ok(sig.into_string())
     }
+
+    /// Signs `data` with a trusted comment of the caller's choosing, for files that are not
+    /// packages (revocation lists and statements): the comment names what the file is, so a
+    /// signature over one kind cannot be passed off as another.
+    pub fn sign_document(&self, data: &[u8], comment: &str) -> Result<String> {
+        let sig = minisign::sign(
+            Some(&self.pk),
+            &self.sk,
+            Cursor::new(data),
+            Some(comment),
+            Some("devstribution signature"),
+        )
+        .map_err(sig_err)?;
+        Ok(sig.into_string())
+    }
 }
 
 /// Loads a public key from the text of a `.pub` file (or a bare base64 key).
@@ -123,6 +139,14 @@ pub fn public_key_file(pk: &PublicKey, comment: &str) -> String {
 /// different keys can show the same one. Trust decisions compare the full key, never this.
 pub fn public_key_id(pk: &PublicKey) -> String {
     fingerprint(pk)
+}
+
+/// The SHA-256 of the whole public key, 64 lowercase hex digits: how revocation lists name a key.
+pub fn public_key_sha256(pk: &PublicKey) -> String {
+    crate::files::sha256(&pk.to_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 fn fingerprint(pk: &PublicKey) -> String {
@@ -161,6 +185,21 @@ impl Signature {
             Error::Signature(format!("not made by key {} ({e})", public_key_id(pk)))
         })?;
         self.unverified_comment()
+    }
+
+    /// Verifies a signature made by [`Signer::sign_document`]: by `pk`, over `data`, and with
+    /// exactly the trusted comment `comment`.
+    pub fn verify_document(&self, pk: &PublicKey, data: &[u8], comment: &str) -> Result<()> {
+        minisign::verify(pk, &self.sig, Cursor::new(data), true, false, false).map_err(|e| {
+            Error::Signature(format!("not made by key {} ({e})", public_key_id(pk)))
+        })?;
+        let found = self.sig.trusted_comment().map_err(sig_err)?;
+        if found != comment {
+            return Err(Error::Signature(format!(
+                "signed as `{found}`, not as `{comment}`"
+            )));
+        }
+        Ok(())
     }
 }
 
