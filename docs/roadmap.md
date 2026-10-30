@@ -119,12 +119,18 @@ What has to hold before our signature goes on it, roughly in this order.
    `revocation.md` says (free mode asks once per app before a run, managed mode refuses). The root
    keys and the first list are step 3: until then no list verifies, and owners' statements are
    what works.
-7. ☐ **Fuzzing** (`cargo-fuzz`) of extraction, the manifest and lockfile parsers and the scan's
-   tokenizer: the parts that read untrusted bytes (section 8).
+7. ☑ **Fuzzing** (`cargo-fuzz`) of extraction, the manifest and lockfile parsers and the scan's
+   tokenizer: the parts that read untrusted bytes (section 8). 30 October: six targets
+   ([`fuzz/README.md`](../fuzz/README.md)), also signed packages with hostile contents, file lists,
+   key statements and revocation lists; nightly in CI (`fuzz.yml`), on Linux. The first runs, 5 to
+   7 minutes per target, found nothing; with the path check taken out on purpose, the extraction
+   target found the escape within a minute.
 8. ☐ **False positives measured**: the scan over a corpus of ordinary open-source scripts, so a
    warning still means something (section 5).
-9. ☐ **An "update available" path** for apps: a newer `.dsapp` already updates in place with the
-   diff (section 6).
+9. ☑ **An "update available" path** for apps: a newer `.dsapp` already updates in place with the
+   diff (section 6). 29 October: folders the user chooses and one IT sets are checked at start;
+   newer versions signed by the app's publisher show on the app, and installing one still goes
+   through the install screen and its diff. Still to see: a real network share.
 10. ☐ **Security review again** for what changed since the last one (guard file rules, managed
     mode, updates), as section 8 asks before each such release. Weaknesses still open from the
     October scan are tracked privately until fixed, as `SECURITY.md` asks reporters to send them.
@@ -377,7 +383,7 @@ The scan read only the package's own Python files. Extend it where attackers act
 - ☑ App updates: a newer `.dsapp` updates in place, with the diff from section 5; folders the user
   chooses and one IT sets are checked at start, and newer signed versions show on the app → B9.
   There is no download feed: fetching from a URL would need its own trust design.
-- ☐ Publisher key rotation and lost or compromised keys: the owner's signed statements, and a
+- ◐ Publisher key rotation and lost or compromised keys: the owner's signed statements, and a
   signed revocation list of bad keys and packages with evidence, advice in free mode and IT's call
   in managed mode ([design](revocation.md), agreed October 2026). The list check and owners'
   statements → B6; the trust repository, fetching and the policy values → C.
@@ -420,9 +426,9 @@ The scan read only the package's own Python files. Extend it where attackers act
   scope, and what we answer. ☑ Private vulnerability reporting turned on → A8.
 - ☑ Versioning, changelog, release notes → A2. ☐ `docs/HANDOFF.md` and `status_quo.md` folded into a
   contributor guide, after the first release.
-- ☐ Logs a user can find and send (a "Copy diagnostics" button), without secrets in them → A6.
+- ☑ Logs a user can find and send (a "Copy diagnostics" button), without secrets in them → A6.
 - ☑ Docs for app authors: from `devstribution init` to a delivered `.dsapp` → A7.
-- ☐ **Fuzzing** (`cargo-fuzz`) of extraction, the manifest and lockfile parsers, and the scan's
+- ☑ **Fuzzing** (`cargo-fuzz`) of extraction, the manifest and lockfile parsers, and the scan's
   tokenizer → B7.
 - ☐ **Windows Event Log**: installs, runs, blocked calls, stopped runs and quarantines, as events
   IT's monitoring already collects. The platform still sends nothing anywhere → C (B when a

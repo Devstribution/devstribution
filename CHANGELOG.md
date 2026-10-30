@@ -18,6 +18,10 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
   keys*, *Import*. Packages signed with a withdrawn key are refused, apps it signed ask once
   before they run, and an update signed with the new key of a rotation installs as the same
   publisher. Signed revocation lists are checked the same way, once devstribution publishes them.
+- App updates in folders you choose. Settings, *App updates*, takes folders (a network share, say)
+  that are checked at start; a newer version signed by the app's publisher shows on the app, and
+  installing it goes through the usual install screen and its list of changes. IT can set a folder
+  with the policy. A package signed with a revoked key is not offered.
 
 ### Fixed
 
