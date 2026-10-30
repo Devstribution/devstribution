@@ -842,7 +842,7 @@ impl Store {
                     (modified, entry.path())
                 })
                 .collect();
-            packages.sort_by(|a, b| b.0.cmp(&a.0));
+            packages.sort_by_key(|p| std::cmp::Reverse(p.0));
             let total = packages.len();
             for (read, (_, path)) in packages.into_iter().enumerate() {
                 if started.elapsed() >= time {
