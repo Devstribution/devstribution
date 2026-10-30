@@ -40,6 +40,16 @@ From the security review of 30 October ([`docs/security.md`](docs/security.md)).
 - A package whose zip index is far too large is refused before the index is read.
 - The CLI strips terminal escape codes from what it prints of packages and `.trust` files.
 - A revocation list goes on applying after its signing key's end date.
+- The runtime guard checks `ATTACH DATABASE` in SQLite (`ATTACH ?` is now refused: name the file in the
+  statement) and reads admin shares (`\\localhost\c$\...`) as the disk path.
+- Managed mode: a trust folder or policy file is refused when a user can rename or take over a folder
+  above it. **Check Settings on a managed PC after updating.**
+- The code scan reads f-strings as Python 3.12 does, and is no longer misled by a `}` in a string or a
+  quote in a format spec.
+- A revocation entry for a single package also applies to apps installed before full content hashes
+  were kept.
+- The check of update folders looks at packages only, the newest first, for 30 seconds at most, and
+  says when it did not get through a folder.
 
 ### Added
 

@@ -93,8 +93,7 @@ These are deliberate limits of the current design. Each one says why, and what w
    the user's folder. AppLocker or WDAC rules that allow only the signed launcher close this,
    as will the per-machine mode. Apps installed under the policy keep running while the
    approved authors cannot be reached (a share out of reach), so that laptops work away from the
-   office; nothing new installs meanwhile. A file that was read and is wrong does not count. Only
-   the file and its own folder are checked, not the folders above them.
+   office; nothing new installs meanwhile. A file that was read and is wrong does not count.
 8. **The run journal shows accidents, not an attacker.** Its hash chain has no secret in it, so a
    program running as the user can rewrite the whole chain. It tells a missing or edited run from
    what a cleanup did; it does not prove what happened.
@@ -187,6 +186,18 @@ files flagged by name, which share one.
 | 12 | Low | A revocation list stopped applying when its signing key's end date passed. | That date is checked at import only. |
 | 13 | Low | What the user allowed past the guard carried over to a new key. | A new key starts over. |
 | 14 | Low | A run id like `C:x` left the runs folder when joined to a path. | Only the characters a run id has. |
+
+Six smaller weaknesses from the same review, fixed right after it. Read from the code; each fix has
+a test, and the f-string change gave the same findings as before on about 12,300 files of real Python.
+
+| Severity | Finding | Fix |
+|---|---|---|
+| Medium | `ATTACH DATABASE` opens a file inside SQLite with no audit event, so a browser's password database could be read that way without `ctypes`. | SQLite's authorizer asks the guard first; `ATTACH ?`, where SQLite does not say which file, is refused. An app's own authorizer comes on top. |
+| Medium | The folders above a trust folder were not checked: a user who could rename one could put another in its place. | The check goes up to the root. Being able to add to a folder above does not count (users can in `C:\ProgramData`); being able to rename or take over one does. |
+| Medium | Python 3.12 f-strings (same quote or new lines inside an expression), a `}` in an expression's string and a quote in a format spec could make the scan read code as text. | The scan finds where an expression ends as Python does, with a limit on the work a crafted string can cause. |
+| Low | An admin share (`\\localhost\c$\Users\...`) was not read as the disk path by the guard. | Read as the disk path. |
+| Low | A revocation entry for a single package did not match apps installed before the full content hash was kept. | Matched by the content hash they have, its first 16 characters. |
+| Low | A share of many large `.dsapp` files kept the check at start busy, and other files could use up the 2,000 looked at. | Only packages count, the newest first, for 30 seconds at most; what was not read is shown as a problem with the folder. |
 
 Looked at and found sound: the updater (signature, `requireSignedVersion`, no downgrade), update
 folders offering only what the install flow accepts, revocation signatures and rotations, cleanup

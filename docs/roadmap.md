@@ -100,7 +100,8 @@ What has to hold before our signature goes on it, roughly in this order.
    folder and on a network share, and the screens (section 10). The B10 review found the folder
    check never worked and fixed it, so this is the first real test of it: a trust folder users can
    change must show a problem and approve no one; one only administrators can change must work,
-   including when an administrator owns it and the user does not.
+   including when an administrator owns it and the user does not. Also new: one inside a folder users
+   can rename must show a problem, while one under `C:\ProgramData`, where users can only add, must work.
 3. ☐ **The remaining Windows checks**: the data folder move with real old data; no sideways
    scrolling (section 2).
 4. ☐ **Signing in CI**, once SignPath (or Certum) has said yes, then the Windows checks again with
@@ -142,8 +143,8 @@ What has to hold before our signature goes on it, roughly in this order.
     their fixes in [`security.md`](security.md), with the October scan's list for this stage. The
     three serious ones: managed mode's check that users cannot change the trust folder never worked
     for folders (every release so far), and an 8.3 short path or a SQLite `file:` name got past the
-    guard's rules for saved keys and browser passwords. Smaller weaknesses still open are tracked
-    privately until fixed, as `SECURITY.md` asks reporters to send them. Worth repeating if these
+    guard's rules for saved keys and browser passwords. Six smaller ones were fixed right after it.
+    What those fixes leave is tracked privately, as `SECURITY.md` asks reporters to send them. Worth repeating if these
     parts change again before signing. Not done locally: the launcher run with the fixes, and
     fuzzing of the changed scan and zip code (nightly in CI). A release with the fixes → B15.
 11. ☑ **`state.json` survives a crash**: written to disk before the rename, with a backup the

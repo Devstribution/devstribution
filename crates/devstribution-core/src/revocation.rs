@@ -148,19 +148,28 @@ impl RevocationList {
     }
 
     /// The entry that applies to a package signed with `key` (base64) whose content is
-    /// `content_sha256`: `malicious` before `withdrawn`; `cleared` entries never apply.
+    /// `content_sha256`: `malicious` before `withdrawn`; `cleared` entries never apply. Records of
+    /// older versions hold only the content hash, the start of the same value, which also matches.
     pub fn find(&self, key: &str, content_sha256: &str) -> Option<&Entry> {
         let key = parse_public_key(key).ok().map(|k| public_key_sha256(&k))?;
         let applies = |e: &&Entry| {
             e.status != Status::Cleared
                 && e.key == key
-                && (e.packages.is_empty() || e.packages.iter().any(|p| p == content_sha256))
+                && (e.packages.is_empty()
+                    || e.packages.iter().any(|p| {
+                        p == content_sha256
+                            || (content_sha256.len() == CONTENT_HASH_LEN
+                                && p.starts_with(content_sha256))
+                    }))
         };
         let mut found: Vec<&Entry> = self.entries.iter().filter(applies).collect();
         found.sort_by_key(|e| e.status != Status::Malicious);
         found.into_iter().next()
     }
 }
+
+/// Length of `package::content_hash`, which is the first characters of `content_sha256`.
+const CONTENT_HASH_LEN: usize = 16;
 
 /// The certificate of the key that signs lists (`list-key.json`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -489,6 +498,29 @@ mod tests {
 
     fn b64(s: &Signer) -> String {
         public_key_base64(s.public_key())
+    }
+
+    #[test]
+    fn an_old_record_matches_an_entry_for_its_package_by_content_hash() {
+        let s = signer();
+        let content = "ab".repeat(32);
+        let list = RevocationList {
+            format: FORMAT,
+            serial: 1,
+            issued: "2026-10-30".into(),
+            expires: "2027-10-30".into(),
+            entries: vec![entry(
+                "1",
+                Status::Malicious,
+                sha(&s),
+                vec![content.clone()],
+            )],
+        };
+        assert!(list.find(&b64(&s), &content).is_some());
+        assert!(list.find(&b64(&s), &content[..16]).is_some());
+        assert!(list.find(&b64(&s), "").is_none());
+        assert!(list.find(&b64(&s), &content[..15]).is_none());
+        assert!(list.find(&b64(&s), &"cd".repeat(8)).is_none());
     }
 
     fn entry(id: &str, status: Status, key: String, packages: Vec<String>) -> Entry {

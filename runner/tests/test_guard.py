@@ -36,6 +36,9 @@ class PathSpellingTest(unittest.TestCase):
             "C:\\Users\\x\\key.kdbx ",
             "\\\\?\\C:\\Users\\x\\key.kdbx",
             "\\\\.\\C:\\Users\\x\\key.kdbx",
+            "\\\\localhost\\c$\\Users\\x\\key.kdbx",
+            "\\\\127.0.0.1\\C$\\Users\\x\\key.kdbx",
+            "\\\\?\\UNC\\localhost\\c$\\Users\\x\\key.kdbx",
         ):
             self.assertEqual(_guard._normal(other), plain, other)
         self.assertEqual(_guard._normal("C:\\"), "c:\\")
@@ -228,6 +231,37 @@ class GuardTest(RunnerBase):
             """,
             "start-with-windows",
         )
+
+    def test_attaching_a_browser_database_is_reading_it(self):
+        self.assert_stopped(
+            """
+            import sqlite3
+            p = ctx.output_dir / "Google" / "Chrome" / "User Data" / "Default"
+            p.mkdir(parents=True)
+            sqlite3.connect(":memory:").execute(f"ATTACH DATABASE '{p / 'Login Data'}' AS x")
+            """,
+            "browser-passwords",
+        )
+
+    def test_attaching_ordinary_databases_still_works(self):
+        result = self.run_guarded(
+            """
+            import sqlite3
+            db = sqlite3.connect(":memory:")
+            db.execute(f"ATTACH DATABASE '{ctx.output_dir / 'a.db'}' AS a")
+            db.execute("ATTACH DATABASE ':memory:' AS b")
+            db.execute("CREATE TABLE a.t (x)")
+            try:
+                db.execute("ATTACH DATABASE ? AS c", (str(ctx.output_dir / "c.db"),))
+                refused = False
+            except sqlite3.DatabaseError:
+                refused = True
+            return {"v": "refused" if refused else "opened"}
+            """
+        )
+        code, messages, err = result
+        self.assertEqual(code, 0, err)
+        self.assertIn('"v": "refused"', json.dumps(messages))
 
     def test_browser_passwords(self):
         self.assert_stopped(

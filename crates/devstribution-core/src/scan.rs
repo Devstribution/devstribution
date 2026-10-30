@@ -513,6 +513,9 @@ const ENCODED_BLOB_CHARS: usize = 200;
 const MAX_SOURCE_BYTES: usize = 16 << 20;
 /// f-strings inside f-strings the scan follows.
 const MAX_FSTRING_DEPTH: u32 = 16;
+/// Steps allowed to find where one f-string's expressions end: quotes that lead nowhere make it
+/// try again, and a crafted string must not stop the scan. Far above what any real string needs.
+const FSTRING_FUEL: u32 = 1_000_000;
 /// The name that stands in for an f-string nested too deep to follow.
 const TOO_DEEP: &str = "\0too-deep";
 
@@ -1331,8 +1334,25 @@ fn string(
     let triple = c.get(start + 1) == Some(&q) && c.get(start + 2) == Some(&q);
     let mut i = start + if triple { 3 } else { 1 };
     let mut text = String::new();
+    let mut fuel = FSTRING_FUEL;
     let end = loop {
         let Some(&ch) = c.get(i) else { break i };
+        if formatted && ch == '{' {
+            if c.get(i + 1) == Some(&'{') {
+                text.push_str("{{");
+                i += 2;
+                continue;
+            }
+            // Python 3.12 lets an expression hold any quote, and new lines: it ends where its
+            // brace closes, not at the next quote.
+            if let Some((after, _)) = replacement_field(c, i, nesting, &mut fuel) {
+                let field: String = c[i..after].iter().collect();
+                *line += field.matches('\n').count() as u32;
+                text.push_str(&field);
+                i = after;
+                continue;
+            }
+        }
         if ch == '\\' && i + 1 < c.len() {
             let next = c[i + 1];
             if next == '\n' {
@@ -1403,7 +1423,7 @@ fn string(
         text.push(ch);
         i += 1;
     };
-    if formatted && nesting >= MAX_FSTRING_DEPTH {
+    if formatted && (nesting >= MAX_FSTRING_DEPTH || fuel == 0) {
         out.push(Token {
             tok: Tok::Name(TOO_DEEP.into()),
             line: first_line,
@@ -1425,32 +1445,37 @@ fn string(
     end
 }
 
-/// The `{...}` parts of an f-string, each with its line offset in the string.
+/// The `{...}` parts of an f-string, each with its line offset in the string: the expressions, and
+/// those inside format specs (`{x:{width}}`). A spec is text, not code: `{x:'>9}` holds no string.
 fn fstring_expressions(text: &str) -> Vec<(u32, String)> {
     let c: Vec<char> = text.chars().collect();
     let mut out = Vec::new();
     let mut i = 0;
     let mut line = 0;
+    let mut fuel = FSTRING_FUEL;
     while i < c.len() {
         match c[i] {
             '\n' => line += 1,
             '{' if c.get(i + 1) == Some(&'{') => i += 1,
             '{' => {
-                let start = i + 1;
-                let mut depth = 1;
-                let mut j = start;
-                while j < c.len() && depth > 0 {
-                    match c[j] {
-                        '{' => depth += 1,
-                        '}' => depth -= 1,
-                        _ => {}
-                    }
-                    j += 1;
-                }
-                let expr: String = c[start..j.saturating_sub(1).max(start)].iter().collect();
+                let Some((after, spec)) = replacement_field(&c, i, 0, &mut fuel) else {
+                    i += 1;
+                    continue;
+                };
+                let close = after - 1;
+                let expr: String = c[i + 1..spec.unwrap_or(close)].iter().collect();
                 out.push((line, expr.clone()));
-                line += expr.matches('\n').count() as u32;
-                i = j;
+                let expr_lines = expr.matches('\n').count() as u32;
+                if let Some(spec) = spec {
+                    let spec: String = c[spec..close].iter().collect();
+                    out.extend(
+                        fstring_expressions(&spec)
+                            .into_iter()
+                            .map(|(l, e)| (line + expr_lines + l, e)),
+                    );
+                }
+                line += c[i..after].iter().filter(|&&ch| ch == '\n').count() as u32;
+                i = after;
                 continue;
             }
             _ => {}
@@ -1458,6 +1483,108 @@ fn fstring_expressions(text: &str) -> Vec<(u32, String)> {
         i += 1;
     }
     out
+}
+
+/// The `{...}` opening at `c[open]`: the index after its `}`, and where its format spec starts, if
+/// it has one. `None` when it does not close.
+fn replacement_field(
+    c: &[char],
+    open: usize,
+    nesting: u32,
+    fuel: &mut u32,
+) -> Option<(usize, Option<usize>)> {
+    if nesting >= MAX_FSTRING_DEPTH {
+        return None;
+    }
+    let mut i = open + 1;
+    let mut brackets = 0u32;
+    while let Some(&ch) = c.get(i) {
+        *fuel = fuel.checked_sub(1)?;
+        match ch {
+            '\'' | '"' => {
+                i = nested_string_end(c, i, nesting + 1, fuel)?;
+                continue;
+            }
+            '#' => {
+                while c.get(i).is_some_and(|&ch| ch != '\n') {
+                    i += 1;
+                }
+                continue;
+            }
+            '(' | '[' | '{' => brackets += 1,
+            ')' | ']' => brackets = brackets.saturating_sub(1),
+            '}' if brackets == 0 => return Some((i + 1, None)),
+            '}' => brackets -= 1,
+            ':' if brackets == 0 => {
+                let spec = i + 1;
+                let mut k = spec;
+                while let Some(&ch) = c.get(k) {
+                    *fuel = fuel.checked_sub(1)?;
+                    match ch {
+                        '{' => k = replacement_field(c, k, nesting + 1, fuel)?.0,
+                        '}' => return Some((k + 1, Some(spec))),
+                        _ => k += 1,
+                    }
+                }
+                return None;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// The index after the string literal whose quote is `c[start]`, inside an f-string's expression.
+/// `None` when it does not end, which makes the quote no string (it may be text in a format spec).
+fn nested_string_end(c: &[char], start: usize, nesting: u32, fuel: &mut u32) -> Option<usize> {
+    if nesting >= MAX_FSTRING_DEPTH {
+        return None;
+    }
+    let word = c[..start]
+        .iter()
+        .rev()
+        .take_while(|ch| ch.is_alphanumeric() || **ch == '_')
+        .count();
+    let prefix: String = c[start - word..start].iter().collect();
+    let formatted = matches!(
+        prefix.to_ascii_lowercase().as_str(),
+        "f" | "t" | "fr" | "rf" | "tr" | "rt"
+    );
+    let q = c[start];
+    let triple = c.get(start + 1) == Some(&q) && c.get(start + 2) == Some(&q);
+    let mut i = start + if triple { 3 } else { 1 };
+    while let Some(&ch) = c.get(i) {
+        *fuel = fuel.checked_sub(1)?;
+        match ch {
+            '\\' => {
+                i += 2;
+                continue;
+            }
+            '{' if formatted && c.get(i + 1) == Some(&'{') => {
+                i += 2;
+                continue;
+            }
+            '{' if formatted => {
+                if let Some((after, _)) = replacement_field(c, i, nesting, fuel) {
+                    i = after;
+                    continue;
+                }
+            }
+            _ if ch == q => {
+                if !triple {
+                    return Some(i + 1);
+                }
+                if c.get(i + 1) == Some(&q) && c.get(i + 2) == Some(&q) {
+                    return Some(i + 3);
+                }
+            }
+            '\n' if !triple => return None,
+            _ => {}
+        }
+        i += 1;
+    }
+    None
 }
 
 #[cfg(test)]
@@ -1644,6 +1771,52 @@ s = socket.create_connection((host, 443))
         assert_eq!(report.worst(), Some(Severity::Danger));
         assert!(rules(&report).contains(&("decode-and-run", Severity::Danger)));
         assert!(rules(&report).contains(&("dynamic-code", Severity::Warning)));
+    }
+
+    #[test]
+    fn f_string_expressions_end_where_python_ends_them() {
+        for src in [
+            // Python 3.12: the same quote, and new lines, inside an expression.
+            "x = f\"{eval(f\"{y}\")}\"\n",
+            "x = f\"{\"a\"}\"; eval(y)\n",
+            "x = f\"{\n  eval(y)\n}\"\n",
+            // A brace in a string does not close the expression.
+            "x = f\"{'}' + eval(y)}\"\n",
+            // A quote in a format spec opens no string: the code around it stays code.
+            "x = f\"{a:'>1} {eval(y)} {b:'>1}\"\n",
+            "x = f\"{a:'>1}\" + eval(y) + f\"{b:'>1}\"\n",
+            "x = f\"{a:'{eval(y)}}\"\n",
+        ] {
+            let report = scan_one(src, &Permissions::default());
+            assert_eq!(
+                rules(&report),
+                vec![("dynamic-code", Severity::Warning)],
+                "{src}"
+            );
+        }
+        for src in [
+            "x = f\"{d['k']:>{w}} {d[1:2]} {{eval(y)}} {a!r:'^9}\"\n",
+            "x = f\"\"\"{d['k']}\n{y}\"\"\"\n",
+            "x = f\"{'a' if y else\"b\"}\"\n",
+        ] {
+            assert_eq!(
+                rules(&scan_one(src, &Permissions::default())),
+                vec![],
+                "{src}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_crafted_f_string_does_not_stop_the_scan() {
+        let mut src = String::from("x = ");
+        for i in 0..14 {
+            src.push_str(if i % 2 == 0 { "f\"{" } else { "f'{" });
+        }
+        src.push_str(&"y ".repeat(200_000));
+        let started = std::time::Instant::now();
+        scan_one(&src, &Permissions::default());
+        assert!(started.elapsed().as_secs() < 60);
     }
 
     #[test]

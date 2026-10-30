@@ -177,6 +177,7 @@ _RUNNABLE_EXTENSIONS = (
 
 # `os.devnull` and other devices (`\\.\nul`, `/dev/null`): not files.
 _DEVICES = ("\\\\.\\", "\\dev\\")
+_SQLITE_OK, _SQLITE_DENY, _SQLITE_ATTACH = 0, 1, 24
 
 #: Existing files changed (overwritten, deleted or moved) outside the output folder, the user's
 #: choices and the temporary folder before the run is stopped: what ransomware does.
@@ -292,6 +293,7 @@ class Guard:
         }
 
     def install(self) -> None:
+        self._watch_sqlite()
         sys.addaudithook(self._hook)
         if self._child_script and self._child_config:
             self._start_pythons_guarded()
@@ -603,6 +605,54 @@ class Guard:
     def _on_sqlite(self, args: tuple) -> None:
         self._check_read(_sqlite_path(args[0]) if args else None)
 
+    def _watch_sqlite(self) -> None:
+        """`ATTACH DATABASE` opens a file inside SQLite, with no audit event, but SQLite asks an
+        authorizer first. A connection cannot be given one while it opens, so its opening is wrapped."""
+        try:
+            import sqlite3
+            import sqlite3.dbapi2 as dbapi2
+        except ImportError:
+            return
+        guard = self._sqlite_authorizer
+        plain, plain_connect = dbapi2.Connection, dbapi2.connect
+
+        class Connection(plain):
+            __qualname__ = plain.__qualname__
+            __module__ = plain.__module__
+
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                super().__init__(*args, **kwargs)
+                plain.set_authorizer(self, guard)
+
+            def set_authorizer(self, authorizer_callback: Any) -> None:
+                # The app's own authorizer comes on top of the guard's.
+                def both(*args: Any) -> int:
+                    verdict = guard(*args)
+                    return authorizer_callback(*args) if verdict == _SQLITE_OK else verdict
+
+                plain.set_authorizer(self, both if authorizer_callback else guard)
+
+        def connect(*args: Any, **kwargs: Any) -> Any:
+            if len(args) < 6:  # the sixth is `factory`
+                kwargs.setdefault("factory", Connection)
+            connection = plain_connect(*args, **kwargs)
+            if not isinstance(connection, Connection):
+                plain.set_authorizer(connection, guard)
+            return connection
+
+        for module in (sqlite3, dbapi2):
+            module.Connection, module.connect = Connection, connect
+
+    def _sqlite_authorizer(self, action: int, name: Any, *_: Any) -> int:
+        if action != _SQLITE_ATTACH:
+            return _SQLITE_OK
+        if name is None:  # not a plain string (`ATTACH ?`): SQLite does not say which file
+            return _SQLITE_DENY
+        if name and name != ":memory:":
+            with self.unchecked():
+                self._check_read(_sqlite_path(name))
+        return _SQLITE_OK
+
     def _on_copy(self, args: tuple) -> None:
         self._check_read(args[0] if args else None)
         self._check_change(args[1] if len(args) > 1 else None, "write")
@@ -840,13 +890,17 @@ def _text(value: Any) -> str:
 
 def _normal(path: str) -> str:
     """How the guard compares paths: lower case, backslashes, no `\\\\?\\` or `\\\\.\\` prefix on a
-    disk path, no trailing slash, and for the last name no NTFS stream (`file::$DATA`) and no
-    trailing dots or spaces, which Windows ignores: all of them spell the same file."""
+    disk path, an admin share (`\\\\host\\c$\\x`) as the disk path (`c:\\x`), no trailing slash, and for
+    the last name no NTFS stream (`file::$DATA`) and no trailing dots or spaces, which Windows
+    ignores: all of them spell the same file."""
     text = path.replace("/", "\\").lower()
-    if text.startswith("\\\\?\\unc\\"):
+    if text.startswith(("\\\\?\\unc\\", "\\\\.\\unc\\")):
         text = "\\\\" + text[8:]
     elif text.startswith("\\\\?\\") or re.match(r"\\\\\.\\[a-z]:", text):
         text = text[4:]
+    share = re.match(r"\\\\[^\\]+\\([a-z])\$(?:\\|$)", text)
+    if share:
+        text = share.group(1) + ":\\" + text[share.end() :]
     text = text.rstrip("\\") if len(text) > 3 else text
     if os.name == "nt" and len(text) > 3 and not text.startswith("\\\\.\\"):
         folder, sep, name = text.rpartition("\\")

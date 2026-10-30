@@ -3,6 +3,7 @@
 
 use std::fs;
 use std::path::Path;
+use std::time::Duration;
 
 use devstribution_core::package::pack;
 use devstribution_core::revocation::{self, Reason};
@@ -123,6 +124,29 @@ fn only_real_newer_versions_are_offered() {
     assert_eq!(store.check_app_updates().unwrap().problems.len(), 1);
     store.remove_update_folder(&gone).unwrap();
     assert!(store.check_app_updates().unwrap().problems.is_empty());
+}
+
+#[test]
+fn a_folder_too_slow_to_check_is_said_and_the_newest_comes_first() {
+    let tmp = tempfile::tempdir().unwrap();
+    let work = tmp.path();
+    let store = Store::open(Paths {
+        root: work.join("home"),
+    })
+    .unwrap();
+    let key = signer();
+    let folder = work.join("updates");
+    fs::create_dir(&folder).unwrap();
+    package(work, "1.1.0", &key, &work.join("v1.1.0.dsapp"));
+    install(&store, &work.join("v1.1.0.dsapp"));
+    package(work, "1.2.0", &key, &folder.join("hello-1.2.0.dsapp"));
+    store.add_update_folder(&folder).unwrap();
+
+    let check = store.check_app_updates_within(Duration::ZERO).unwrap();
+    assert!(check.updates.is_empty());
+    assert_eq!(check.problems.len(), 1);
+    assert!(check.problems[0].message.contains("1 of its 1 packages"));
+    assert_eq!(found(&store), ["alice/hello 1.2.0"]);
 }
 
 #[test]
