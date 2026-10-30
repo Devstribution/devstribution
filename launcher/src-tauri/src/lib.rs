@@ -14,7 +14,7 @@ use devstribution_host::revocations::{Imported, RevocationStatus, Revoked};
 use devstribution_host::run::{self, RunEvent};
 use devstribution_host::store::{
     CleanupPlan, CleanupResult, InstallStep, InstalledApp, JournalReport, PendingInstall,
-    Quarantine, RunRecord, Stats, Store,
+    Quarantine, RunRecord, Stats, Store, UpdateCheck,
 };
 use devstribution_host::zone::Origin;
 use devstribution_host::{Paths, applog, runner, secrets, uv};
@@ -570,6 +570,7 @@ struct PolicyView {
     users_may_allow_guard_rules: bool,
     guard_report_only: Vec<String>,
     min_launcher_version: Option<String>,
+    update_folder: Option<String>,
     problems: Vec<String>,
     log_file: String,
 }
@@ -593,6 +594,7 @@ impl PolicyView {
             users_may_allow_guard_rules: p.users_may_allow_guard_rules,
             guard_report_only: p.guard_report_only.clone(),
             min_launcher_version: p.min_launcher_version.clone(),
+            update_folder: p.update_folder.as_ref().map(|f| f.display().to_string()),
             problems: p.problems.clone(),
             log_file: store.policy_log().display().to_string(),
         }
@@ -612,6 +614,8 @@ struct SettingsView {
     /// False when IT updates the launcher itself (policy `LauncherUpdates` = 0).
     updates: bool,
     revocations: RevocationStatus,
+    /// The folders the user asked to be checked for new versions of apps.
+    update_folders: Vec<String>,
 }
 
 #[tauri::command]
@@ -643,7 +647,53 @@ async fn settings(app: AppHandle) -> CmdResult<SettingsView> {
                 .collect(),
             updates: updates_allowed(&s.store).is_ok(),
             revocations: s.store.revocation_status(),
+            update_folders: update_folder_list(&s.store)?,
         })
+    })
+    .await
+}
+
+fn update_folder_list(store: &Store) -> anyhow::Result<Vec<String>> {
+    Ok(store
+        .update_folders()?
+        .iter()
+        .map(|f| f.display().to_string())
+        .collect())
+}
+
+/// Looks through the update folders for newer versions of installed apps. Nothing is installed:
+/// what it finds goes through the usual confirmation screen.
+#[tauri::command]
+async fn check_app_updates(app: AppHandle) -> CmdResult<UpdateCheck> {
+    blocking(move || state(&app).store.check_app_updates()).await
+}
+
+/// Asks the user for a folder to check; the page cannot name one. Returns the folders now
+/// checked.
+#[tauri::command]
+async fn add_update_folder(app: AppHandle) -> CmdResult<Vec<String>> {
+    blocking(move || {
+        use tauri_plugin_dialog::DialogExt;
+        let store = &state(&app).store;
+        if let Some(folder) = app
+            .dialog()
+            .file()
+            .set_title("Choose a folder where new versions of your apps arrive")
+            .blocking_pick_folder()
+        {
+            store.add_update_folder(&folder.into_path()?)?;
+        }
+        update_folder_list(store)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn remove_update_folder(app: AppHandle, folder: String) -> CmdResult<Vec<String>> {
+    blocking(move || {
+        let store = &state(&app).store;
+        store.remove_update_folder(Path::new(&folder))?;
+        update_folder_list(store)
     })
     .await
 }
@@ -1092,6 +1142,9 @@ pub fn run() {
             install_update,
             acknowledge_revocation,
             import_revocations,
+            check_app_updates,
+            add_update_folder,
+            remove_update_folder,
         ])
         .run(tauri::generate_context!());
     if let Err(e) = result {

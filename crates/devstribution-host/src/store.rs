@@ -91,7 +91,39 @@ struct State {
     /// Highest version ever installed per app: older packages are refused (anti-downgrade).
     #[serde(default)]
     highest: BTreeMap<String, String>,
+    /// Folders the user asked to be checked for new versions of installed apps.
+    #[serde(default)]
+    update_folders: Vec<PathBuf>,
 }
+
+/// A newer version of an installed app, found in an update folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AppUpdate {
+    pub id: String,
+    pub version: String,
+    pub installed_version: String,
+    /// The package, for the install flow, which checks it all again.
+    pub path: PathBuf,
+}
+
+/// An update folder that could not be read.
+#[derive(Debug, Clone, Serialize)]
+pub struct FolderProblem {
+    pub folder: String,
+    pub message: String,
+}
+
+/// What looking through the update folders found.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct UpdateCheck {
+    pub updates: Vec<AppUpdate>,
+    pub problems: Vec<FolderProblem>,
+}
+
+/// At most this many folders, and this many entries looked at in each: a check must stay short
+/// even when pointed at a large share.
+const MAX_UPDATE_FOLDERS: usize = 20;
+const MAX_FOLDER_ENTRIES: usize = 2000;
 
 /// What the UI shows for an installed app.
 #[derive(Debug, Clone, Serialize)]
@@ -727,6 +759,140 @@ impl Store {
             .and_then(|t| parse_public_key(&t).ok())
             .map(|k| public_key_base64(&k))
             .unwrap_or_default()
+    }
+
+    // -- app updates -------------------------------------------------------------------------
+
+    /// The folders the user asked to be checked.
+    pub fn update_folders(&self) -> Result<Vec<PathBuf>> {
+        Ok(self.load()?.update_folders)
+    }
+
+    pub fn add_update_folder(&self, folder: &Path) -> Result<()> {
+        if !folder.is_dir() {
+            bail!("{} is not a folder", folder.display());
+        }
+        self.update_state(|state| {
+            if !state.update_folders.iter().any(|f| f == folder) {
+                if state.update_folders.len() >= MAX_UPDATE_FOLDERS {
+                    bail!("at most {MAX_UPDATE_FOLDERS} folders can be checked: remove one first");
+                }
+                state.update_folders.push(folder.to_path_buf());
+            }
+            Ok(())
+        })
+    }
+
+    pub fn remove_update_folder(&self, folder: &Path) -> Result<()> {
+        self.update_state(|state| {
+            state.update_folders.retain(|f| f != folder);
+            Ok(())
+        })
+    }
+
+    /// Looks through the update folders (the user's and IT's) for newer versions of installed
+    /// apps. Reads only, and offers only what the install flow would accept: a valid signature
+    /// from the app's publisher, a higher version, this platform, approved by the policy, and not
+    /// revoked (the install flow lets a user go ahead with some of those; nothing suggests them). A
+    /// file that does not qualify is not mentioned: anyone may be able to write to these folders,
+    /// and the check must not become a way to put messages in front of the user.
+    pub fn check_app_updates(&self) -> Result<UpdateCheck> {
+        let state = self.load()?;
+        let mut folders = state.update_folders.clone();
+        folders.extend(self.policy.as_ref().and_then(|p| p.update_folder.clone()));
+        let mut check = UpdateCheck::default();
+        let mut best: BTreeMap<String, (Version, AppUpdate)> = BTreeMap::new();
+        let known = self.known();
+        for folder in folders {
+            let entries = match fs::read_dir(&folder) {
+                Ok(entries) => entries,
+                Err(e) => {
+                    check.problems.push(FolderProblem {
+                        message: format!("cannot be read: {e}"),
+                        folder: folder.display().to_string(),
+                    });
+                    continue;
+                }
+            };
+            for entry in entries.flatten().take(MAX_FOLDER_ENTRIES) {
+                let path = entry.path();
+                let is_package = path
+                    .extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("dsapp"));
+                // `file_type` does not follow links: a link could lead anywhere.
+                // A path that is not valid Unicode could not be handed to the window.
+                if !is_package
+                    || path.to_str().is_none()
+                    || !entry.file_type().is_ok_and(|t| t.is_file())
+                {
+                    continue;
+                }
+                match self.update_in(&path, &state, &known) {
+                    Ok(Some((version, update))) => {
+                        if best.get(&update.id).is_none_or(|(v, _)| version > *v) {
+                            best.insert(update.id.clone(), (version, update));
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => crate::applog::write(&format!(
+                        "update check: {} ignored: {e:#}",
+                        path.display()
+                    )),
+                }
+            }
+        }
+        check.updates = best.into_values().map(|(_, u)| u).collect();
+        Ok(check)
+    }
+
+    /// The update `path` offers; `None` when it is for no installed app or is no update.
+    fn update_in(
+        &self,
+        path: &Path,
+        state: &State,
+        known: &Known,
+    ) -> Result<Option<(Version, AppUpdate)>> {
+        let header = package::read_header(path, Limits::default())?;
+        let m = &header.manifest;
+        let id = m.id.to_string();
+        let Some(installed) = state.apps.get(&id) else {
+            return Ok(None);
+        };
+        let installed_version: Version =
+            installed.version.parse().map_err(|e: String| anyhow!(e))?;
+        if m.version <= installed_version
+            || !m.resources.is_empty()
+            || !m.platforms.iter().any(|p| p == current_platform())
+            || known
+                .verdict(&header.publisher_key, &header.content_sha256)
+                .is_some()
+        {
+            return Ok(None);
+        }
+        // The checks of the install itself: the publisher's key, and no going back.
+        let (action, trust) = admit(
+            state,
+            self.policy.as_ref(),
+            known,
+            &m.id,
+            &m.version,
+            &header.publisher_key,
+            &header.content_sha256,
+            &header.content_hash,
+        )?;
+        let dry_run = self.policy.as_ref().is_some_and(|p| p.dry_run);
+        if action != InstallAction::Update || (trust == Trust::NotApproved && !dry_run) {
+            return Ok(None);
+        }
+        Ok(Some((
+            m.version.clone(),
+            AppUpdate {
+                id,
+                version: m.version.to_string(),
+                installed_version: installed.version.clone(),
+                path: path.to_path_buf(),
+            },
+        )))
     }
 
     // -- install flow ------------------------------------------------------------------------

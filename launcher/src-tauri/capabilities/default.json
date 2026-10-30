@@ -37,6 +37,9 @@
     "allow-check-update",
     "allow-install-update",
     "allow-acknowledge-revocation",
-    "allow-import-revocations"
+    "allow-import-revocations",
+    "allow-check-app-updates",
+    "allow-add-update-folder",
+    "allow-remove-update-folder"
   ]
 }

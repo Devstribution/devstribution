@@ -29,6 +29,9 @@ const COMMANDS: &[&str] = &[
     "install_update",
     "acknowledge_revocation",
     "import_revocations",
+    "check_app_updates",
+    "add_update_folder",
+    "remove_update_folder",
 ];
 
 fn main() {

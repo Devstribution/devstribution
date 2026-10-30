@@ -637,21 +637,7 @@ fn extract_inner(package: &Path, dest: &Path, opts: &VerifyOptions) -> Result<Ve
     if !report.errors.is_empty() {
         return Err(Error::Lock(report.errors.join("; ")));
     }
-    // The version as written, not only its value: `1.2` and `1.2.0` are not the same text.
-    if comment.id != manifest.id
-        || comment.version.to_string() != manifest.version.to_string()
-        || comment.schema != manifest.schema_version
-    {
-        return Err(Error::Signature(format!(
-            "signed for {} {} (schema {}) but the manifest says {} {} (schema {})",
-            comment.id,
-            comment.version,
-            comment.schema,
-            manifest.id,
-            manifest.version,
-            manifest.schema_version
-        )));
-    }
+    check_signed_for(&comment, &manifest)?;
     if !entry_files(&manifest.entry.module)
         .iter()
         .any(|f| list.get(f).is_some())
@@ -677,6 +663,89 @@ fn extract_inner(package: &Path, dest: &Path, opts: &VerifyOptions) -> Result<Ve
         content_hash: content_hash(&list_data),
         content_sha256: hex::encode(sha256(&list_data)),
     })
+}
+
+/// What a package says about itself, read without extracting it.
+pub struct PackageHeader {
+    pub manifest: Manifest,
+    pub publisher_key: String,
+    pub content_hash: String,
+    pub content_sha256: String,
+}
+
+/// The signed manifest of `package`: enough to tell which app and version it is, and who signed
+/// it. Only the signed list, the signature, the key and the manifest are read, so the other files
+/// are **not** checked: this is for noticing a package, and installing one still goes through
+/// [`extract_and_verify`].
+pub fn read_header(package: &Path, limits: Limits) -> Result<PackageHeader> {
+    let refuse = |msg: String| Error::Package(msg);
+    let file = fs::File::open(package).map_err(|e| Error::io(package, e))?;
+    let file_len = file.metadata().map_err(|e| Error::io(package, e))?.len();
+    if file_len > limits.max_total_bytes.saturating_add(64 << 20) {
+        return Err(refuse("the file is larger than any package can be".into()));
+    }
+    let mut archive =
+        ZipArchive::new(file).map_err(|e| refuse(format!("not a valid .dsapp (zip) file: {e}")))?;
+    if archive.len() > limits.max_files + 3 {
+        return Err(refuse(format!("more than {} files", limits.max_files)));
+    }
+    let mut read = |name: &str| -> Result<Vec<u8>> {
+        let mut entry = archive
+            .by_name(name)
+            .map_err(|e| refuse(format!("`{name}`: {e}")))?;
+        let mut data = Vec::new();
+        (&mut entry)
+            .take((16 << 20) + 1)
+            .read_to_end(&mut data)
+            .map_err(|e| refuse(format!("`{name}`: {e}")))?;
+        if data.len() > 16 << 20 {
+            return Err(refuse(format!("`{name}` is too large")));
+        }
+        Ok(data)
+    };
+    let list_data = read(FILES_LIST)?;
+    let sig_text = String::from_utf8(read(FILES_SIGNATURE)?)
+        .map_err(|_| refuse(format!("{FILES_SIGNATURE} is not UTF-8")))?;
+    let key_text = String::from_utf8(read(FILES_PUBLIC_KEY)?)
+        .map_err(|_| refuse(format!("{FILES_PUBLIC_KEY} is not UTF-8")))?;
+    let pyproject = read(PYPROJECT)?;
+
+    let package_key = parse_public_key(&key_text)?;
+    let comment = Signature::parse(&sig_text)?.verify(&package_key, &list_data)?;
+    let list = FilesList::parse(&list_data)?;
+    if list.get(PYPROJECT) != Some(&sha256(&pyproject)) {
+        return Err(refuse(format!("{PYPROJECT} was modified after signing")));
+    }
+    let pyproject =
+        String::from_utf8(pyproject).map_err(|_| refuse(format!("{PYPROJECT} is not UTF-8")))?;
+    let manifest = Manifest::parse(&pyproject)?;
+    check_signed_for(&comment, &manifest)?;
+    Ok(PackageHeader {
+        manifest,
+        publisher_key: public_key_base64(&package_key),
+        content_hash: content_hash(&list_data),
+        content_sha256: hex::encode(sha256(&list_data)),
+    })
+}
+
+/// The signature's trusted comment must name the manifest's app, version and schema.
+fn check_signed_for(comment: &TrustedComment, manifest: &Manifest) -> Result<()> {
+    // The version as written, not only its value: `1.2` and `1.2.0` are not the same text.
+    if comment.id != manifest.id
+        || comment.version.to_string() != manifest.version.to_string()
+        || comment.schema != manifest.schema_version
+    {
+        return Err(Error::Signature(format!(
+            "signed for {} {} (schema {}) but the manifest says {} {} (schema {})",
+            comment.id,
+            comment.version,
+            comment.schema,
+            manifest.id,
+            manifest.version,
+            manifest.schema_version
+        )));
+    }
+    Ok(())
 }
 
 /// Checks that `dir`, extracted and verified earlier, still holds exactly the files of `list`
@@ -1036,6 +1105,52 @@ source = { virtual = "." }
         )
         .unwrap();
         assert!(packed_paths(&f).contains(&"pkg/__init__.py".to_string()));
+    }
+
+    #[test]
+    fn the_header_says_what_verifying_says() {
+        let f = fixture();
+        let pkg = f.pack();
+        let header = read_header(&pkg, Limits::default()).unwrap();
+        let v = f.verify(&pkg, None).unwrap();
+        assert_eq!(header.manifest.id, v.manifest.id);
+        assert_eq!(header.publisher_key, v.publisher_key);
+        assert_eq!(header.content_sha256, v.content_sha256);
+    }
+
+    #[test]
+    fn the_header_of_a_changed_or_unsigned_package_is_refused() {
+        let f = fixture();
+        let pkg = f.pack();
+        let out = f.dir.path().join("changed.dsapp");
+
+        // A higher version written over the signed manifest must not look like an update.
+        rewrite(&pkg, &out, |name, data| {
+            let data = if name == PYPROJECT {
+                String::from_utf8(data)
+                    .unwrap()
+                    .replace("1.0.0", "9.0.0")
+                    .into_bytes()
+            } else {
+                data
+            };
+            vec![(name.to_string(), data)]
+        });
+        assert!(read_header(&out, Limits::default()).is_err());
+
+        for missing in [FILES_LIST, FILES_SIGNATURE, FILES_PUBLIC_KEY, PYPROJECT] {
+            rewrite(&pkg, &out, |name, data| {
+                if name == missing {
+                    vec![]
+                } else {
+                    vec![(name.to_string(), data)]
+                }
+            });
+            assert!(read_header(&out, Limits::default()).is_err(), "{missing}");
+        }
+
+        fs::write(&out, b"not a zip").unwrap();
+        assert!(read_header(&out, Limits::default()).is_err());
     }
 
     #[test]

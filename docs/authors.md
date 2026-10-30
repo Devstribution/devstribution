@@ -240,6 +240,10 @@ permissions and the scan.
 
 ## 9. Updates
 
+- **Getting it to users:** send the new `.dsapp` as you did the first. If it lands in a folder
+  they chose under Settings → *New versions of your apps* (a shared folder is the easy way), the
+  launcher tells them at its next start. IT can set one folder for everyone
+  ([`managed-mode.md`](managed-mode.md)).
 - **New version number:** raise `[project].version` (1 to 4 numbers, `1.2.0`) and pack again. The
   launcher refuses a lower version than the one installed, and the same version with different
   content.

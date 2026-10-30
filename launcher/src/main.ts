@@ -2,7 +2,7 @@ import "@fontsource-variable/manrope";
 import "./style.css";
 
 import { House, LayoutGrid, History, Settings as SettingsIcon, Upload, Play, ShieldAlert, RotateCw } from "lucide";
-import { createApi, type Api, type AppView, type RunEvent, type RunResult } from "./api";
+import { createApi, type Api, type AppUpdate, type AppView, type RunEvent, type RunResult, type UpdateCheck } from "./api";
 import { h, icon, appIcon, clear, fileName, toast, errorText } from "./ui";
 import { homeView } from "./views/home";
 import { appsView } from "./views/apps";
@@ -43,6 +43,8 @@ export interface Ctx {
   look: { get(): Look; set(change: Partial<Look>): void; reset(): void };
   /** Whether to look for a newer devstribution at start, from Settings. */
   autoUpdate: { get(): boolean; set(on: boolean): void };
+  /** Newer versions of installed apps, found in the update folders. */
+  appUpdates: { get(id: string): AppUpdate | undefined; check(): Promise<UpdateCheck> };
 }
 
 export interface Rendered {
@@ -136,6 +138,7 @@ async function boot() {
   root.append(sidebar, main, fab);
 
   let apps: AppView[] = [];
+  let appUpdates = new Map<string, AppUpdate>();
   function drawLiveDot() {
     liveDot.hidden = ![...live.values()].some((r) => !r.result);
   }
@@ -174,6 +177,8 @@ async function boot() {
         appCount.textContent = String(apps.length);
         pinned = pinned.filter((id) => apps.some((a) => a.id === id));
         drawPins();
+        // Installed or removed since the check: no longer an update.
+        for (const [id, u] of appUpdates) if (!apps.some((a) => a.id === id && a.version === u.installed_version)) appUpdates.delete(id);
       } catch { /* the page shows the error */ }
       await render();
     },
@@ -193,6 +198,18 @@ async function boot() {
     autoUpdate: {
       get: () => stored("autoUpdate", true),
       set(on) { store("autoUpdate", on); },
+    },
+    appUpdates: {
+      get: (id) => appUpdates.get(id),
+      async check() {
+        const check = await api.checkAppUpdates();
+        const found = new Map(check.updates.map((u) => [u.id, u]));
+        const changed = JSON.stringify([...found]) !== JSON.stringify([...appUpdates]);
+        appUpdates = found;
+        // Only then: a page drawn again loses what is being typed in it.
+        if (changed) await render();
+        return check;
+      },
     },
   };
 
@@ -253,6 +270,16 @@ async function boot() {
   });
 
   await ctx.refresh();
+  // In the background: a share can take a while to answer, and the window must not wait for it.
+  ctx.appUpdates.check().then(({ updates }) => {
+    if (updates.length === 1) {
+      const u = updates[0];
+      const title = apps.find((a) => a.id === u.id)?.title ?? u.id;
+      toast(`${title} ${u.version} is available`, "info", { label: "Open", run: () => ctx.openApp(u.id) });
+    } else if (updates.length > 1) {
+      toast(`New versions of ${updates.length} apps are available`, "info", { label: "See apps", run: () => ctx.navigate("#/apps") });
+    }
+  }).catch(() => { /* Settings shows what is wrong when asked */ });
   api.settings().then((s) => {
     // A little after start, so the first screen is not held up. Not in the browser demo, where
     // there is nothing to update; Settings → "Look for updates" shows it there.

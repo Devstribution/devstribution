@@ -1,6 +1,6 @@
 import {
   X, Square, MoreHorizontal, Wrench, Trash2, FolderOpen, ExternalLink, Pin, PinOff,
-  Loader, Globe, Folder, KeyRound, Database, Puzzle, Sparkles, ShieldX, ShieldAlert,
+  Loader, Globe, Folder, KeyRound, Database, Puzzle, Sparkles, ShieldX, ShieldAlert, Download,
 } from "lucide";
 import type { AppView, GuardHit, Input, Revoked, RunRecord } from "../api";
 import type { Ctx, LiveRun } from "../main";
@@ -324,6 +324,16 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
     // ---------- revoked ----------
     // Its key, or this version, should no longer be trusted: said every time the panel opens.
     const revoked = app.revoked ? revokedBanner(app.revoked, app.title, () => uninstall()) : null;
+    // ---------- a newer version in an update folder ----------
+    const newer = ctx.appUpdates.get(app.id);
+    const updateBanner = newer
+      ? h("div", { class: "banner blue" }, h("div", { class: "bi" }, icon(Download, 18)),
+          h("div", { class: "grow" },
+            h("strong", null, `Version ${newer.version} is available`),
+            h("div", null, `You have ${app.version}. You’ll see what changed before anything is installed.`),
+            h("div", { class: "banner-actions" },
+              h("button", { class: "btn small", onclick: () => { close(); ctx.install(newer.path); } }, "Review the update"))))
+      : null;
 
     async function uninstall() {
       more.close();
@@ -412,7 +422,7 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
             ? h("span", { class: `tag ${app.revoked.status === "malicious" ? "red" : "amber"}` }, icon(ShieldAlert, 12), app.revoked.status === "malicious" ? "Reported as harmful" : "Key withdrawn")
             : trustTag(app.trust))),
         app.description ? h("div", { class: "desc" }, app.description) : null),
-      h("div", { class: "panel-body" }, quarantine, revoked, form, secrets, stateBox, logCard, history, about),
+      h("div", { class: "panel-body" }, quarantine, revoked, updateBanner, form, secrets, stateBox, logCard, history, about),
       h("div", { class: "panel-foot" }, runButton, menuWrap));
 
     draw();
