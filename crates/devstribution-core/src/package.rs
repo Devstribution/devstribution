@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use minisign::PublicKey;
@@ -421,6 +421,71 @@ pub struct VerifiedPackage {
     pub content_sha256: String,
 }
 
+/// The largest zip index (central directory) a package can have.
+const MAX_INDEX_BYTES: u64 = 64 << 20;
+
+/// Opens a package's zip, refusing what is too large before the zip's index is read: the index
+/// of a crafted file alone could take gigabytes of memory, and update folders are read at start.
+fn open_archive(package: &Path, limits: Limits) -> Result<ZipArchive<fs::File>> {
+    let refuse = |msg: String| Error::Package(msg);
+    let mut file = fs::File::open(package).map_err(|e| Error::io(package, e))?;
+    let file_len = file.metadata().map_err(|e| Error::io(package, e))?.len();
+    if file_len > limits.max_total_bytes.saturating_add(64 << 20) {
+        return Err(refuse("the file is larger than any package can be".into()));
+    }
+    if !index_within_limits(&mut file, file_len, limits).map_err(|e| Error::io(package, e))? {
+        return Err(refuse(format!("more than {} files", limits.max_files)));
+    }
+    let archive =
+        ZipArchive::new(file).map_err(|e| refuse(format!("not a valid .dsapp (zip) file: {e}")))?;
+    if archive.len() > limits.max_files + 3 {
+        return Err(refuse(format!("more than {} files", limits.max_files)));
+    }
+    Ok(archive)
+}
+
+/// Whether every end-of-index record at the end of the file (each one that could be the real one,
+/// as a zip's comment may hold look-alikes) claims an index within the limits.
+fn index_within_limits(file: &mut fs::File, len: u64, limits: Limits) -> io::Result<bool> {
+    const RECORD: usize = 22;
+    let tail_len = len.min(RECORD as u64 + 65_535);
+    let tail_start = len - tail_len;
+    file.seek(SeekFrom::Start(tail_start))?;
+    let mut tail = vec![0; tail_len as usize];
+    file.read_exact(&mut tail)?;
+    let u16_at = |b: &[u8], at: usize| u64::from(u16::from_le_bytes([b[at], b[at + 1]]));
+    let u32_at = |b: &[u8], at: usize| {
+        u64::from(u32::from_le_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]]))
+    };
+    let u64_at = |b: &[u8], at: usize| u32_at(b, at) | (u32_at(b, at + 4) << 32);
+    for at in 0..tail.len().saturating_sub(RECORD - 1) {
+        if &tail[at..at + 4] != b"PK\x05\x06" {
+            continue;
+        }
+        let mut entries = u16_at(&tail, at + 10);
+        let mut size = u32_at(&tail, at + 12);
+        // Zip64: these fields are full, and the real numbers are in a record the locator names.
+        let record = tail_start + at as u64;
+        if (entries == 0xFFFF || size == 0xFFFF_FFFF) && record >= 20 {
+            let mut locator = [0; 20];
+            file.seek(SeekFrom::Start(record - 20))?;
+            file.read_exact(&mut locator)?;
+            if &locator[..4] == b"PK\x06\x07" {
+                let mut zip64 = [0; 56];
+                file.seek(SeekFrom::Start(u64_at(&locator, 8)))?;
+                if file.read_exact(&mut zip64).is_ok() && &zip64[..4] == b"PK\x06\x06" {
+                    entries = u64_at(&zip64, 32);
+                    size = u64_at(&zip64, 40);
+                }
+            }
+        }
+        if entries > limits.max_files as u64 + 3 || size > MAX_INDEX_BYTES {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 /// Extracts `package` into the new folder `dest` and verifies it. On any error `dest` is removed.
 ///
 /// Checks: path rules, no links or special files, no duplicate names (ignoring case), size
@@ -443,19 +508,8 @@ pub fn extract_and_verify(
 
 fn extract_inner(package: &Path, dest: &Path, opts: &VerifyOptions) -> Result<VerifiedPackage> {
     let refuse = |msg: String| Error::Package(msg);
-    let file = fs::File::open(package).map_err(|e| Error::io(package, e))?;
     let limits = opts.limits;
-    // Before reading the zip's index: a file this large cannot be a package within the
-    // limits, and its index alone could take a lot of memory.
-    let file_len = file.metadata().map_err(|e| Error::io(package, e))?.len();
-    if file_len > limits.max_total_bytes.saturating_add(64 << 20) {
-        return Err(refuse("the file is larger than any package can be".into()));
-    }
-    let mut archive =
-        ZipArchive::new(file).map_err(|e| refuse(format!("not a valid .dsapp (zip) file: {e}")))?;
-    if archive.len() > limits.max_files + 3 {
-        return Err(refuse(format!("more than {} files", limits.max_files)));
-    }
+    let mut archive = open_archive(package, limits)?;
     // Any zip can be offered (a downloaded .dsapp often arrives renamed to .zip): one without
     // the signed file list is said to be no app before anything is extracted.
     if archive.index_for_name(FILES_LIST).is_none() {
@@ -679,16 +733,7 @@ pub struct PackageHeader {
 /// [`extract_and_verify`].
 pub fn read_header(package: &Path, limits: Limits) -> Result<PackageHeader> {
     let refuse = |msg: String| Error::Package(msg);
-    let file = fs::File::open(package).map_err(|e| Error::io(package, e))?;
-    let file_len = file.metadata().map_err(|e| Error::io(package, e))?.len();
-    if file_len > limits.max_total_bytes.saturating_add(64 << 20) {
-        return Err(refuse("the file is larger than any package can be".into()));
-    }
-    let mut archive =
-        ZipArchive::new(file).map_err(|e| refuse(format!("not a valid .dsapp (zip) file: {e}")))?;
-    if archive.len() > limits.max_files + 3 {
-        return Err(refuse(format!("more than {} files", limits.max_files)));
-    }
+    let mut archive = open_archive(package, limits)?;
     let mut read = |name: &str| -> Result<Vec<u8>> {
         let mut entry = archive
             .by_name(name)
@@ -818,6 +863,47 @@ impl<W: Write> Write for HashingWriter<'_, W> {
 
     fn flush(&mut self) -> io::Result<()> {
         self.inner.flush()
+    }
+}
+
+#[cfg(test)]
+mod index_tests {
+    use super::*;
+
+    /// The end of a zip's index, as the file's last bytes.
+    fn end_record(entries: u16, size: u32) -> Vec<u8> {
+        let mut r = b"PK\x05\x06".to_vec();
+        r.extend([0; 6]);
+        r.extend(entries.to_le_bytes());
+        r.extend(size.to_le_bytes());
+        r.extend([0; 6]);
+        r
+    }
+
+    #[test]
+    fn a_huge_index_is_refused_before_it_is_read() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("x.dsapp");
+        for bytes in [
+            end_record(30_000, 0),
+            end_record(1, 200 << 20),
+            // Hidden behind a harmless record, as a comment could be.
+            [end_record(30_000, 0), end_record(0, 0)].concat(),
+        ] {
+            fs::write(&path, bytes).unwrap();
+            let err = read_header(&path, Limits::default())
+                .err()
+                .unwrap()
+                .to_string();
+            assert!(err.contains("more than"), "{err}");
+        }
+        // Within the limits, it goes on to the zip reader.
+        fs::write(&path, end_record(0, 0)).unwrap();
+        let err = read_header(&path, Limits::default())
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(!err.contains("more than"), "{err}");
     }
 }
 

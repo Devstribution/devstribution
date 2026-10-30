@@ -57,11 +57,11 @@ pub fn export(
         bail!("{} was left as it is", out.display());
     }
     fs::write(&out, author.to_file()).with_context(|| format!("writing {}", out.display()))?;
-    println!("Trust file for `{namespace}` written to {}", out.display());
+    say!("Trust file for `{namespace}` written to {}", out.display());
     for fp in author.fingerprints() {
-        println!("  key fingerprint {fp}");
+        say!("  key fingerprint {fp}");
     }
-    println!(
+    say!(
         "IT approves the author by listing this file in the devstribution policy. Tell them the \
          fingerprint through another channel, so they can check the file is really yours."
     );
@@ -88,17 +88,17 @@ fn confirm_overwrite(path: &Path) -> Result<bool> {
 pub fn show(file: &Path) -> Result<()> {
     let text = fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))?;
     let author = TrustedAuthor::parse(&text).map_err(|e| anyhow!("{}: {e}", file.display()))?;
-    println!("Author `{}`", author.namespace);
+    say!("Author `{}`", author.namespace);
     if let Some(name) = &author.name {
-        println!("  name: {name}");
+        say!("  name: {name}");
     }
     if let Some(contact) = &author.contact {
-        println!("  contact: {contact}");
+        say!("  contact: {contact}");
     }
     for fp in author.fingerprints() {
-        println!("  key fingerprint {fp}");
+        say!("  key fingerprint {fp}");
     }
-    println!(
+    say!(
         "Approving it lets every app `{}/…` signed with these keys install.",
         author.namespace
     );

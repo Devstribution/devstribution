@@ -462,7 +462,6 @@ impl Store {
             &self.paths,
             &self.revocation_roots,
             self.bundled_revocations.as_ref(),
-            &date(now_secs()),
         )
     }
 
@@ -524,7 +523,7 @@ impl Store {
         if !p.approves(namespace, key) {
             // The approved authors could not all be read (a network share out of reach): an
             // app installed under the policy keeps running, nothing new installs.
-            let tolerated = approved_before && !p.problems.is_empty() && scan.is_none();
+            let tolerated = approved_before && p.authors_unreachable && scan.is_none();
             if !tolerated {
                 reasons.push(if p.knows(namespace) {
                     format!(
@@ -1223,7 +1222,11 @@ impl Store {
                 let previous = state.apps.get(&pending.id);
                 let last_inputs = previous.map(|r| r.last_inputs.clone()).unwrap_or_default();
                 let quarantine = previous.and_then(|r| r.quarantine.clone());
-                let guard_allow = previous.map(|r| r.guard_allow.clone()).unwrap_or_default();
+                // What the user allowed was for the key they saw it from: a new key starts over.
+                let guard_allow = previous
+                    .filter(|r| same_key(&r.publisher_key, &pending.publisher_key))
+                    .map(|r| r.guard_allow.clone())
+                    .unwrap_or_default();
                 let mut revocation_acks = previous
                     .map(|r| r.revocation_acks.clone())
                     .unwrap_or_default();
@@ -1319,6 +1322,8 @@ impl Store {
                 let _ = crate::secrets::delete(id, &name);
             }
         }
+        // Also what an older version declared, or when the manifest above could not be read.
+        let _ = crate::secrets::delete_all(id);
         self.update_state(|state| {
             state
                 .apps
@@ -1648,7 +1653,12 @@ impl Store {
     }
 
     pub fn run(&self, run_id: &str) -> Result<RunRecord> {
-        if run_id.contains(['/', '\\', '.']) {
+        // Only what a run id is made of: joined to a path, `C:x` would leave the runs folder.
+        if run_id.is_empty()
+            || !run_id
+                .chars()
+                .all(|c| c.is_alphanumeric() || "-_".contains(c))
+        {
             bail!("invalid run id");
         }
         let data =

@@ -77,6 +77,9 @@ pub enum Imported {
     },
 }
 
+/// Earlier than any end date, for lists that were already accepted.
+const ANY_DAY: &str = "";
+
 /// The list and the statements, as read from the data folder.
 pub struct Known {
     pub list: Option<(RevocationList, &'static str)>,
@@ -93,24 +96,21 @@ fn statements_dir(paths: &Paths) -> PathBuf {
 
 impl Known {
     /// Reads what the data folder holds and the launcher's bundled list, keeping the list with
-    /// the higher serial. A file that does not verify is ignored (and said in the log).
-    pub fn load(
-        paths: &Paths,
-        roots: &[PublicKey],
-        bundled: Option<&ListFiles>,
-        today: &str,
-    ) -> Known {
+    /// the higher serial. A file that does not verify is ignored (and said in the log). The list
+    /// key's end date is only checked at import: a list goes on applying when that date passes,
+    /// or nobody could rely on what it says about a malicious key once it did.
+    pub fn load(paths: &Paths, roots: &[PublicKey], bundled: Option<&ListFiles>) -> Known {
         let held =
             ListFiles::read(&list_dir(paths))
                 .ok()
-                .and_then(|f| match f.verify(roots, today) {
+                .and_then(|f| match f.verify(roots, ANY_DAY) {
                     Ok(l) => Some((l, "imported")),
                     Err(e) => {
                         crate::applog::write(&format!("the revocation list held is ignored: {e}"));
                         None
                     }
                 });
-        let bundled = bundled.and_then(|f| f.verify(roots, today).ok().map(|l| (l, "bundled")));
+        let bundled = bundled.and_then(|f| f.verify(roots, ANY_DAY).ok().map(|l| (l, "bundled")));
         let list = match (held, bundled) {
             (Some(h), Some(b)) => Some(if b.0.serial > h.0.serial { b } else { h }),
             (h, b) => h.or(b),
@@ -265,7 +265,7 @@ pub fn import(
         )
     })?;
     let list = files.verify(roots, today)?;
-    let current = Known::load(paths, roots, bundled, today).list;
+    let current = Known::load(paths, roots, bundled).list;
     if let Some((held, _)) = &current {
         if list.serial == held.serial {
             bail!("this launcher already has list {}", list.serial);

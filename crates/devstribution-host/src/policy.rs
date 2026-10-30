@@ -68,6 +68,15 @@ pub struct Policy {
     /// What could not be read (a policy file, a `.trust` file). Authors that could not be read
     /// are not approved.
     pub problems: Vec<String>,
+    /// A source of approved authors could not be reached (a share out of reach), so an author
+    /// missing from the list may only be out of sight. A file that was read and is wrong, or that
+    /// users could change, does not count: IT has to fix those, and nobody is approved by them.
+    pub authors_unreachable: bool,
+}
+
+/// Whether reading a policy source failed for lack of access to it, not because of its content.
+fn unreachable(e: &anyhow::Error) -> bool {
+    e.root_cause().downcast_ref::<std::io::Error>().is_some()
 }
 
 /// The TOML policy file. Unknown fields are refused: a misspelt setting must not be silently
@@ -119,6 +128,7 @@ impl Policy {
     /// cannot be read goes to `problems`, and whoever it would have approved is not approved.
     pub fn from_values(source: &str, values: &dyn PolicyValues, loader: &Loader) -> Policy {
         let mut problems = Vec::new();
+        let mut authors_unreachable = false;
         let mut source = source.to_string();
         let file = match values.string("PolicyFile").filter(|s| !s.trim().is_empty()) {
             Some(path) => {
@@ -126,6 +136,7 @@ impl Policy {
                 match loader.read_policy_file(Path::new(path.trim())) {
                     Ok(file) => file,
                     Err(e) => {
+                        authors_unreachable |= unreachable(&e);
                         problems.push(format!("{e:#}"));
                         PolicyFile::default()
                     }
@@ -150,13 +161,19 @@ impl Policy {
         if let Some(folder) = folder {
             match loader.list_trust_folder(&folder) {
                 Ok(files) => trust_files.extend(files),
-                Err(e) => problems.push(format!("{e:#}")),
+                Err(e) => {
+                    authors_unreachable |= unreachable(&e);
+                    problems.push(format!("{e:#}"));
+                }
             }
         }
         for path in trust_files {
             match loader.read_trust_file(&path) {
                 Ok(a) => authors.push(a),
-                Err(e) => problems.push(format!("{e:#}")),
+                Err(e) => {
+                    authors_unreachable |= unreachable(&e);
+                    problems.push(format!("{e:#}"));
+                }
             }
         }
 
@@ -217,6 +234,7 @@ impl Policy {
                 .map(|s| PathBuf::from(s.trim()))
                 .or(file.update_folder),
             problems,
+            authors_unreachable,
         }
     }
 
@@ -341,15 +359,39 @@ impl Loader {
     }
 }
 
-/// Whether the current user could change `path`: write a file, or add files to a folder. Asks
-/// Windows by opening it for writing (nothing is written), which accounts for every group the
-/// user is in and for share permissions on a network folder.
+/// Whether the current user could change `path`: write a file, add files to a folder, remove or
+/// replace it, or give themselves those rights. Asks Windows by opening it for each right on its
+/// own (nothing is written), which accounts for every group the user is in and for share
+/// permissions on a network folder. Asking for them together would miss a user who holds only one.
 fn user_can_write(path: &Path) -> bool {
     #[cfg(windows)]
     {
-        // `std` opens folders too (it always asks for backup semantics); for a folder, write
-        // access is the right to add files and folders to it.
-        fs::OpenOptions::new().write(true).open(path).is_ok()
+        use std::os::windows::fs::OpenOptionsExt;
+        const WRITE_DATA_OR_ADD_FILE: u32 = 0x2;
+        const APPEND_DATA_OR_ADD_FOLDER: u32 = 0x4;
+        const DELETE_CHILD: u32 = 0x40;
+        const DELETE: u32 = 0x1_0000;
+        const WRITE_DAC: u32 = 0x4_0000;
+        const WRITE_OWNER: u32 = 0x8_0000;
+        // Windows opens a folder only with this flag; without it every folder looks read-only.
+        const BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        [
+            WRITE_DATA_OR_ADD_FILE,
+            APPEND_DATA_OR_ADD_FOLDER,
+            DELETE_CHILD,
+            DELETE,
+            WRITE_DAC,
+            WRITE_OWNER,
+        ]
+        .into_iter()
+        .any(|right| {
+            fs::OpenOptions::new()
+                .access_mode(right)
+                .share_mode(7)
+                .custom_flags(BACKUP_SEMANTICS)
+                .open(path)
+                .is_ok()
+        })
     }
     #[cfg(not(windows))]
     {
@@ -581,6 +623,33 @@ mod system {
 
 #[cfg(test)]
 mod tests {
+    /// Having only the right to create files in a folder is enough to plant a `.trust` file.
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_with_only_the_right_to_add_files_counts_as_writable() {
+        use std::process::Command;
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("share");
+        std::fs::create_dir(&dir).unwrap();
+        assert!(
+            super::user_can_write(&dir),
+            "an ordinary folder of the user's"
+        );
+        let user = std::env::var("USERNAME").unwrap();
+        let acl = |args: &[&str]| {
+            let ok = Command::new("icacls")
+                .arg(&dir)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(ok.status.success(), "{ok:?}");
+        };
+        acl(&["/inheritance:r", "/grant:r", &format!("{user}:(RX,AD)")]);
+        let writable = super::user_can_write(&dir);
+        acl(&["/grant:r", &format!("{user}:(F)")]);
+        assert!(writable);
+    }
+
     use super::*;
     use devstribution_core::signing::generate_keys;
 

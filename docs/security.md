@@ -37,7 +37,8 @@ apps, within the limits listed below.
 | Credentials in the user's environment reaching every app | Runs start with a listed set of environment variables (Windows' own, the user's folders, the proxy, the locale); cloud keys, tokens and any other variable of the user's session are left out. Secrets reach an app only as declared. |
 | A downloaded package without a warning | Mark-of-the-Web is read (also UTF-16); a mark that cannot be understood counts as "from the internet". |
 | Managed mode: an author IT has not approved, or an approved namespace signed with another key | Only namespaces and full keys listed in the HKLM policy install and run; checked at inspect, again at install, and before every run. No trust on first use, no "Install anyway". |
-| Managed mode: a user or an app pointing the launcher at its own policy | The policy is only read from `HKLM`, which users cannot write. Policy files, trust folders and `.trust` files the user could write are refused (Windows is asked whether the user could open them for writing). A policy that cannot be read approves no one. |
+| Managed mode: a user or an app pointing the launcher at its own policy | The policy is only read from `HKLM`, which users cannot write. Policy files, trust folders and `.trust` files the user could change are refused (Windows is asked, right by right, whether the user could write them, add to them, delete them or change their permissions). A policy that cannot be read approves no one. |
+| Secrets left behind in what the launcher keeps | A secret's value is replaced by `[secret]` in a run's log, messages and result, and uninstalling an app removes every secret kept for it. Only the value as given: an app that encodes a secret or writes it to a file of its own is not covered. |
 | A tampered CI pipeline (once it signs releases) | Actions pinned to commit SHAs, read-only token, `cargo deny` and `npm audit` on every change, Dependabot updates. |
 
 ## What is not covered (stated limits)
@@ -91,8 +92,14 @@ These are deliberate limits of the current design. Each one says why, and what w
    approved, not against a user who sets out to get round it: the launcher's own files are in
    the user's folder. AppLocker or WDAC rules that allow only the signed launcher close this,
    as will the per-machine mode. Apps installed under the policy keep running while the
-   approved authors cannot be read (a share out of reach), so that laptops work away from the
-   office; nothing new installs meanwhile.
+   approved authors cannot be reached (a share out of reach), so that laptops work away from the
+   office; nothing new installs meanwhile. A file that was read and is wrong does not count. Only
+   the file and its own folder are checked, not the folders above them.
+8. **The run journal shows accidents, not an attacker.** Its hash chain has no secret in it, so a
+   program running as the user can rewrite the whole chain. It tells a missing or edited run from
+   what a cleanup did; it does not prove what happened.
+9. **What the user allowed past the guard stays for updates** signed with the same key: a new
+   version of an app can use a rule the user allowed for an older one. A new key starts over.
 
 ## Pre-signing review, October 2026
 
@@ -155,3 +162,32 @@ Results in [`report.md`](report.md):
 - **uv behind a company proxy:** `--system-certs` with the company's TLS inspection.
 - **Managed mode:** the registry read and the "can the user write this?" check, on a local
   folder and on a network share ([`managed-mode.md`](managed-mode.md)).
+
+## Review of what changed since signing was planned, 30 October 2026
+
+Guard file rules, managed mode, launcher and app updates, revocation, cleanup and the journal, read
+in full, with the open items of the October scan. Findings 2 and 3 were reproduced on Windows before
+the fix, and so was the faulty check of finding 1 (the attack it allows was not played out, and not
+on a real managed PC). The others were found by reading the code. Each fix has a test, except the
+files flagged by name, which share one.
+
+| # | Severity | Finding | Fix |
+|---|---|---|---|
+| 1 | High | Managed mode's "can the user change this?" opened folders without the flag Windows needs, so every folder looked read-only, in every release so far. A user with write access to a trust folder could add a `.trust` file, marked read-only so the file's own check passed too, and approve any author. Only a trust folder with loose permissions was exposed. | Each right asked for separately, with the flag. |
+| 2 | High | The guard checked reads by the path as spelled: `C:\Users\x\APPDAT~1\...` reached saved keys. | Checked as spelled and as resolved; streams and trailing dots compared away. |
+| 3 | High | `sqlite3.connect("file:.../Login Data?mode=ro", uri=True)` reached browser passwords. | The file behind a `file:` name is what is checked. |
+| 4 | Medium | Any problem in a policy, even an unrelated typo, kept every removed author's apps running. | Only when a source of authors cannot be reached. |
+| 5 | Medium | Secret values could reach `run.json`, `app.log` and diagnostics. | Masked before they are kept. |
+| 6 | Medium | Python the scan could not read counted as clean, including a `# coding: utf-7` line that makes plain letters mean other code. | A warning (`unreadable-source`). None in 13,000 files of ordinary Python. |
+| 7 | Medium | A crafted package's zip index could use gigabytes of memory, also from an update folder anyone can write to. | Its claimed size is checked first. |
+| 8 | Low | Uninstall left secrets a later version stopped declaring. | The credential store is listed (Windows). |
+| 9 | Low | `.reg`, `.url`, `.inf`, `.xll` and macro Office files were not flagged. | Flagged. |
+| 10 | Low | The update summary hid a second match of a rule in a file. | More matches than before count as new. |
+| 11 | Low | The CLI printed terminal escape codes from packages. | Removed. |
+| 12 | Low | A revocation list stopped applying when its signing key's end date passed. | That date is checked at import only. |
+| 13 | Low | What the user allowed past the guard carried over to a new key. | A new key starts over. |
+| 14 | Low | A run id like `C:x` left the runs folder when joined to a path. | Only the characters a run id has. |
+
+Looked at and found sound: the updater (signature, `requireSignedVersion`, no downgrade), update
+folders offering only what the install flow accepts, revocation signatures and rotations, cleanup
+not following links, the window's permissions and CSP.

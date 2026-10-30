@@ -17,7 +17,7 @@ pub fn diff(old: &Path, new: &Path, code: bool, json: bool) -> Result<u8> {
     let b = open(new, &tmp.path().join("new"))?;
     let d = diff::diff(&a, &b)?;
     if json {
-        println!("{}", serde_json::to_string_pretty(&d)?);
+        say!("{}", serde_json::to_string_pretty(&d)?);
     } else {
         print_diff(&a, &b, &d, code);
     }
@@ -45,54 +45,54 @@ fn open(target: &Path, dest: &Path) -> Result<AppFolder> {
 }
 
 fn print_diff(a: &AppFolder, b: &AppFolder, d: &AppDiff, code: bool) {
-    println!("{} → {}", d.old_version, d.new_version);
+    say!("{} → {}", d.old_version, d.new_version);
     if d.is_empty() {
-        println!("  no changes");
+        say!("  no changes");
         return;
     }
 
     if !d.highlights.is_empty() {
-        println!("\nWorth a look");
+        say!("\nWorth a look");
         for h in &d.highlights {
-            println!("  {:<7}  {}", h.severity.as_str(), h.message);
+            say!("  {:<7}  {}", h.severity.as_str(), h.message);
         }
     }
 
     let p = &d.permissions;
     if !p.is_empty() {
-        println!("\nPermissions");
+        say!("\nPermissions");
         let rows = |what: &str, added: &[String], removed: &[String]| {
             for v in added {
-                println!("  + {what} {v}");
+                say!("  + {what} {v}");
             }
             for v in removed {
-                println!("  - {what} {v}");
+                say!("  - {what} {v}");
             }
         };
         rows("network", &p.network_added, &p.network_removed);
         rows("folders", &p.folders_added, &p.folders_removed);
         rows("secret", &p.secrets_added, &p.secrets_removed);
         match p.sap {
-            Some(true) => println!("  + sap"),
-            Some(false) => println!("  - sap"),
+            Some(true) => say!("  + sap"),
+            Some(false) => say!("  - sap"),
             None => {}
         }
     }
 
     if !d.declared.is_empty() {
-        println!("\nDeclared");
+        say!("\nDeclared");
         for c in &d.declared {
-            println!("  {c}");
+            say!("  {c}");
         }
     }
 
     if !d.packages.is_empty() {
-        println!("\nPackages (uv.lock)");
+        say!("\nPackages (uv.lock)");
         for c in &d.packages {
             match (&c.old, &c.new) {
-                (None, Some(n)) => println!("  + {} {n}", c.name),
-                (Some(o), None) => println!("  - {} {o}", c.name),
-                (Some(o), Some(n)) => println!(
+                (None, Some(n)) => say!("  + {} {n}", c.name),
+                (Some(o), None) => say!("  - {} {o}", c.name),
+                (Some(o), Some(n)) => say!(
                     "    {} {o} → {n}{}",
                     c.name,
                     if c.downgraded() { "  (older)" } else { "" }
@@ -103,17 +103,17 @@ fn print_diff(a: &AppFolder, b: &AppFolder, d: &AppDiff, code: bool) {
     }
 
     if !d.findings_added.is_empty() || !d.findings_removed.is_empty() {
-        println!("\nCode scan");
+        say!("\nCode scan");
         for f in &d.findings_added {
-            println!("  + {:<7}  {}", f.severity.as_str(), f.message);
-            println!("             {}", crate::scan::location(f));
+            say!("  + {:<7}  {}", f.severity.as_str(), f.message);
+            say!("             {}", crate::scan::location(f));
         }
         for f in &d.findings_removed {
-            println!("  - {:<7}  {} ({})", f.severity.as_str(), f.message, f.path);
+            say!("  - {:<7}  {} ({})", f.severity.as_str(), f.message, f.path);
         }
     }
 
-    println!("\nFiles");
+    say!("\nFiles");
     for f in &d.files {
         let mark = match f.status {
             FileStatus::Added => '+',
@@ -125,17 +125,17 @@ fn print_diff(a: &AppFolder, b: &AppFolder, d: &AppDiff, code: bool) {
         } else {
             format!("  (+{} -{})", f.lines_added, f.lines_removed)
         };
-        println!("  {mark} {}{detail}", f.path);
+        say!("  {mark} {}{detail}", f.path);
     }
 
     if code {
         for f in d.files.iter().filter(|f| !f.binary) {
             if let Some(text) = diff::file_text_diff(a, b, &f.path) {
-                println!("\n{text}");
+                say!("\n{text}");
             }
         }
     } else if d.files.iter().any(|f| !f.binary) {
-        println!("\nAdd --code to see the changed lines.");
+        say!("\nAdd --code to see the changed lines.");
     }
 
     let worth = d
@@ -144,7 +144,7 @@ fn print_diff(a: &AppFolder, b: &AppFolder, d: &AppDiff, code: bool) {
         .filter(|h| h.severity != Severity::Info)
         .count();
     if worth > 0 {
-        println!(
+        say!(
             "\n{worth} change(s) worth a look. Packages are compared by version only: what changed \
              inside them is not shown."
         );

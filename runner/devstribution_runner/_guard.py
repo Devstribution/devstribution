@@ -268,7 +268,7 @@ class Guard:
             "winreg.DeleteKey": self._on_set_value,
             "winreg.DeleteValue": self._on_set_value,
             "open": self._on_open,
-            "sqlite3.connect": self._on_read_path,
+            "sqlite3.connect": self._on_sqlite,
             "shutil.copyfile": self._on_copy,
             "os.rename": self._on_rename,
             "os.link": self._on_link,
@@ -511,7 +511,14 @@ class Guard:
     def _is_chosen(self, path: str) -> bool:
         return _inside_any(path, self._chosen)
 
-    def _check_read(self, path: Optional[str]) -> None:
+    def _check_read(self, value: Any) -> None:
+        """A file read, as the app named it and as the system names it (8.3 short names, links
+        and junctions lead elsewhere)."""
+        path, real = _abs_path(value), _real(value)
+        for spelled in {path, real} - {None}:
+            self._check_read_path(spelled)
+
+    def _check_read_path(self, path: str) -> None:
         if not path or self._is_chosen(path):
             return
         name = path.rsplit("\\", 1)[-1]
@@ -584,7 +591,7 @@ class Guard:
         path = _abs_path(args[0])
         if path is None:
             return
-        self._check_read(path)
+        self._check_read(args[0])
         mode = args[1] if len(args) > 1 else None
         flags = args[2] if len(args) > 2 else -1
         writing = (isinstance(mode, str) and any(c in mode for c in "wax+")) or (
@@ -593,25 +600,25 @@ class Guard:
         if writing:
             self._check_change(args[0], "write")
 
-    def _on_read_path(self, args: tuple) -> None:
-        self._check_read(_abs_path(args[0]) if args else None)
+    def _on_sqlite(self, args: tuple) -> None:
+        self._check_read(_sqlite_path(args[0]) if args else None)
 
     def _on_copy(self, args: tuple) -> None:
-        self._check_read(_abs_path(args[0]) if args else None)
+        self._check_read(args[0] if args else None)
         self._check_change(args[1] if len(args) > 1 else None, "write")
 
     def _on_rename(self, args: tuple) -> None:
         if _relative_to_fd(args, 2) or _relative_to_fd(args, 3):
             return
         # Moving a file somewhere the app can read gives it the content: the source is read too.
-        self._check_read(_abs_path(args[0]) if args else None)
+        self._check_read(args[0] if args else None)
         self._check_change(args[0] if args else None, "move")
         self._check_change(args[1] if len(args) > 1 else None, "write")
 
     def _on_link(self, args: tuple) -> None:
         # A hard or symbolic link to a file reads it as well as an open would.
         if not _relative_to_fd(args, 2):
-            self._check_read(_abs_path(args[0]) if args else None)
+            self._check_read(args[0] if args else None)
         self._check_change(args[1] if len(args) > 1 else None, "write")
 
     def _on_remove(self, args: tuple) -> None:
@@ -832,13 +839,20 @@ def _text(value: Any) -> str:
 
 
 def _normal(path: str) -> str:
-    """How the guard compares paths: lower case, backslashes, no `\\\\?\\` prefix, no trailing slash."""
+    """How the guard compares paths: lower case, backslashes, no `\\\\?\\` or `\\\\.\\` prefix on a
+    disk path, no trailing slash, and for the last name no NTFS stream (`file::$DATA`) and no
+    trailing dots or spaces, which Windows ignores: all of them spell the same file."""
     text = path.replace("/", "\\").lower()
     if text.startswith("\\\\?\\unc\\"):
         text = "\\\\" + text[8:]
-    elif text.startswith("\\\\?\\"):
+    elif text.startswith("\\\\?\\") or re.match(r"\\\\\.\\[a-z]:", text):
         text = text[4:]
-    return text.rstrip("\\") if len(text) > 3 else text
+    text = text.rstrip("\\") if len(text) > 3 else text
+    if os.name == "nt" and len(text) > 3 and not text.startswith("\\\\.\\"):
+        folder, sep, name = text.rpartition("\\")
+        name = name.split(":", 1)[0].rstrip(". ") or name
+        text = folder + sep + name
+    return text
 
 
 def _abs_path(value: Any) -> Optional[str]:
@@ -848,6 +862,21 @@ def _abs_path(value: Any) -> Optional[str]:
         return _normal(os.path.abspath(_text(value)))
     except Exception:
         return None
+
+
+def _sqlite_path(value: Any) -> Any:
+    """The file behind a database name: `sqlite3.connect("file:C:/x?mode=ro", uri=True)` is `C:/x`."""
+    text = _text(value) if isinstance(value, (str, bytes, os.PathLike)) else ""
+    if not text.lower().startswith("file:"):
+        return value
+    from urllib.parse import unquote
+
+    path = text[5:].split("?", 1)[0].split("#", 1)[0]
+    if path.startswith("//"):  # `file://host/path`
+        path = "/" + path[2:].split("/", 1)[-1]
+    path = unquote(path)
+    # `/C:/x` is `C:/x`.
+    return path[1:] if re.match(r"/[A-Za-z]:", path) else path
 
 
 def _resolved(value: Any) -> Optional[str]:

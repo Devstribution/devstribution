@@ -291,7 +291,14 @@ const SCRIPT_FILE: Rule = rule(
     "script-file",
     C::Binary,
     S::Warning,
-    "Ships a Windows script (batch, PowerShell, VBScript), which the code check does not read",
+    "Ships a Windows script, shortcut or settings file, or an Office file with macros, which the code check does not read",
+);
+/// Python the scan cannot read as Python would: what it does is not known.
+const UNREADABLE_SOURCE: Rule = rule(
+    "unreadable-source",
+    C::Binary,
+    S::Warning,
+    "Has Python code the code check cannot read, so it cannot say what that code does",
 );
 const COMPILED_PYTHON: Rule = rule(
     "compiled-python",
@@ -463,14 +470,108 @@ const STRINGS: &[(&str, &Rule)] = &[
 ];
 
 pub(crate) const BINARY_EXTENSIONS: &[&str] = &[
-    "exe", "dll", "pyd", "so", "dylib", "sys", "scr", "com", "msi", "jar", "ocx", "cpl",
+    "exe", "dll", "pyd", "so", "dylib", "sys", "scr", "com", "msi", "jar", "ocx", "cpl", "xll",
 ];
 const SCRIPT_EXTENSIONS: &[&str] = &[
-    "bat", "cmd", "ps1", "psm1", "vbs", "vbe", "js", "jse", "wsf", "hta", "lnk",
+    "bat",
+    "cmd",
+    "ps1",
+    "psm1",
+    "vbs",
+    "vbe",
+    "js",
+    "jse",
+    "wsf",
+    "wsh",
+    "hta",
+    "lnk",
+    "url",
+    "scf",
+    "reg",
+    "inf",
+    "msc",
+    "chm",
+    "application",
+    "appref-ms",
+    "settingcontent-ms",
+    "library-ms",
+    "website",
+    "xla",
+    "xlam",
+    "xlsm",
+    "xltm",
+    "docm",
+    "dotm",
+    "pptm",
+    "potm",
+    "ppam",
 ];
 
 const LONG_LINE_CHARS: usize = 1000;
 const ENCODED_BLOB_CHARS: usize = 200;
+/// Python files larger than this are not read: no hand-written code is, and memory is finite.
+const MAX_SOURCE_BYTES: usize = 16 << 20;
+/// f-strings inside f-strings the scan follows.
+const MAX_FSTRING_DEPTH: u32 = 16;
+/// The name that stands in for an f-string nested too deep to follow.
+const TOO_DEEP: &str = "\0too-deep";
+
+/// A Python file as text, as Python would decode it, and why it could not be, if so. Python obeys
+/// a `# coding:` line (PEP 263): under `utf-7` or `unicode_escape`, plain letters can stand for
+/// other code. Encodings that keep ASCII as it is read fine for what the scan looks for.
+fn decode_source(bytes: &[u8]) -> (std::borrow::Cow<'_, str>, Option<&'static str>) {
+    if bytes.len() > MAX_SOURCE_BYTES {
+        return ("".into(), Some("the file is too large to read"));
+    }
+    let lossy = String::from_utf8_lossy(bytes);
+    match source_encoding(&lossy) {
+        None => {
+            let problem = matches!(lossy, std::borrow::Cow::Owned(_)).then_some("not valid UTF-8");
+            (lossy, problem)
+        }
+        Some(e) if matches!(e.as_str(), "utf-8" | "utf8" | "ascii" | "us-ascii") => {
+            let problem = matches!(lossy, std::borrow::Cow::Owned(_)).then_some("not valid UTF-8");
+            (lossy, problem)
+        }
+        Some(e) if keeps_ascii(&e) => {
+            let text: String = bytes.iter().map(|&b| char::from(b)).collect();
+            (text.into(), None)
+        }
+        Some(_) => (lossy, Some("it declares an encoding that can hide code")),
+    }
+}
+
+fn keeps_ascii(encoding: &str) -> bool {
+    encoding.starts_with("iso-8859-")
+        || encoding.starts_with("iso8859-")
+        || encoding.starts_with("cp125")
+        || encoding.starts_with("windows-125")
+        || matches!(encoding, "latin-1" | "latin1" | "l1")
+}
+
+/// The encoding a `# coding:` comment declares, lower case: it counts on the first two lines,
+/// on the second only below a comment or a blank line.
+fn source_encoding(source: &str) -> Option<String> {
+    for line in source.lines().take(2) {
+        let line = line.trim_start_matches([' ', '\t', '\x0c']);
+        if !line.is_empty() && !line.starts_with('#') {
+            return None;
+        }
+        if let Some((_, after)) = line.split_once("coding")
+            && let Some(value) = after.strip_prefix([':', '='])
+        {
+            let name: String = value
+                .trim_start_matches([' ', '\t'])
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || "-_.".contains(*c))
+                .collect();
+            if !name.is_empty() {
+                return Some(name.to_ascii_lowercase().replace('_', "-"));
+            }
+        }
+    }
+    None
+}
 
 /// Scans the files of an app folder (`files` are package paths under `root`).
 pub fn scan<'a>(
@@ -515,11 +616,17 @@ impl Scan {
             self.add(&SCRIPT_FILE, rel, None, rel);
         } else if ext == "pyc" || ext == "pyo" {
             self.add(&COMPILED_PYTHON, rel, None, rel);
-        } else if (ext == "py" || ext == "pyw")
-            && let Some(bytes) = read()
-        {
+        } else if ext == "py" || ext == "pyw" {
+            let Some(bytes) = read() else {
+                self.add(&UNREADABLE_SOURCE, rel, None, "the file cannot be opened");
+                return;
+            };
             self.files_scanned += 1;
-            self.source(rel, &String::from_utf8_lossy(&bytes));
+            let (text, problem) = decode_source(&bytes);
+            if let Some(problem) = problem {
+                self.add(&UNREADABLE_SOURCE, rel, None, problem);
+            }
+            self.source(rel, &text);
         }
     }
 
@@ -540,6 +647,14 @@ impl Scan {
         }
 
         let tokens = tokenize(src, 1);
+        if tokens.iter().any(|t| t.tok == Tok::Name(TOO_DEEP.into())) {
+            self.add(
+                &UNREADABLE_SOURCE,
+                rel,
+                None,
+                "f-strings nested too deep to follow",
+            );
+        }
         let defined: HashSet<&str> = tokens
             .windows(2)
             .filter_map(|w| match (&w[0].tok, &w[1].tok) {
@@ -1112,6 +1227,10 @@ struct Token {
 /// expressions inside f-strings tokenized too), operators and logical line ends. Comments,
 /// numbers and indentation are dropped.
 fn tokenize(src: &str, first_line: u32) -> Vec<Token> {
+    tokenize_nested(src, first_line, 0)
+}
+
+fn tokenize_nested(src: &str, first_line: u32, nesting: u32) -> Vec<Token> {
     let c: Vec<char> = src.chars().collect();
     let mut out: Vec<Token> = Vec::new();
     let (mut i, mut line, mut depth) = (0usize, first_line, 0i32);
@@ -1142,7 +1261,7 @@ fn tokenize(src: &str, first_line: u32) -> Vec<Token> {
             line += 1;
             i += 3;
         } else if ch == '\'' || ch == '"' {
-            i = string(&c, i, "", &mut line, &mut out);
+            i = string(&c, i, "", &mut line, &mut out, nesting);
         } else if ch.is_alphabetic() || ch == '_' {
             let start = i;
             while i < c.len() && (c[i].is_alphanumeric() || c[i] == '_') {
@@ -1157,7 +1276,7 @@ fn tokenize(src: &str, first_line: u32) -> Vec<Token> {
                     "r" | "u" | "b" | "f" | "t" | "br" | "rb" | "fr" | "rf" | "tr" | "rt"
                 )
             {
-                i = string(&c, i, &prefix, &mut line, &mut out);
+                i = string(&c, i, &prefix, &mut line, &mut out, nesting);
             } else {
                 // Python reads identifiers in NFKC form (PEP 3131): `ｅｖａｌ` is `eval`.
                 let word = if word.is_ascii() {
@@ -1197,7 +1316,14 @@ fn tokenize(src: &str, first_line: u32) -> Vec<Token> {
 }
 
 /// Reads the string literal starting at the quote `c[start]`; returns the index after it.
-fn string(c: &[char], start: usize, prefix: &str, line: &mut u32, out: &mut Vec<Token>) -> usize {
+fn string(
+    c: &[char],
+    start: usize,
+    prefix: &str,
+    line: &mut u32,
+    out: &mut Vec<Token>,
+    nesting: u32,
+) -> usize {
     let raw = prefix.contains('r');
     let formatted = prefix.contains('f') || prefix.contains('t');
     let first_line = *line;
@@ -1277,11 +1403,16 @@ fn string(c: &[char], start: usize, prefix: &str, line: &mut u32, out: &mut Vec<
         text.push(ch);
         i += 1;
     };
-    if formatted {
+    if formatted && nesting >= MAX_FSTRING_DEPTH {
+        out.push(Token {
+            tok: Tok::Name(TOO_DEEP.into()),
+            line: first_line,
+        });
+    } else if formatted {
         // The expressions of an f-string are code: `f"{eval(x)}"`.
         for (offset, expr) in fstring_expressions(&text) {
             out.extend(
-                tokenize(&expr, first_line + offset)
+                tokenize_nested(&expr, first_line + offset, nesting + 1)
                     .into_iter()
                     .filter(|t| t.tok != Tok::Newline),
             );
@@ -1681,6 +1812,66 @@ kernel32.WriteProcessMemory(h, addr, buf, n, None)
         let mut found: Vec<_> = report.findings.iter().map(|f| f.rule.as_str()).collect();
         found.sort();
         assert_eq!(found, vec!["binary-file", "compiled-python", "script-file"]);
+    }
+
+    fn rules_of(rel: &str, bytes: &[u8]) -> Vec<String> {
+        let mut scan = Scan::default();
+        scan.file(rel, || Some(bytes.to_vec()));
+        let report = scan.finish(&Permissions::default());
+        report.findings.into_iter().map(|f| f.rule).collect()
+    }
+
+    #[test]
+    fn python_it_cannot_read_is_said_not_passed_as_clean() {
+        let unreadable =
+            |bytes: &[u8]| rules_of("a.py", bytes).contains(&"unreadable-source".to_string());
+        assert!(unreadable(b"x = '\xff'\n"));
+        assert!(unreadable(b"# coding: utf-7\n+AGU-xec('x')\n"));
+        assert!(unreadable(
+            b"#!/usr/bin/python\n# -*- coding: unicode_escape -*-\nx = 1\n"
+        ));
+        assert!(unreadable(&vec![b'#'; MAX_SOURCE_BYTES + 1]));
+        // What Python reads as the scan does.
+        assert!(!unreadable("# coding: utf-8\nx = 'é'\n".as_bytes()));
+        assert!(!unreadable(b"x = 1 # coding is fun\ny = 2\n"));
+        assert!(!unreadable(b"import os\n# coding: utf-7\n"));
+        assert!(!unreadable(b"# coding: latin-1\nx = '\xe9'\n"));
+        // A latin-1 file is still read.
+        assert!(
+            rules_of("a.py", b"# coding: latin-1\nx = '\xe9'; eval(x)\n")
+                .contains(&"dynamic-code".to_string())
+        );
+    }
+
+    #[test]
+    fn deep_f_strings_neither_crash_nor_pass() {
+        let mut deep = String::from("eval(x)");
+        // Each level escapes the one inside it, as a string in a string must.
+        for _ in 0..18 {
+            let inner = deep.replace('\\', "\\\\").replace('"', "\\\"");
+            deep = format!("f\"{{{inner}}}\"");
+        }
+        let found = rules_of("a.py", deep.as_bytes());
+        assert!(
+            found.contains(&"unreadable-source".to_string()),
+            "{found:?}"
+        );
+        let found = rules_of("a.py", b"x = f\"{f'{eval(y)}'}\"\n");
+        assert!(
+            !found.contains(&"unreadable-source".to_string()),
+            "{found:?}"
+        );
+    }
+
+    #[test]
+    fn files_that_can_run_outside_python_are_flagged() {
+        for name in [
+            "a.reg", "a.url", "a.inf", "a.xlam", "a.xlsm", "a.docm", "a.scf",
+        ] {
+            assert_eq!(rules_of(name, b"x"), vec!["script-file"], "{name}");
+        }
+        assert_eq!(rules_of("a.xll", b"x"), vec!["binary-file"]);
+        assert!(rules_of("data.xlsx", b"x").is_empty());
     }
 
     #[test]

@@ -10,7 +10,7 @@
 //! inside a package's own code is not shown.
 
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -89,7 +89,8 @@ pub struct AppDiff {
     pub declared: Vec<String>,
     pub packages: Vec<PackageChange>,
     pub files: Vec<FileChange>,
-    /// Findings of the code scan that the old version did not have (same rule, same file).
+    /// Findings of the code scan that the old version did not have (same rule, same file), or
+    /// had fewer of: a second `exec` in a file that had one is new code to look at.
     pub findings_added: Vec<Finding>,
     /// Findings the old version had and the new one does not.
     pub findings_removed: Vec<Finding>,
@@ -203,12 +204,16 @@ pub fn diff(old: &AppFolder, new: &AppFolder) -> Result<AppDiff> {
         &nm.permissions,
     );
     let key = |f: &Finding| (f.rule.clone(), f.path.clone());
-    let old_keys: HashSet<_> = old_scan.findings.iter().map(key).collect();
+    let old_counts: HashMap<_, _> = old_scan
+        .findings
+        .iter()
+        .map(|f| (key(f), f.occurrences))
+        .collect();
     let new_keys: HashSet<_> = new_scan.findings.iter().map(key).collect();
     d.findings_added = new_scan
         .findings
         .into_iter()
-        .filter(|f| !old_keys.contains(&key(f)))
+        .filter(|f| old_counts.get(&key(f)).is_none_or(|n| f.occurrences > *n))
         .collect();
     d.findings_removed = old_scan
         .findings
