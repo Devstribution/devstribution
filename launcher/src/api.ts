@@ -261,6 +261,8 @@ export interface Policy {
   users_may_allow_guard_rules: boolean;
   guard_report_only: string[];
   min_launcher_version?: string | null;
+  /** Where IT puts new versions of apps. */
+  update_folder?: string | null;
   problems: string[];
   log_file: string;
 }
@@ -276,6 +278,21 @@ export interface Settings {
   publishers: { namespace: string; key_id: string; pinned_at: number; source: string }[];
   /** False when IT updates devstribution itself. */
   updates: boolean;
+  /** Folders checked for new versions of apps. */
+  update_folders: string[];
+}
+
+/** A newer version of an installed app, found in an update folder. */
+export interface AppUpdate {
+  id: string;
+  version: string;
+  installed_version: string;
+  path: string;
+}
+
+export interface UpdateCheck {
+  updates: AppUpdate[];
+  problems: { folder: string; message: string }[];
 }
 
 /** A newer devstribution, from the latest release on GitHub. */
@@ -332,6 +349,11 @@ export interface Api {
   checkUpdate(): Promise<LauncherUpdate | null>;
   /** Downloads and checks the update found, then closes the launcher for its installer. */
   installUpdate(): Promise<void>;
+  /** Looks through the update folders. Reads only: nothing installs without the usual screen. */
+  checkAppUpdates(): Promise<UpdateCheck>;
+  /** Asks the user for a folder to check; returns the folders now checked. */
+  addUpdateFolder(): Promise<string[]>;
+  removeUpdateFolder(folder: string): Promise<string[]>;
   onUpdateProgress(cb: (downloaded: number, total: number | null) => void): Promise<Unlisten>;
   /** Run events arrive in batches (at most about ten a second), so a chatty app cannot flood the window. */
   onRunEvents(cb: (runId: string, events: RunEvent[]) => void): Promise<Unlisten>;
@@ -401,6 +423,9 @@ async function tauriApi(): Promise<Api> {
     saveTrustRequest: (token) => invoke("save_trust_request", { token }),
     checkUpdate: () => invoke("check_update"),
     installUpdate: () => invoke("install_update"),
+    checkAppUpdates: () => invoke("check_app_updates"),
+    addUpdateFolder: () => invoke("add_update_folder"),
+    removeUpdateFolder: (folder) => invoke("remove_update_folder", { folder }),
     onUpdateProgress: (cb) =>
       listen<{ downloaded: number; total: number | null }>("update-progress", (e) => cb(e.payload.downloaded, e.payload.total)),
     onRunEvents: (cb) =>

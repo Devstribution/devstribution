@@ -1,6 +1,6 @@
 import {
   X, Square, MoreHorizontal, Wrench, Trash2, FolderOpen, ExternalLink, Pin, PinOff,
-  Loader, Globe, Folder, KeyRound, Database, Puzzle, Sparkles, ShieldX,
+  Loader, Globe, Folder, KeyRound, Database, Puzzle, Sparkles, ShieldX, Download,
 } from "lucide";
 import type { AppView, GuardHit, Input, RunRecord } from "../api";
 import type { Ctx, LiveRun } from "../main";
@@ -286,6 +286,17 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
               } }, "Allow and run again"))))
       : null;
 
+    // ---------- a newer version in an update folder ----------
+    const newer = ctx.appUpdates.get(app.id);
+    const updateBanner = newer
+      ? h("div", { class: "banner blue" }, h("div", { class: "bi" }, icon(Download, 18)),
+          h("div", { class: "grow" },
+            h("strong", null, `Version ${newer.version} is available`),
+            h("div", null, `You have ${app.version}. You’ll see what changed before anything is installed.`),
+            h("div", { class: "banner-actions" },
+              h("button", { class: "btn small", onclick: () => { close(); ctx.install(newer.path); } }, "Review the update"))))
+      : null;
+
     async function uninstall() {
       more.close();
       const ok = await ctx.api.ask(`Uninstall ${app.title}? Its environment and saved secrets are removed; past results stay in Activity.`, "Uninstall", "Uninstall");
@@ -371,7 +382,7 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
         h("div", null, h("h2", null, app.title),
           h("div", { class: "by" }, `by ${app.namespace} · v${app.version} · ${KIND_LABEL[app.kind] ?? app.kind}`, trustTag(app.trust))),
         app.description ? h("div", { class: "desc" }, app.description) : null),
-      h("div", { class: "panel-body" }, quarantine, form, secrets, stateBox, logCard, history, about),
+      h("div", { class: "panel-body" }, quarantine, updateBanner, form, secrets, stateBox, logCard, history, about),
       h("div", { class: "panel-foot" }, runButton, menuWrap));
 
     draw();

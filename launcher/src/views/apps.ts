@@ -65,7 +65,8 @@ export async function appsView(ctx: Ctx): Promise<Rendered> {
               h("span", null, `by ${a.namespace}${w.length ? ` · ${w.join(", ")}` : ""}`),
               a.quarantine
                 ? h("span", { class: "tag red", title: `Stopped by devstribution: the app ${a.quarantine.hit.message}` }, "Blocked")
-                : h("span", null, last(a) ? `Used ${relTime(last(a))} · ${plural(runs(a), "run")} this month` : "Not used yet")),
+                : h("span", null, last(a) ? `Used ${relTime(last(a))} · ${plural(runs(a), "run")} this month` : "Not used yet"),
+              ctx.appUpdates.get(a.id) ? h("span", { class: "tag" }, "Update available") : null),
             h("button", { class: "btn primary", onclick: () => ctx.openApp(a.id) }, "Open"));
         })
       : h("div", { class: "empty-box" }, apps.length === 0
