@@ -126,8 +126,10 @@ What has to hold before our signature goes on it, roughly in this order.
    7 minutes per target, found nothing; with the path check taken out on purpose, the extraction
    target found the escape within a minute (Linux). The two extraction targets also ran by hand on
    Windows and found nothing; CI does not fuzz on Windows.
-8. ☐ **False positives measured**: the scan over a corpus of ordinary open-source scripts, so a
-   warning still means something (section 5).
+8. ☑ **False positives measured**: the scan over a corpus of ordinary open-source scripts, so a
+   warning still means something (section 5). 30 October: section 5 has the numbers and what they
+   changed; `crates/devstribution-core/examples/scan_corpus.rs` repeats the measurement on any
+   folder. The corpus is what was installed on one PC, and small for scripts (229).
 9. ☑ **An "update available" path** for apps: a newer `.dsapp` already updates in place with the
    diff (section 6). 29 October: folders the user chooses and one IT sets are checked at start;
    newer versions signed by the app's publisher show on the app, and installing one still goes
@@ -371,7 +373,23 @@ The scan read only the package's own Python files. Extend it where attackers act
   `.dsapp` files, `--code` for the changed lines, `--json`, exit code 1 when the update adds
   something malware-like) is what an IT reviewer reads. What changed inside a dependency's own
   code, and "compare with the version IT approved" in managed mode → C.
-- ☐ **False positives measured** → B8.
+- ☑ **False positives measured** (B8, 30 October), with nothing declared. The scan reads an app's
+  own files, not its dependencies, so the scripts are the closest to a delivered app:
+
+  | Corpus | Apps | Danger | Warning | Neither |
+  | --- | --- | --- | --- | --- |
+  | Scripts and demos, each file one app (pywin32, PySide6, OpenCV, PyVista, `Scripts\`) | 229 | 0 | 17 (7.4%) | 212 |
+  | Standard library, each module or package one app (Python 3.13) | 187 | 0 | 71 (38%) | 116 |
+  | Installed libraries, each one app (`site-packages`, 12,325 files) | 172 | 5 (2.9%) | 111 (65%) | 56 |
+
+  Read by hand: all 17 script warnings say what the code does (`exec`, `http.client`, the
+  clipboard), so a warning there is a fair question. A library warns mostly because it is large.
+  What it changed: `id_rsa` no longer matches inside `kid_rsa` (sympy); paths in documentation do
+  not count unless the app reads `__doc__` (numpy, appdirs); `pip install` in an error message is
+  only info unless the app can start a program (32 libraries' worth of "run pip install x" remain
+  warnings because they can); and `["-m", "pip", "install"]`, which was missed, now counts. The
+  5 libraries left: pygments and pip's copy name `id_rsa` as a file type, pywin32 tests
+  `CryptUnprotectData`, numpy and nuitka read `__doc__` elsewhere so their documented paths count.
 - ☐ **AMSI**: send the package's scripts to Windows' antimalware interface before the install
   button, so Defender or the company's antivirus reviews them too ("Checked by your antivirus");
   the runtime hook sends `exec` / `compile` strings to AMSI as well → C (B when a company asks).

@@ -10,6 +10,13 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 
 ## [Unreleased]
 
+### Changed
+
+- The code scan raises fewer false alarms, measured on about 13,000 files of ordinary open-source
+  Python: words that only contain a flagged name (`kid_rsa`) and paths in documentation no longer
+  count, and "pip install" in a message is only a warning when the app can start programs.
+  `[..., "-m", "pip", "install", ...]`, which it missed, now counts.
+
 ### Added
 
 - Revoked keys. A publisher whose key is lost or stolen can withdraw it
