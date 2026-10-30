@@ -273,6 +273,14 @@ const RUNTIME_INSTALL: Rule = rule(
     S::Warning,
     "Installs Python packages while it runs, outside the signed lockfile",
 );
+/// A command in a string: usually an error message saying what to install, so it only counts as
+/// installing (raised in `finish`) in an app that can start a program at all.
+const RUNTIME_INSTALL_TEXT: Rule = rule(
+    "runtime-install-text",
+    C::RuntimeInstall,
+    S::Info,
+    "Mentions installing Python packages, and starts no programs",
+);
 const BINARY: Rule = rule(
     "binary-file",
     C::Binary,
@@ -402,7 +410,8 @@ const NAMES: &[(&str, &Rule)] = &[
 ];
 
 /// Text inside string literals, compared in lower case with `/` read as `\` for paths and runs
-/// of `\` collapsed. A string assembled from pieces at run time is not seen.
+/// of `\` collapsed, and not inside a longer word (`kid_rsa` is not `id_rsa`). Documentation does
+/// not count, unless the app reads it. A string assembled from pieces at run time is not seen.
 const STRINGS: &[(&str, &Rule)] = &[
     ("currentversion\\run", &PERSISTENCE),
     ("currentversion\\policies\\explorer\\run", &PERSISTENCE),
@@ -447,9 +456,9 @@ const STRINGS: &[(&str, &Rule)] = &[
     ("amsiscanbuffer", &EVASION),
     ("amsiutils", &EVASION),
     ("netsh advfirewall", &EVASION),
-    ("pip install", &RUNTIME_INSTALL),
-    ("pip3 install", &RUNTIME_INSTALL),
-    ("-m pip", &RUNTIME_INSTALL),
+    ("pip install", &RUNTIME_INSTALL_TEXT),
+    ("pip3 install", &RUNTIME_INSTALL_TEXT),
+    ("-m pip", &RUNTIME_INSTALL_TEXT),
     ("sapgui", &SAP),
 ];
 
@@ -482,6 +491,10 @@ pub struct Scan {
     files_scanned: usize,
     findings: BTreeMap<(&'static str, String), Finding>,
     dependencies: Option<DependencyCheck>,
+    /// Strings that are a statement of their own: file, line, text.
+    documentation: Vec<(String, u32, String)>,
+    /// Some file reads `__doc__`, so documentation can be data the app acts on.
+    reads_documentation: bool,
 }
 
 impl Scan {
@@ -578,6 +591,9 @@ impl Scan {
                         if let Some((_, rule)) = NAMES.iter().find(|(n, _)| n == part) {
                             self.add(rule, rel, Some(line), part);
                         }
+                        if matches!(*part, "__doc__" | "getdoc") {
+                            self.reads_documentation = true;
+                        }
                     }
                     let is_call = stmt.get(k).is_some_and(|t| t.tok == Tok::Op('('));
                     let full = resolve(&parts, aliases);
@@ -672,7 +688,22 @@ impl Scan {
                     j = k;
                 }
                 Tok::Str(text) => {
-                    self.string(rel, stmt[j].line, text);
+                    let documentation = stmt.iter().all(|t| matches!(t.tok, Tok::Str(_)));
+                    self.string(rel, stmt[j].line, text, documentation);
+                    // `[sys.executable, "-m", "pip", "install", name]`
+                    if text == "pip"
+                        && stmt.get(j + 1).is_some_and(|t| t.tok == Tok::Op(','))
+                        && stmt
+                            .get(j + 2)
+                            .is_some_and(|t| matches!(&t.tok, Tok::Str(s) if s == "install"))
+                    {
+                        self.add(
+                            &RUNTIME_INSTALL_TEXT,
+                            rel,
+                            Some(stmt[j].line),
+                            "pip install",
+                        );
+                    }
                     j += 1;
                 }
                 _ => j += 1,
@@ -701,20 +732,34 @@ impl Scan {
         }
     }
 
-    fn string(&mut self, rel: &str, line: u32, text: &str) {
+    fn string(&mut self, rel: &str, line: u32, text: &str, documentation: bool) {
         if let Some((_, rule)) = NAMES.iter().find(|(n, _)| *n == text) {
             self.add(rule, rel, Some(line), &format!("{text:?}"));
         }
-        let lower = collapse_backslashes(&text.to_lowercase());
-        let as_path = collapse_backslashes(&lower.replace('/', "\\"));
-        for (pattern, rule) in STRINGS {
-            if lower.contains(pattern) || as_path.contains(pattern) {
-                self.add(rule, rel, Some(line), &format!("{:?}", short(text)));
-            }
+        if text == "__doc__" {
+            self.reads_documentation = true;
+        }
+        if documentation {
+            self.documentation
+                .push((rel.to_string(), line, text.to_string()));
+        } else {
+            self.string_patterns(rel, line, text);
         }
         if looks_encoded(text) {
             let evidence = format!("{} characters", text.chars().count());
             self.add(&ENCODED_BLOB, rel, Some(line), &evidence);
+        }
+    }
+
+    fn string_patterns(&mut self, rel: &str, line: u32, text: &str) {
+        let lower = collapse_backslashes(&text.to_lowercase());
+        let as_path = collapse_backslashes(&lower.replace('/', "\\"));
+        for (pattern, rule) in STRINGS {
+            if contains_from_word_start(&lower, pattern)
+                || contains_from_word_start(&as_path, pattern)
+            {
+                self.add(rule, rel, Some(line), &format!("{:?}", short(text)));
+            }
         }
     }
 
@@ -771,7 +816,16 @@ impl Scan {
     }
 
     /// Applies what the manifest declares and sorts the findings.
-    pub fn finish(self, permissions: &Permissions) -> ScanReport {
+    pub fn finish(mut self, permissions: &Permissions) -> ScanReport {
+        if self.reads_documentation {
+            for (rel, line, text) in std::mem::take(&mut self.documentation) {
+                self.string_patterns(&rel, line, &text);
+            }
+        }
+        let starts_programs = self
+            .findings
+            .values()
+            .any(|f| matches!(f.category, Category::Processes | Category::NativeCode));
         let mut findings: Vec<Finding> = self
             .findings
             .into_values()
@@ -783,6 +837,10 @@ impl Scan {
                 if f.rule == SAP.id && !permissions.sap {
                     f.severity = Severity::Warning;
                     f.message = format!("{}, but the app does not declare SAP", f.message);
+                }
+                if f.rule == RUNTIME_INSTALL_TEXT.id && starts_programs {
+                    f.severity = RUNTIME_INSTALL.severity;
+                    f.message = RUNTIME_INSTALL.message.to_string();
                 }
                 f
             })
@@ -812,6 +870,15 @@ impl Scan {
             dependencies: self.dependencies,
         }
     }
+}
+
+/// `text` holds `pattern`, not as the end of a longer word. Patterns such as `\.ssh\` start at
+/// any position.
+fn contains_from_word_start(text: &str, pattern: &str) -> bool {
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    text.match_indices(pattern).any(|(i, _)| {
+        !pattern.starts_with(is_word) || !text[..i].chars().next_back().is_some_and(is_word)
+    })
 }
 
 fn soft_module(name: &str) -> Option<(&'static str, &'static [&'static str])> {
@@ -1300,6 +1367,65 @@ def run(source: Path, ctx):
         );
         assert_eq!(rules(&report), vec![]);
         assert_eq!(report.worst(), None);
+    }
+
+    #[test]
+    fn what_the_corpus_flagged_wrongly_stays_quiet() {
+        for src in [
+            // sympy: not `id_rsa`.
+            "encipher_kid_rsa = 'encipher_kid_rsa'\n",
+            // numpy and appdirs: paths in documentation.
+            "def f():\n    \"\"\"open('/home/user/.ssh/id_rsa')\"\"\"\n",
+            "\"\"\"...\\Mozilla\\Firefox\\Profiles\\x\\Cache\"\"\"\n",
+        ] {
+            assert_eq!(rules(&scan_one(src, &Permissions::default())), vec![]);
+        }
+    }
+
+    #[test]
+    fn documentation_counts_once_the_app_reads_it() {
+        let doc = "\"\"\"C:/Users/x/.ssh/id_rsa\"\"\"\n";
+        for reads in ["x = __doc__\n", "x = getattr(other, '__doc__')\n"] {
+            let report = scan_one(&format!("{doc}{reads}"), &Permissions::default());
+            assert_eq!(report.worst(), Some(Severity::Danger), "{reads}");
+        }
+        // Read from another file.
+        let mut scan = Scan::default();
+        scan.source("helper.py", doc);
+        scan.source("main.py", "import helper\nx = helper.__doc__\n");
+        let report = scan.finish(&Permissions::default());
+        assert_eq!(report.worst(), Some(Severity::Danger));
+        // A string that is used is not documentation.
+        let report = scan_one("p = 'C:/Users/x/.ssh/id_rsa'\n", &Permissions::default());
+        assert_eq!(report.worst(), Some(Severity::Danger));
+    }
+
+    #[test]
+    fn a_pip_command_counts_when_the_app_can_start_programs() {
+        let message = "raise ImportError('Run pip install foo')\n";
+        assert_eq!(
+            rules(&scan_one(message, &Permissions::default())),
+            vec![("runtime-install-text", Severity::Info)]
+        );
+        for src in [
+            "import os\nos.system('pip install foo')\n",
+            "import subprocess, sys\nsubprocess.run([sys.executable, '-m', 'pip', 'install', 'foo'])\n",
+        ] {
+            let report = scan_one(src, &Permissions::default());
+            let finding = report
+                .findings
+                .iter()
+                .find(|f| f.rule == "runtime-install-text")
+                .expect(src);
+            assert_eq!(finding.severity, Severity::Warning);
+            assert_eq!(finding.message, RUNTIME_INSTALL.message);
+        }
+        // The program may be started from another file.
+        let mut scan = Scan::default();
+        scan.source("helper.py", "import os\ndef run(c):\n    os.system(c)\n");
+        scan.source("main.py", "import helper\nhelper.run('pip install foo')\n");
+        let report = scan.finish(&Permissions::default());
+        assert_eq!(report.worst(), Some(Severity::Warning));
     }
 
     #[test]
