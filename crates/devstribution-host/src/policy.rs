@@ -319,7 +319,7 @@ impl Loader {
         if !dir.is_absolute() {
             bail!("the trust folder {} is not a full path", dir.display());
         }
-        if self.admin_only && user_can_write(dir) {
+        if self.admin_only && (user_can_write(dir) || user_can_replace(dir)) {
             bail!(
                 "the trust folder {} can be changed by users, so its authors are not approved",
                 dir.display()
@@ -347,7 +347,7 @@ impl Loader {
             fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
         if self.admin_only {
             let folder = path.parent().unwrap_or(path);
-            if user_can_write(path) || user_can_write(folder) {
+            if user_can_write(path) || user_can_write(folder) || user_can_replace(folder) {
                 bail!(
                     "{} can be changed by users, so the launcher does not use it: only \
                      administrators may be able to change it",
@@ -359,6 +359,48 @@ impl Loader {
     }
 }
 
+/// Whether the current user could put another folder in the place of `folder` or of a folder above
+/// it: by renaming one away (delete rights on it, or on what holds it), or by giving themselves
+/// those rights. Adding to a folder above does not count: users may create folders in `C:\` or
+/// `C:\ProgramData`, and that changes nothing below.
+fn user_can_replace(folder: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        const DELETE_CHILD: u32 = 0x40;
+        const DELETE: u32 = 0x1_0000;
+        const WRITE_DAC: u32 = 0x4_0000;
+        const WRITE_OWNER: u32 = 0x8_0000;
+        folder.ancestors().any(|f| {
+            f.parent().is_some_and(|above| {
+                holds_right(above, DELETE_CHILD)
+                    || [DELETE, WRITE_DAC, WRITE_OWNER]
+                        .into_iter()
+                        .any(|right| holds_right(f, right))
+            })
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = folder;
+        false
+    }
+}
+
+/// Whether the current user could open `path` for this right, by asking Windows (nothing is
+/// changed).
+#[cfg(windows)]
+fn holds_right(path: &Path, right: u32) -> bool {
+    use std::os::windows::fs::OpenOptionsExt;
+    // Windows opens a folder only with this flag; without it every folder looks read-only.
+    const BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    fs::OpenOptions::new()
+        .access_mode(right)
+        .share_mode(7)
+        .custom_flags(BACKUP_SEMANTICS)
+        .open(path)
+        .is_ok()
+}
+
 /// Whether the current user could change `path`: write a file, add files to a folder, remove or
 /// replace it, or give themselves those rights. Asks Windows by opening it for each right on its
 /// own (nothing is written), which accounts for every group the user is in and for share
@@ -366,15 +408,12 @@ impl Loader {
 fn user_can_write(path: &Path) -> bool {
     #[cfg(windows)]
     {
-        use std::os::windows::fs::OpenOptionsExt;
         const WRITE_DATA_OR_ADD_FILE: u32 = 0x2;
         const APPEND_DATA_OR_ADD_FOLDER: u32 = 0x4;
         const DELETE_CHILD: u32 = 0x40;
         const DELETE: u32 = 0x1_0000;
         const WRITE_DAC: u32 = 0x4_0000;
         const WRITE_OWNER: u32 = 0x8_0000;
-        // Windows opens a folder only with this flag; without it every folder looks read-only.
-        const BACKUP_SEMANTICS: u32 = 0x0200_0000;
         [
             WRITE_DATA_OR_ADD_FILE,
             APPEND_DATA_OR_ADD_FOLDER,
@@ -384,14 +423,7 @@ fn user_can_write(path: &Path) -> bool {
             WRITE_OWNER,
         ]
         .into_iter()
-        .any(|right| {
-            fs::OpenOptions::new()
-                .access_mode(right)
-                .share_mode(7)
-                .custom_flags(BACKUP_SEMANTICS)
-                .open(path)
-                .is_ok()
-        })
+        .any(|right| holds_right(path, right))
     }
     #[cfg(not(windows))]
     {
@@ -648,6 +680,44 @@ mod tests {
         let writable = super::user_can_write(&dir);
         acl(&["/grant:r", &format!("{user}:(F)")]);
         assert!(writable);
+    }
+
+    /// A locked folder is worth nothing if the user can rename what holds it.
+    #[cfg(windows)]
+    #[test]
+    fn a_locked_folder_in_a_folder_the_user_owns_can_be_replaced() {
+        use std::process::Command;
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("trust");
+        std::fs::create_dir(&dir).unwrap();
+        let user = std::env::var("USERNAME").unwrap();
+        let acl = |args: &[&str]| {
+            let ok = Command::new("icacls")
+                .arg(&dir)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(ok.status.success(), "{ok:?}");
+        };
+        acl(&["/inheritance:r", "/grant:r", &format!("{user}:(RX)")]);
+        let replaceable = super::user_can_replace(&dir);
+        acl(&["/grant:r", &format!("{user}:(F)")]);
+        assert!(replaceable);
+    }
+
+    /// `C:\Windows\System32` is what an administrator-only folder looks like to a normal user.
+    /// Elevated (as on CI) the user may hold those rights, and there is nothing to learn.
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_only_administrators_control_cannot_be_replaced() {
+        let elevated = std::process::Command::new("net")
+            .arg("session")
+            .output()
+            .is_ok_and(|o| o.status.success());
+        if !elevated {
+            let root = std::env::var("SystemRoot").unwrap();
+            assert!(!super::user_can_replace(&Path::new(&root).join("System32")));
+        }
     }
 
     use super::*;

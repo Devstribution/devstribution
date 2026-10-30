@@ -6,6 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
@@ -124,6 +125,9 @@ pub struct UpdateCheck {
 /// even when pointed at a large share.
 const MAX_UPDATE_FOLDERS: usize = 20;
 const MAX_FOLDER_ENTRIES: usize = 2000;
+/// How long the check of update folders may read packages: a share full of large files must not
+/// keep it busy every time the launcher starts.
+const UPDATE_CHECK_TIME: Duration = Duration::from_secs(30);
 
 /// What the UI shows for an installed app.
 #[derive(Debug, Clone, Serialize)]
@@ -732,10 +736,11 @@ impl Store {
         if let Some(fp) = pin.and_then(|p| fingerprint_of(&p.key)) {
             record.key_id = fp;
         }
-        let revoked = known.verdict(
-            &self.publisher_key(&record, &app_dir),
-            &record.content_sha256,
-        );
+        let content = match record.content_sha256.as_str() {
+            "" => &record.content_hash,
+            sha => sha,
+        };
+        let revoked = known.verdict(&self.publisher_key(&record, &app_dir), content);
         Ok(InstalledApp {
             revoked,
             icon: icon_data_url(&app_dir, &manifest),
@@ -796,6 +801,13 @@ impl Store {
     /// file that does not qualify is not mentioned: anyone may be able to write to these folders,
     /// and the check must not become a way to put messages in front of the user.
     pub fn check_app_updates(&self) -> Result<UpdateCheck> {
+        self.check_app_updates_within(UPDATE_CHECK_TIME)
+    }
+
+    /// [`Self::check_app_updates`], reading packages for at most `time`, the newest files first.
+    /// What was not read in time is said, as a problem with the folder.
+    pub fn check_app_updates_within(&self, time: Duration) -> Result<UpdateCheck> {
+        let started = Instant::now();
         let state = self.load()?;
         let mut folders = state.update_folders.clone();
         folders.extend(self.policy.as_ref().and_then(|p| p.update_folder.clone()));
@@ -813,18 +825,36 @@ impl Store {
                     continue;
                 }
             };
-            for entry in entries.flatten().take(MAX_FOLDER_ENTRIES) {
-                let path = entry.path();
-                let is_package = path
-                    .extension()
-                    .is_some_and(|e| e.eq_ignore_ascii_case("dsapp"));
-                // `file_type` does not follow links: a link could lead anywhere.
-                // A path that is not valid Unicode could not be handed to the window.
-                if !is_package
-                    || path.to_str().is_none()
-                    || !entry.file_type().is_ok_and(|t| t.is_file())
-                {
-                    continue;
+            let mut packages: Vec<(Option<SystemTime>, PathBuf)> = entries
+                .flatten()
+                .filter(|entry| {
+                    let path = entry.path();
+                    // `file_type` does not follow links: a link could lead anywhere.
+                    // A path that is not valid Unicode could not be handed to the window.
+                    path.extension()
+                        .is_some_and(|e| e.eq_ignore_ascii_case("dsapp"))
+                        && path.to_str().is_some()
+                        && entry.file_type().is_ok_and(|t| t.is_file())
+                })
+                .take(MAX_FOLDER_ENTRIES)
+                .map(|entry| {
+                    let modified = entry.metadata().and_then(|m| m.modified()).ok();
+                    (modified, entry.path())
+                })
+                .collect();
+            packages.sort_by(|a, b| b.0.cmp(&a.0));
+            let total = packages.len();
+            for (read, (_, path)) in packages.into_iter().enumerate() {
+                if started.elapsed() >= time {
+                    check.problems.push(FolderProblem {
+                        message: format!(
+                            "holds too much to check when the launcher starts: {} of its \
+                             {total} packages were not looked at, so an update may be missing",
+                            total - read
+                        ),
+                        folder: folder.display().to_string(),
+                    });
+                    break;
                 }
                 match self.update_in(&path, &state, &known) {
                     Ok(Some((version, update))) => {
