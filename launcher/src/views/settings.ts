@@ -1,4 +1,4 @@
-import { X, Check, Pipette, FolderOpen, Trash2, ClipboardCopy } from "lucide";
+import { X, Check, Pipette, FolderOpen, FolderPlus, Trash2, ClipboardCopy } from "lucide";
 import type { Ctx } from "../main";
 import { openCleanup } from "./cleanup";
 import { checkForUpdate } from "./update";
@@ -92,6 +92,7 @@ export function toggleSettings(ctx: Ctx) {
     ];
     pop.append(
       ...(s.policy ? managedGroups(s.policy) : free),
+      appUpdatesGroup(ctx, s),
       h("div", { class: "settings-group" },
         h("span", { class: "section-label" }, "Storage"),
         h("div", { class: "mono soft-text wrap-anywhere" }, s.data_dir),
@@ -105,6 +106,39 @@ export function toggleSettings(ctx: Ctx) {
         h("button", { class: "btn small danger self-start", onclick: () => uninstallLauncher(ctx) }, "Uninstall devstribution…")),
       aboutGroup(ctx, s));
   }).catch((e) => toast(errorText(e), "error"));
+}
+
+/** The folders looked through for new versions of apps: the user's own, and IT's. */
+function appUpdatesGroup(ctx: Ctx, s: Settings) {
+  const box = h("div", { class: "stack tight" });
+  const result = h("div", { class: "small soft-text" });
+  const itFolder = s.policy?.update_folder;
+  let folders = s.update_folders;
+  const check = async () => {
+    try {
+      const { updates, problems } = await ctx.appUpdates.check();
+      clear(result,
+        updates.length ? `New versions found: ${updates.length}. Open the app to review it.` : "No new versions found.",
+        problems.map((p) => h("div", { class: "banner amber small" }, h("div", { class: "wrap-anywhere" }, `${p.folder} ${p.message}`))));
+    } catch (e) { toast(errorText(e), "error"); }
+  };
+  const change = async (asked: Promise<string[]>) => {
+    try { folders = await asked; draw(); await check(); } catch (e) { toast(errorText(e), "error"); }
+  };
+  const draw = () => keepFocus([box], () => clear(box,
+    itFolder ? h("div", { class: "publisher" }, h("div", { class: "grow" }, h("div", { class: "mono soft-text wrap-anywhere" }, itFolder), h("div", { class: "muted tiny" }, "Set by your organisation"))) : null,
+    folders.map((f) => h("div", { class: "publisher" },
+      h("div", { class: "grow mono soft-text wrap-anywhere" }, f),
+      h("button", { class: "btn ghost small", title: "Stop checking this folder", "aria-label": `Stop checking ${f}`, onclick: () => change(ctx.api.removeUpdateFolder(f)) }, icon(X, 14)))),
+    !itFolder && !folders.length ? h("div", { class: "muted small" }, "No folder yet. Choose where new versions of your apps arrive, for example a shared folder or your Downloads.") : null,
+    h("div", { class: "inline" },
+      h("button", { class: "btn small self-start", onclick: () => change(ctx.api.addUpdateFolder()) }, icon(FolderPlus, 14), "Add folder…"),
+      itFolder || folders.length ? h("button", { class: "btn small self-start", onclick: check }, "Check now") : null)));
+  draw();
+  return h("div", { class: "settings-group" },
+    h("span", { class: "section-label" }, "New versions of your apps"),
+    box, result,
+    h("div", { class: "muted tiny" }, "Checked when devstribution starts. Only versions signed by the app’s publisher are offered. Nothing leaves this computer, and nothing installs without you."));
 }
 
 /** What ships inside devstribution, and under which licence. The Rust libraries are in Cargo.lock. */

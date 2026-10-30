@@ -15,6 +15,7 @@
 //! | `UsersMayAllowGuardRules` | REG_DWORD | 1: a user may let a stopped app run past the guard rule that stopped it |
 //! | `GuardReportOnly` | REG_MULTI_SZ | Guard rules that only report, for every app |
 //! | `MinLauncherVersion` | REG_SZ | Older launchers install and run nothing |
+//! | `UpdateFolder` | REG_SZ | A folder IT puts new versions of apps in; users are told of them |
 //!
 //! The policy file has the same settings in `snake_case`, plus `trust_files` and `[[authors]]`
 //! tables in the `.trust` format; a registry value wins over the file. The file, the trust
@@ -61,6 +62,9 @@ pub struct Policy {
     /// Whether the launcher may look for its own updates and install them. IT that deploys the
     /// launcher itself turns this off.
     pub launcher_updates: bool,
+    /// Where IT puts new versions of apps. What is in it gets no special trust: a package still
+    /// has to pass every check and the user's confirmation, so users may be able to write here.
+    pub update_folder: Option<PathBuf>,
     /// What could not be read (a policy file, a `.trust` file). Authors that could not be read
     /// are not approved.
     pub problems: Vec<String>,
@@ -79,6 +83,7 @@ struct PolicyFile {
     guard_report_only: Vec<String>,
     min_launcher_version: Option<String>,
     launcher_updates: Option<bool>,
+    update_folder: Option<PathBuf>,
     trust_folder: Option<PathBuf>,
     #[serde(default)]
     trust_files: Vec<PathBuf>,
@@ -206,6 +211,11 @@ impl Policy {
                 .map(|v| v != 0)
                 .or(file.launcher_updates)
                 .unwrap_or(true),
+            update_folder: values
+                .string("UpdateFolder")
+                .filter(|s| !s.trim().is_empty())
+                .map(|s| PathBuf::from(s.trim()))
+                .or(file.update_folder),
             problems,
         }
     }

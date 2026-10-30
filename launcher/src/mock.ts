@@ -8,6 +8,8 @@ const DAY = 86_400;
 /** `?managed` in the address shows the demo in managed mode, with an example policy. */
 const MANAGED = typeof location !== "undefined" && new URLSearchParams(location.search).has("managed");
 const UPDATE = typeof location !== "undefined" && new URLSearchParams(location.search).has("update");
+const updateFolders: string[] = new URLSearchParams(location.search).has("update") ? ["C:\\Users\\edo\\Releases"] : [];
+
 const MANAGED_POLICY: Policy = {
   source: "HKLM\\SOFTWARE\\Policies\\devstribution · \\\\fileserver\\it\\devstribution\\policy.toml",
   authors: [
@@ -21,6 +23,7 @@ const MANAGED_POLICY: Policy = {
   users_may_allow_guard_rules: false,
   guard_report_only: [],
   min_launcher_version: "0.1.0",
+  update_folder: "\\\\fileserver\\it\\devstribution\\apps",
   problems: [],
   log_file: "C:\\Users\\edo\\AppData\\Local\\dev.devstribution.launcher\\data\\state\\policy.log",
 };
@@ -484,6 +487,7 @@ export function mockApi(): Api {
         policy: MANAGED ? MANAGED_POLICY : null,
         uv_version: "uv 0.13.4",
         updates: true,
+        update_folders: updateFolders,
         publishers: [
           { namespace: "devstribution", key_id: "2972B9E777FFC794", pinned_at: now() - 9 * DAY, source: "first-use" },
           { namespace: "finance", key_id: "8D41C0A9F2B37E10", pinned_at: now() - 21 * DAY, source: "first-use" },
@@ -495,6 +499,25 @@ export function mockApi(): Api {
     async uninstallLauncher() { throw new Error("The browser demo has no uninstaller: in the launcher, this opens devstribution's own uninstaller."); },
     async takePendingFiles() { return []; },
     async saveTrustRequest() { return false; },
+    async checkAppUpdates() {
+      await sleep(300);
+      if (!updateFolders.length && !MANAGED) return { updates: [], problems: [] };
+      const a = apps.find((x) => x.id === "ops/sap-stock-check");
+      return {
+        updates: a && a.version === "2.0.1"
+          ? [{ id: a.id, version: "2.1.0", installed_version: a.version, path: "C:\\Users\\edo\\Releases\\sap-stock-check-2.1.0.dsapp" }]
+          : [],
+        problems: [],
+      };
+    },
+    async addUpdateFolder() {
+      if (!updateFolders.includes("C:\\Users\\edo\\Releases")) updateFolders.push("C:\\Users\\edo\\Releases");
+      return [...updateFolders];
+    },
+    async removeUpdateFolder(folder) {
+      updateFolders.splice(updateFolders.indexOf(folder), 1);
+      return [...updateFolders];
+    },
     async checkUpdate() {
       await sleep(600);
       return {

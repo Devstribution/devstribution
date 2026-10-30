@@ -368,8 +368,9 @@ The scan read only the package's own Python files. Extend it where attackers act
 ## 6. Updates and key lifecycle
 
 - ☑ The launcher updates itself (Tauri updater, signed update feed) → B5.
-- ☐ App updates: a newer `.dsapp` already updates in place, with the diff from section 5; a clear
-  "update available" path → B9.
+- ☑ App updates: a newer `.dsapp` updates in place, with the diff from section 5; folders the user
+  chooses and one IT sets are checked at start, and newer signed versions show on the app → B9.
+  There is no download feed: fetching from a URL would need its own trust design.
 - ☐ Publisher key rotation and lost or compromised keys: the owner's signed statements, and a
   signed revocation list of bad keys and packages with evidence, advice in free mode and IT's call
   in managed mode ([design](revocation.md), agreed October 2026). The list check and owners'
