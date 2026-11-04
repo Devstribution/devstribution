@@ -168,9 +168,11 @@ What has to hold before our signature goes on it, roughly in this order.
     examples packed, verified and scanned in CI, tests for the checks the launcher's commands make
     themselves ("open result" opens only a run's results, when it may update, which arguments
     are packages), and Biome linting the UI.
-15. ☐ **A release with the B10 fixes**, soon after they merge: they are public, and users stay
+15. ◐ **A release with the B10 fixes**, soon after they merge: they are public, and users stay
     exposed until they have them. The notes say that v0.1.0 to v0.3.0 are affected, and that a trust
     folder with loose permissions stops approving its authors after the update.
+    4 November: 0.4.0 prepared (version, changelog, licence notices and dependency data); still
+    to do: the tag, the draft installed on Windows, and the update from 0.3.0 seen in the launcher.
 
 ## C. After 1.0
 
