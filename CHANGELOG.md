@@ -10,6 +10,16 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-04
+
+A security release: **update if you use 0.1.0, 0.2.0 or 0.3.0**, which all have the weaknesses
+listed under *Security*. From 0.3.0 the launcher offers this version itself; from 0.1.0 or 0.2.0,
+install it by hand over the old version (apps, results and secrets are kept). On a PC managed
+with a policy, a trust folder that users can change, or that sits in a folder they can rename,
+now approves no one: **check Settings after updating**, and tighten the folder's permissions if
+it shows a problem. Also new: revoked keys, and app updates from folders you choose. Still a
+preview, **not code-signed yet**.
+
 ### Changed
 
 - The code scan raises fewer false alarms, measured on about 13,000 files of ordinary open-source
@@ -222,7 +232,8 @@ warns before the installer runs, and it is not meant for company PCs yet.
 - Not yet tried on a locked-down company PC or behind a company proxy.
 - The launcher does not update itself: install a newer version over it.
 
-[Unreleased]: https://github.com/Devstribution/devstribution/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Devstribution/devstribution/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Devstribution/devstribution/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Devstribution/devstribution/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Devstribution/devstribution/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Devstribution/devstribution/releases/tag/v0.1.0
