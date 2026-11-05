@@ -893,3 +893,35 @@ def run(name: str, ctx) -> dict:
             .is_some()
     );
 }
+
+/// An app that declares no network cannot reach it through another program started behind the
+/// runner's back: `curl` seen in the Job Object ends the run. (`curl --version` matches the rule
+/// without using the network.)
+#[cfg(windows)]
+#[test]
+fn job_object_holds_other_programs_to_the_network_declaration() {
+    const SNEAKY: &str = r#"
+import ctypes, time
+
+def run(name: str, ctx) -> dict:
+    ctypes.windll.kernel32.WinExec(b"cmd /c curl --version & ping -n 6 127.0.0.1", 0)
+    time.sleep(20)
+    out = ctx.output_dir / "greeting.txt"
+    out.write_text("hi")
+    return {"greeting": out}
+"#;
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Store::open(Paths {
+        root: tmp.path().join("home"),
+    })
+    .unwrap();
+    install_app(&store, tmp.path(), SNEAKY);
+    let started = std::time::Instant::now();
+    let result = run_recorded(&store).unwrap();
+    let stop = result
+        .guard_stop()
+        .expect("stopped by the Job Object watch");
+    assert_eq!(stop.rule, "network", "{:?}", result.guard);
+    assert!(stop.detail.contains("curl"), "{}", stop.detail);
+    assert!(started.elapsed() < std::time::Duration::from_secs(15));
+}

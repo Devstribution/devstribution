@@ -50,6 +50,16 @@ pub struct ProcessRule {
     pub flags: Vec<String>,
     #[serde(default)]
     pub contains: Vec<String>,
+    /// `no-network`: applies only to an app that declares no network.
+    #[serde(default)]
+    pub when: Option<String>,
+}
+
+impl ProcessRule {
+    /// A rule for network use through another program (`curl`, …), not a malware tripwire.
+    pub fn is_network(&self) -> bool {
+        self.when.as_deref() == Some("no-network")
+    }
 }
 
 pub fn process_rules() -> &'static [ProcessRule] {
@@ -76,14 +86,22 @@ fn normalize(command: &str) -> String {
 
 /// The first rule a command line matches: one of its words is a rule's program (folder and
 /// `.exe` left out) and, after it, a word is one of the rule's flags (`/x` counts as `-x`) or
-/// the rest contains one of its phrases. Same algorithm as the runner's `match_process`.
-pub fn match_process<'a>(command: &str, rules: &'a [ProcessRule]) -> Option<&'a ProcessRule> {
+/// the rest contains one of its phrases. `network`: the app declares network use, so the
+/// `no-network` rules do not apply. Same algorithm as the runner's `match_process`.
+pub fn match_process<'a>(
+    command: &str,
+    rules: &'a [ProcessRule],
+    network: bool,
+) -> Option<&'a ProcessRule> {
     let text = normalize(command);
     let words: Vec<&str> = text.split_whitespace().collect();
     for (i, word) in words.iter().enumerate() {
         let name = word.rsplit(['/', '\\']).next().unwrap_or(word);
         let name = name.strip_suffix(".exe").unwrap_or(name);
         for rule in rules {
+            if network && rule.is_network() {
+                continue;
+            }
             if !rule.programs.iter().any(|p| p == name) {
                 continue;
             }
@@ -222,11 +240,16 @@ mod tests {
 
     #[test]
     fn same_verdicts_as_the_runner() {
-        let cases: Vec<(String, Option<String>)> = serde_json::from_str(CASES).unwrap();
+        // `[command, expected]`, or `[command, expected, "network declared"]` for a case
+        // checked as for an app that declares network use.
+        let cases: Vec<Vec<serde_json::Value>> = serde_json::from_str(CASES).unwrap();
         assert!(cases.len() > 10);
-        for (command, expected) in cases {
-            let got = match_process(&command, process_rules()).map(|r| r.id.clone());
-            assert_eq!(got, expected, "{command}");
+        for case in cases {
+            let command = case[0].as_str().unwrap();
+            let expected = case[1].as_str();
+            let network = case.len() > 2;
+            let got = match_process(command, process_rules(), network).map(|r| r.id.as_str());
+            assert_eq!(got, expected, "{command} (network declared: {network})");
         }
     }
 

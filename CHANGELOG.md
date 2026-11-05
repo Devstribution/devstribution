@@ -10,6 +10,14 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 
 ## [Unreleased]
 
+### Security
+
+- An app that declares no network can no longer reach it by starting another program: `curl`,
+  `wget`, `bitsadmin`, `ftp`, `tftp`, `ssh`, `scp`, `sftp`, `telnet` and PowerShell's web commands
+  count as network use. The call fails like a Python connection would; one started behind the
+  runner's back ends the run. From the technical assessment of 5 November
+  ([`docs/security.md`](docs/security.md)).
+
 ## [0.4.0] - 2026-11-04
 
 A security release: **update if you use 0.1.0, 0.2.0 or 0.3.0**, which all have the weaknesses

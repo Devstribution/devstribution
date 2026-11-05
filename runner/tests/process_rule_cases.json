@@ -22,5 +22,18 @@
   ["netsh advfirewall set allprofiles state off", "firewall-off"],
   ["git status", null],
   ["C:\\Program Files\\Microsoft Office\\root\\Office16\\EXCEL.EXE /automation", null],
-  ["cscript //nologo sap_export.vbs", null]
+  ["cscript //nologo sap_export.vbs", null],
+  ["curl -o a.exe http://x/a.exe", "network"],
+  ["C:\\Windows\\System32\\curl.exe -s https://example.com", "network"],
+  ["cmd /c curl https://example.com", "network"],
+  ["wget http://x/a", "network"],
+  ["ssh user@host", "network"],
+  ["ssh-keygen -t ed25519", null],
+  ["powershell -c \"Invoke-WebRequest http://x -OutFile a.txt\"", "network"],
+  ["powershell -c \"irm https://x/api\"", "network"],
+  ["pwsh -c \"[System.Net.Http.HttpClient]::new()\"", "network"],
+  ["powershell -NoProfile -Command \"Remove-Item a.txt -Confirm:$false\"", null],
+  ["curl -o a.exe http://x/a.exe", null, "network declared"],
+  ["powershell -c \"Invoke-WebRequest http://x -OutFile a.txt\"", null, "network declared"],
+  ["bitsadmin /transfer j http://x/a.exe C:\\t\\a.exe", "hidden-download", "network declared"]
 ]

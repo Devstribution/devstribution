@@ -1,5 +1,5 @@
 {
-  "_about": "Programs an app must not start: what malware starts. Read by the runner (before a program starts) and by the launcher (for every process that appears in the run's Job Object). A rule matches a command line when one of its words is one of `programs` (folder and .exe left out) and, after that word, a word is one of `flags` (a leading / or dash counts as -) or the rest contains one of `contains`. A rule with neither matches every start of the program. All lower case.",
+  "_about": "Programs an app must not start: what malware starts. Read by the runner (before a program starts) and by the launcher (for every process that appears in the run's Job Object). A rule matches a command line when one of its words is one of `programs` (folder and .exe left out) and, after that word, a word is one of `flags` (a leading / or dash counts as -) or the rest contains one of `contains`. A rule with neither matches every start of the program. A rule with `\"when\": \"no-network\"` applies only to an app that declares no network: the runner refuses the call (like a Python connection), the launcher ends the run when such a program was started behind the runner's back. All lower case.",
   "rules": [
     {
       "id": "encoded-powershell",
@@ -96,6 +96,19 @@
       "message": "tried to switch off the Windows firewall",
       "programs": ["netsh"],
       "contains": ["state off", "opmode disable", "opmode=disable"]
+    },
+    {
+      "id": "network",
+      "when": "no-network",
+      "message": "uses the network through another program, which it does not declare",
+      "programs": ["curl", "wget", "bitsadmin", "ftp", "tftp", "ssh", "scp", "sftp", "telnet", "iwr", "irm"]
+    },
+    {
+      "id": "network",
+      "when": "no-network",
+      "message": "uses the network through another program, which it does not declare",
+      "programs": ["powershell", "pwsh"],
+      "contains": ["invoke-webrequest", "invoke-restmethod", "net.webclient", "net.http", "net.sockets", "start-bitstransfer", "send-mailmessage", "test-netconnection"]
     }
   ]
 }
