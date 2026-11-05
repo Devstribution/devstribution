@@ -441,6 +441,7 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
     {
         let report = report.clone();
         let allowed = spec.guard_allow.clone();
+        let network_declared = !spec.manifest.permissions.network.is_empty();
         let pythons = guard::PythonCheck::new(
             &spec.runner_dir,
             &child_dir(&spec.run_dir).join("config.json"),
@@ -458,7 +459,12 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
                         detail: command.chars().take(500).collect(),
                     });
                 }
-                if let Some(rule) = guard::match_process(&command, guard::process_rules()) {
+                // A program reaching the network for an app that declares none was refused by
+                // the runner when started through Python; one seen only here was started
+                // behind its back, so it ends the run like the malware rules.
+                if let Some(rule) =
+                    guard::match_process(&command, guard::process_rules(), network_declared)
+                {
                     let allowed = allowed.contains(&rule.id);
                     report(GuardHit {
                         action: if allowed { "observe" } else { "stop" }.into(),

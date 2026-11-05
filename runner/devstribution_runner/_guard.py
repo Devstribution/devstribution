@@ -69,14 +69,19 @@ def normalize_command(command: str) -> str:
     return text
 
 
-def match_process(command: str, rules: Iterable[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """The first rule a command line matches (same algorithm as the launcher's)."""
+def match_process(
+    command: str, rules: Iterable[Dict[str, Any]], network: bool = False
+) -> Optional[Dict[str, Any]]:
+    """The first rule a command line matches (same algorithm as the launcher's). `network`: the
+    app declares network use, so the `no-network` rules do not apply."""
     words = normalize_command(command).split()
     for i, word in enumerate(words):
         name = word.replace("/", "\\").rsplit("\\", 1)[-1]
         if name.endswith(".exe"):
             name = name[:-4]
         for rule in rules:
+            if network and rule.get("when") == "no-network":
+                continue
             if name not in rule["programs"]:
                 continue
             rest = words[i + 1 :]
@@ -226,6 +231,9 @@ class Guard:
         self._runner_start = _normal(str(Path(__file__).resolve().parent.parent / "bootstrap.py"))
 
         hosts = [_host_entry(h) for h in config.get("network") or ()]
+        # Programs that reach the network (`curl`, …) are refused only when nothing is declared:
+        # their hosts cannot be told from the command line.
+        self._network_declared = bool(hosts)
         self._network_any = "*" in hosts
         self._network_names = {h for h in hosts if h and h != "*"}
         self._network_ips: Set[str] = set()
@@ -714,8 +722,11 @@ class Guard:
     # -- programs --------------------------------------------------------------------------
 
     def _check_command(self, command: str) -> None:
-        rule = match_process(command, self._process_rules)
-        if rule is not None:
+        rule = match_process(command, self._process_rules, network=self._network_declared)
+        if rule is not None and rule.get("when") == "no-network":
+            # Like a Python connection the app does not declare: the call fails, the run goes on.
+            self._block(rule["id"], rule["message"], command)
+        elif rule is not None:
             self._stop(rule["id"], rule["message"], command)
         if self._written_programs:
             text = normalize_command(command).replace("/", "\\")

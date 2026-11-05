@@ -141,6 +141,31 @@ class GuardTest(RunnerBase):
         self.assertIn("does not declare", messages[-1]["outputs"]["v"])
         self.assertEqual(self.guard_messages(messages, "block")[0]["detail"], "example.com")
 
+    # `curl --version` matches the rule without reaching the network, so these need none.
+    CURL = """
+        import subprocess
+        try:
+            r = subprocess.run(["curl", "--version"], capture_output=True)
+        except PermissionError as e:
+            return {"v": str(e)}
+        except OSError:
+            return {"v": "no curl here"}
+        return {"v": "ran"}
+        """
+
+    def test_a_program_reaching_the_network_counts_as_network_use(self):
+        code, messages, _ = self.run_guarded(self.CURL)
+        self.assertEqual(code, 0, messages)
+        self.assertIn("through another program", messages[-1]["outputs"]["v"])
+        self.assertEqual([b["rule"] for b in self.guard_messages(messages, "block")], ["network"])
+        self.assertFalse(self.guard_messages(messages, "stop"))
+
+    def test_a_program_reaching_the_network_runs_when_network_is_declared(self):
+        code, messages, _ = self.run_guarded(self.CURL, guard={"network": ["example.com"]})
+        self.assertEqual(code, 0, messages)
+        self.assertIn(messages[-1]["outputs"]["v"], ("ran", "no curl here"))
+        self.assertFalse(self.guard_messages(messages, "block"))
+
     def test_connecting_to_an_ip_is_blocked_too(self):
         code, messages, _ = self.run_guarded(
             """
@@ -601,15 +626,16 @@ class ProcessRuleTest(unittest.TestCase):
     def setUp(self):
         self.rules = _guard.load_process_rules()
 
-    def rule(self, command):
-        matched = _guard.match_process(command, self.rules)
+    def rule(self, command, network=False):
+        matched = _guard.match_process(command, self.rules, network=network)
         return matched["id"] if matched else None
 
     def test_cases(self):
         cases = json.loads((Path(__file__).with_name("process_rule_cases.json")).read_text(encoding="utf-8"))
-        for command, expected in cases:
-            with self.subTest(command=command):
-                self.assertEqual(self.rule(command), expected)
+        for command, expected, *declared in cases:
+            # A third element: checked as for an app that declares network use.
+            with self.subTest(command=command, network=bool(declared)):
+                self.assertEqual(self.rule(command, network=bool(declared)), expected)
 
 
 if __name__ == "__main__":
