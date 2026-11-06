@@ -187,24 +187,22 @@ export async function installFlow(ctx: Ctx, path?: string) {
       p.trust === "approved"
         ? h("div", { class: "banner green" }, h("div", { class: "bi" }, icon(ShieldCheck, 18)),
             h("div", null, h("strong", null, "Approved by your organisation"),
-              `Your IT department approves apps from “${p.namespace}” signed with this key (`, h("span", { class: "mono" }, p.key_id), ")."))
+              `Your IT department approves apps from “${p.namespace}”.`))
         : p.trust === "not_approved"
         ? h("div", { class: "banner amber" }, h("div", { class: "bi" }, icon(ShieldAlert, 18)),
             h("div", null, h("strong", null, `“${p.namespace}” isn’t approved by your organisation`),
-              "Your IT department is only trying out its policy, so you can still install it. Key ", h("span", { class: "mono" }, p.key_id), "."))
+              "Your IT department is only trying out its rules, so you can still install it."))
         : p.trust === "rotated"
         ? h("div", { class: "banner green" }, h("div", { class: "bi" }, icon(ShieldCheck, 18)),
-            h("div", null, h("strong", null, "Same publisher, new key"),
-              `“${p.namespace}” moved to a new key, and the key of the apps you already have signed the hand-over. New key `,
-              h("span", { class: "mono" }, p.key_id), "."))
+            h("div", null, h("strong", null, "Same publisher as before"),
+              `“${p.namespace}” changed how it signs its apps, and confirmed the change with the signature of the apps you already have.`))
         : newPublisher
         ? h("div", { class: "banner amber" }, h("div", { class: "bi" }, icon(ShieldAlert, 18)),
-            h("div", null, h("strong", null, `New publisher: “${p.namespace}”`),
-              "The package is intact and signed, but this name isn’t verified. Install it only if you trust where it came from. Later versions must come from the same key ",
-              h("span", { class: "mono" }, p.key_id), "."))
+            h("div", null, h("strong", null, `First app from “${p.namespace}”`),
+              `The file is complete and signed, but devstribution can’t tell you who “${p.namespace}” is. Install it only if you know where it came from. From now on, only “${p.namespace}” can send you updates for it.`))
         : h("div", { class: "banner green" }, h("div", { class: "bi" }, icon(ShieldCheck, 18)),
             h("div", null, h("strong", null, "Same publisher as before"),
-              `Signed with the key of the “${p.namespace}” apps you already have (`, h("span", { class: "mono" }, p.key_id), ").")),
+              `Signed by the same “${p.namespace}” as the apps you already have from it.`)),
       internet
         ? h("div", { class: "banner blue" }, h("div", { class: "bi" }, icon(Download, 18)),
             h("div", { class: "grow wrap-anywhere" }, h("strong", null, "Downloaded from the internet"), p.origin?.host_url ?? "Unknown address"))

@@ -52,6 +52,9 @@ These are deliberate limits of the current design. Each one says why, and what w
    - edit `state.json`: reset pins, reset the highest version;
    - change another app's files or its environment;
    - replace the runner between the launcher's check and Python reading it;
+   - change the Python standard library, or its compiled copy in the data folder (`cache\stdlib`),
+     which every run loads before the runtime guard is in place (an app's own Python code cannot:
+     the guard stops writes to both);
    - read secrets from Credential Manager, which has no per-app access control.
 
    The per-user launcher protects against *packages*, not against code already running as the

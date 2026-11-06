@@ -34,7 +34,7 @@ class RunnerBase(unittest.TestCase):
     def write_app(self, code):
         (self.app / "main.py").write_text(textwrap.dedent(code), encoding="utf-8")
 
-    def start(self, **overrides):
+    def start(self, flags=(), **overrides):
         msg = {
             "protocol": 1,
             "kind": "form",
@@ -47,7 +47,7 @@ class RunnerBase(unittest.TestCase):
         }
         msg.update(overrides)
         proc = subprocess.Popen(
-            [self.python, "-I", "-S", str(BOOTSTRAP)],
+            [self.python, "-I", "-S", *flags, str(BOOTSTRAP)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -57,10 +57,10 @@ class RunnerBase(unittest.TestCase):
         proc.stdin.flush()
         return proc
 
-    def run_app(self, **overrides):
+    def run_app(self, flags=(), **overrides):
         """Runs to completion. Like the launcher, keeps stdin open until the result arrives:
         closing it earlier means "launcher gone" and cancels the run."""
-        proc = self.start(**overrides)
+        proc = self.start(flags, **overrides)
         messages = []
         for line in proc.stdout:
             messages.append(json.loads(line))
@@ -160,6 +160,60 @@ class RunnerTest(RunnerBase):
         )
         self.assertEqual(code, 0, messages[-1])
         self.assertEqual(Path(messages[-1]["outputs"]["report"]), (work / "lavoro.xlsx").resolve())
+
+    def test_long_results_are_cut_and_saved_whole(self):
+        self.write_app(
+            """
+            def run(ctx):
+                rows = [{"n": i, "name": f"row {i}", "città": "Milano"} for i in range(20000)]
+                return {"rows": rows, "short": [[1, 2]], "notes": "é" * 300000}
+            """
+        )
+        code, messages, stderr = self.run_app(outputs=[
+            {"name": "rows", "type": "table"}, {"name": "short", "type": "table"},
+            {"name": "notes", "type": "text"},
+        ])
+        self.assertEqual(code, 0, stderr)
+        result = messages[-1]
+        kept = result["outputs"]["rows"]
+        self.assertTrue(0 < len(kept) < 20000)
+        self.assertLessEqual(len(json.dumps(kept, ensure_ascii=False)), 256 * 1024)
+        self.assertEqual(kept[0], {"n": 0, "name": "row 0", "città": "Milano"})
+        self.assertEqual(result["outputs"]["short"], [[1, 2]])
+        self.assertNotIn("short", result["cut"])
+        self.assertEqual(result["cut"]["rows"]["rows"], 20000)
+        csv_lines = Path(result["cut"]["rows"]["file"]).read_text(encoding="utf-8-sig").splitlines()
+        self.assertEqual(csv_lines[0], "n,name,città")
+        self.assertEqual(len(csv_lines), 20001)
+        self.assertLessEqual(len(result["outputs"]["notes"].encode()), 256 * 1024)
+        self.assertEqual(Path(result["cut"]["notes"]["file"]).read_text(encoding="utf-8-sig"), "é" * 300000)
+
+    def test_runner_code_is_never_read_from_the_bytecode_cache(self):
+        """The standard library's bytecode is cached (`-X pycache_prefix`, as the launcher
+        starts it); the runner's own modules are compiled from source every time, and the app's
+        code goes to its own cache."""
+        cache, app_cache = self.root / "stdlib-cache", self.root / "app-cache"
+        self.write_app(
+            """
+            import helper
+
+            def run(ctx):
+                return {"out": helper.VALUE}
+            """
+        )
+        (self.app / "helper.py").write_text("VALUE = 'ok'\n", encoding="utf-8")
+        for _ in range(2):
+            code, messages, stderr = self.run_app(
+                flags=["-X", f"pycache_prefix={cache}"],
+                outputs=[{"name": "out", "type": "text"}],
+                pycache_dir=str(app_cache),
+            )
+            self.assertEqual(code, 0, stderr)
+            self.assertEqual(messages[-1]["outputs"], {"out": "ok"})
+        cached = [p.as_posix() for p in cache.rglob("*.pyc")]
+        self.assertTrue(any("/json/" in p for p in cached), cached[:5])
+        self.assertFalse([p for p in cached if "devstribution_runner" in p or "/helper." in p])
+        self.assertTrue(any("helper." in p.name for p in app_cache.rglob("*.pyc")))
 
     def test_undeclared_secret_is_refused(self):
         self.write_app("def run(ctx):\n    return {'v': ctx.secrets.get('other')}\n")

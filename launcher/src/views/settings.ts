@@ -84,11 +84,11 @@ export function toggleSettings(ctx: Ctx) {
           ? s.publishers.map((p) => h("div", { class: "publisher" },
               h("div", { class: "grow" }, h("div", { class: "name" }, p.namespace), h("div", { class: "mono muted" }, p.key_id)),
               h("span", { class: "muted tiny", title: p.source === "first-use" ? "Pinned when you installed its first app" : p.source }, relTime(p.pinned_at))))
-          : h("div", { class: "muted small" }, "None yet: the first app you install from a publisher pins its key.")),
+          : h("div", { class: "muted small" }, "None yet: a publisher shows here when you install their first app.")),
       h("div", { class: "settings-group" },
         h("span", { class: "section-label" }, "Mode"),
         h("div", { class: "small soft-text" },
-          "Free mode: you decide what to install. Every package is checked, and later versions must come from the same publisher key. If your IT department manages devstribution, its rules show here.")),
+          "You decide what to install. Every app is checked before it is installed, and its updates must be signed by the same publisher. If your IT department manages devstribution, its rules show here instead.")),
     ];
     pop.append(
       ...(s.policy ? managedGroups(s.policy) : free),

@@ -33,16 +33,13 @@ Roughly in this order; N1 and N2 first, as they finish what 0.4.0 started and cl
   yet, and the gaps left by B10. Details are tracked privately,
   as [`SECURITY.md`](../SECURITY.md) asks of reporters; each fix goes into
   [`security.md`](security.md) and the changelog with its release.
-- ☐ **N3. Faster runs** (section 9): every run carries ~0.4 s before the app's code starts, ~0.3 s
-  of which can go:
-  - the standard library and the runner are compiled on every run (the runner starts with `-B`):
-    a bytecode cache instead, **in a folder apps cannot write**, or one app could plant code
-    the next run loads before the guard;
-  - the launcher notices the end of a run on a 100 ms tick;
-  - resuming the app takes a snapshot of every thread on the system.
-
-  Also `--compile-bytecode` at install, so the first run of a pandas app is not 2–3 s slower
-  than later ones.
+- ☑ **N3. Faster runs** (section 9): an app's code starts after 0.16 s instead of 0.4 s. The
+  standard library's bytecode is cached in the data folder, where the guard stops apps' writes
+  (the runner's own modules are still compiled from their checked source every run); the
+  launcher notices the end of a run at once instead of on a 100 ms tick; the app is resumed
+  through its process handle, not a snapshot of every thread on the system. The app's code and
+  its dependencies are compiled at install, so the first run of a pandas app takes 1.9 s, not
+  4.1–4.7 s.
 - ☐ **N4. A stand-in for a company PC**, so B1 and B2 stop waiting for a company: a standard
   (non-admin) account or a VM with AppLocker rules, a TLS-inspecting proxy (mitmproxy) for uv,
   and an SMB share for the trust folder. A script to set it up and a checklist; then run B1 and B2
@@ -50,11 +47,11 @@ Roughly in this order; N1 and N2 first, as they finish what 0.4.0 started and cl
 - ☐ **N5. Signing, both routes at once**: apply to SignPath Foundation (was A9) with 0.4.0 linked,
   and to Certum's open-source certificate, which checks who we are rather than the project's
   reputation. Whichever says yes first → B4.
-- ☐ **N6. What the first outside users meet** (section 7):
-  - plainer trust wording on the main screens (no "namespace", key IDs or "Free mode ·
-     signatures checked"), and a first-run explanation of publishers and trust;
-  - table results over 16 KB, which today end "without a result";
-  - one run at a time per app.
+- ☑ **N6. What the first outside users meet** (section 7): plainer trust wording (no signing keys
+  on the install screen or the main window) and a short explanation of publishers and trust
+  before the first install; table and text results over 256 KB show their start, with all of it
+  saved in the results folder (they used to end "without a result" over 16 KB); one run at a
+  time per app.
 - ☐ **N7. Results shown in the launcher, first step**: CSV and table results as a table, without
   opening another program (section 7). Excel, images and charts later.
 - ☐ **N8. On GitHub**: secret scanning with push protection, and code scanning (CodeQL), both free
@@ -269,8 +266,8 @@ repository, fetching and the policy values → C.
 ☑ The "Launchpad" design and its written language ([design.md](design.md)); the code scan on the
 install screen; results in a folder the user chose; "Uninstall devstribution" in Settings; `.zip`
 downloads install; error messages, About page, cancellable install, keyboard and screen reader
-basics (stage A). ◐ Uninstall easy to find: check with users. Open: trust wording, large table
-results, one run per app → N6; results shown in the launcher → N7, then C.
+basics (stage A); plainer trust wording, large table results, one run per app (N6). ◐ Uninstall
+easy to find: check with users. Open: results shown in the launcher → N7, then C.
 
 ## 8. Release engineering and evidence for IT
 
@@ -281,20 +278,24 @@ on 5 November (N2, N3). Open: secret scanning and CodeQL → N8; Windows Event L
 
 ## 9. Performance
 
-Measured 5 November 2026 with `crates/devstribution-host/examples/perf.rs` (Windows 11, release
-build, uv 0.13.4, Python 3.15). "Cold" downloads Python and every wheel; "warm" has them cached.
+Measured with `crates/devstribution-host/examples/perf.rs` (Windows 11, release build, uv
+0.13.4, Python 3.15). "Cold" downloads Python and every wheel; "warm" has them cached. Before N3
+on 5 November, after it on 6 November:
 
 | App | Install, cold | Install, warm | First run | Later runs |
 | --- | --- | --- | --- | --- |
-| No dependencies | 2.1 s | 0.4 s | 0.5–0.7 s | 0.40 s |
-| openpyxl (1,000 rows to `.xlsx`) | 2.5 s | 0.4 s | 1.4 s | 0.71 s |
-| pandas + openpyxl (10,000 rows to `.xlsx`) | 4.8 s | 0.9 s | 4.1–4.7 s | 1.7 s |
+| No dependencies | 2.1 s → 4.5 s | 0.4 s → 1.1 s | 0.5–0.7 s → 0.4 s | 0.40 s → 0.18 s |
+| openpyxl (1,000 rows to `.xlsx`) | 2.5 s → 3.6 s | 0.4 s → 1.4 s | 1.4 s → 0.8–0.9 s | 0.71 s → 0.50 s |
+| pandas + openpyxl (10,000 rows to `.xlsx`) | 4.8 s → 7.2 s | 0.9 s → 3.2 s | 4.1–4.7 s → 1.9 s | 1.7 s → 1.4 s |
 
-- Installs are fast; a company proxy will be slower (timed in N4).
-- Every run carries ~0.4 s before the app's code starts (Python itself starts in 35 ms), and the
-  first run after an install compiles the dependencies. What to do about both → N3.
-- The guard adds no cost proportional to the work: the pandas job takes 1.3 s bare and 1.7 s under
-  devstribution, the same fixed ~0.4 s.
+- Installs now compile the app's code and its dependencies (0.7–2.4 s), which the first run did
+  before; a company proxy will be slower (timed in N4). The cold installs also vary with the
+  download.
+- Every run carries ~0.16 s before the app's code starts (Python itself starts in 35 ms); it was
+  ~0.4 s before N3. The first run on a Python version not used before also compiles the
+  standard library once (~0.2 s).
+- The guard adds no cost proportional to the work: the pandas job takes 1.3 s bare and 1.4 s
+  under devstribution.
 - The CLI's `scan`, `diff`, `verify` and `pack --list` take 50–110 ms on a real app.
 
 ## 10. Managed mode, first version

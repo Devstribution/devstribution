@@ -35,7 +35,16 @@ export async function homeView(ctx: Ctx): Promise<Rendered> {
         h("h1", null, "Run Python apps in one click"),
         h("p", null, "Tools and automations from publishers you trust: checked, set up and started for you. No installers, no terminal."),
         h("button", { class: "btn primary big", onclick: () => ctx.install() }, "Install your first app"),
-        h("p", { class: "small" }, "Or drop a .dsapp file anywhere on this window.")),
+        h("p", { class: "small" }, "Or drop a .dsapp file anywhere on this window."),
+        h("section", { class: "how-trust", "aria-label": "How devstribution keeps you safe" },
+          h("h2", null, "Before you install"),
+          h("ul", null,
+            h("li", null, h("strong", null, "Every app comes from a publisher. "),
+              "devstribution checks the publisher’s signature and what the code does, and shows you both before anything is installed."),
+            h("li", null, h("strong", null, "You decide whom to trust. "),
+              "The first app from a publisher asks you to trust them. devstribution can’t tell you who they are, so install apps only from people you know."),
+            h("li", null, h("strong", null, "Then only they can update it. "),
+              "Updates must be signed by the same publisher. While an app runs, what it didn’t declare, such as using the internet, is blocked.")))),
     };
   }
 

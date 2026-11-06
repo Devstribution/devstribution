@@ -27,7 +27,11 @@ the launcher writes to the run log):
     {"type": "guard", "action": "stop" | "block" | "observe", "rule": "...", "message": "...",
      "detail": "..."}
     {"type": "result", "status": "ok", "outputs": {...}}
+    {"type": "result", "status": "ok", "outputs": {...},
+     "cut": {"name": {"rows": 12000, "file": "<output folder>/name.csv"}}}
     {"type": "result", "status": "error", "error": "...", "traceback": "..."}
+  `cut`: table and text results longer than RESULT_LIMIT, kept only in part; all of each is in
+  `file` (null when it could not be saved), and `rows` is a table's full length.
     {"type": "result", "status": "cancelled"}
 
 Exit code: 0 ok, 1 error, 2 cancelled, 3 protocol error, 4 stopped by the guard.
@@ -55,6 +59,13 @@ PROTOCOL = 1
 #: After a cancel request, how long the app has to reach a ctx call before the runner
 #: interrupts the main thread (KeyboardInterrupt, which still runs `finally` blocks).
 INTERRUPT_AFTER_SECONDS = 3.0
+
+#: A table or text result longer than this (as JSON, in bytes) is cut to fit: the launcher keeps
+#: every result in the run's record. All of it is saved in the run's output folder (`_fit_outputs`).
+RESULT_LIMIT = 256 * 1024
+#: The error and the end of the traceback kept in the result; the run's log has all of it.
+ERROR_LIMIT = 4 * 1024
+TRACEBACK_LIMIT = 64 * 1024
 
 
 def _hint(exc: BaseException) -> Optional[str]:
@@ -176,11 +187,13 @@ def main() -> int:
         return 3
 
     if start.get("pycache_dir"):
-        # The launcher starts Python with `-B` so the runner's own folder stays as installed;
-        # the app's compiled code goes to its own cache folder.
+        # The standard library's cache (`-X pycache_prefix`, or `-B` for none) is for the
+        # runner's start only: from here on, compiled code (the app's, its dependencies', and
+        # the standard library it imports) goes to the app's own cache folder.
         sys.pycache_prefix = str(start["pycache_dir"])
         sys.dont_write_bytecode = False
     else:
+        sys.pycache_prefix = None
         sys.dont_write_bytecode = True
 
     # fd 0 belongs to the protocol; the app gets an empty stdin.
@@ -216,11 +229,14 @@ def main() -> int:
         finally:
             ctx._run_cleanup()
         result: Dict[str, Any] = {"type": "result", "status": "ok", "outputs": outputs}
+        cut = _fit_outputs(outputs, start.get("outputs") or [], ctx)
+        if cut:
+            result["cut"] = cut
         code = 0
     except (Cancelled, KeyboardInterrupt):
         result, code = {"type": "result", "status": "cancelled"}, 2
     except AppError as exc:
-        result, code = {"type": "result", "status": "error", "error": str(exc)}, 1
+        result, code = {"type": "result", "status": "error", "error": str(exc)[:ERROR_LIMIT]}, 1
     except SystemExit as exc:
         if exc.code in (None, 0):
             result, code = {"type": "result", "status": "ok", "outputs": {}}, 0
@@ -230,7 +246,9 @@ def main() -> int:
     except BaseException as exc:
         tb = traceback.format_exc()
         sys.stderr.write(tb)
-        error = f"{type(exc).__name__}: {exc}"
+        error = f"{type(exc).__name__}: {exc}"[:ERROR_LIMIT]
+        # The log has all of it; the result keeps the end, where the error is.
+        tb = tb[-TRACEBACK_LIMIT:]
         result, code = {"type": "result", "status": "error", "error": error, "traceback": tb}, 1
         hint = _hint(exc)
         if hint:
@@ -440,6 +458,72 @@ def _result_folders(start: Dict[str, Any], ctx: Context) -> List[Path]:
         if kind == "folder" and values.get(name):
             folders.append(Path(values[name]))
     return folders
+
+
+def _fit_outputs(outputs: Dict[str, Any], declared: list, ctx: Context) -> Dict[str, Any]:
+    """Cuts the table and text results longer than RESULT_LIMIT to what fits, after saving all
+    of each in the run's output folder (`<name>.csv`, `<name>.txt`); says what it cut."""
+    kinds = {o["name"]: o["type"] for o in declared}
+    cut: Dict[str, Any] = {}
+    for name, value in list(outputs.items()):
+        kind = kinds.get(name)
+        if kind == "table" and isinstance(value, list):
+            if len(json.dumps(value, ensure_ascii=False).encode("utf-8")) <= RESULT_LIMIT:
+                continue
+            kept: List[Any] = []
+            used = 2  # `[]`, then each row and its `, `
+            for row in value:
+                used += len(json.dumps(row, ensure_ascii=False).encode("utf-8")) + 2
+                if used > RESULT_LIMIT:
+                    break
+                kept.append(row)
+            outputs[name] = kept
+            saved = _save_whole(ctx, name, ".csv", lambda f, rows=value: _write_csv(f, rows))
+            cut[name] = {"rows": len(value), "file": saved}
+        elif kind == "text" and isinstance(value, str):
+            data = value.encode("utf-8")
+            if len(data) <= RESULT_LIMIT:
+                continue
+            outputs[name] = data[:RESULT_LIMIT].decode("utf-8", "ignore")
+            cut[name] = {"file": _save_whole(ctx, name, ".txt", lambda f, text=value: f.write(text))}
+    return cut
+
+
+def _save_whole(ctx: Context, name: str, suffix: str, write: Callable[[Any], Any]) -> Optional[str]:
+    """Writes a result to a new file in the output folder; None (and a log line) if it cannot."""
+    stem = "".join(c if c.isalnum() or c in "-_." else "_" for c in name) or "result"
+    path = ctx.output_dir / f"{stem}{suffix}"
+    n = 2
+    while path.exists():
+        path = ctx.output_dir / f"{stem} ({n}){suffix}"
+        n += 1
+    try:
+        # `utf-8-sig`: Excel reads the accents right.
+        with open(path, "w", encoding="utf-8-sig", newline="") as f:
+            write(f)
+    except OSError as exc:
+        ctx.log(f"the whole of the result {name!r} could not be saved: {exc}", "warning")
+        return None
+    return str(path)
+
+
+def _write_csv(f: Any, rows: List[Any]) -> None:
+    import csv
+
+    def cell(v: Any) -> Any:
+        return v if v is None or isinstance(v, (str, int, float)) else json.dumps(v, ensure_ascii=False)
+
+    writer = csv.writer(f)
+    if rows and all(isinstance(r, dict) for r in rows):
+        columns: Dict[str, None] = {}
+        for r in rows:
+            columns.update(dict.fromkeys(r))
+        writer.writerow(list(columns))
+        writer.writerows([cell(r.get(c)) for c in columns] for r in rows)
+        return
+    for r in rows:
+        values = r if isinstance(r, list) else list(r.values()) if isinstance(r, dict) else [r]
+        writer.writerow([cell(v) for v in values])
 
 
 def _convert_outputs(returned: Any, outputs: list, folders: List[Path]) -> Dict[str, Any]:

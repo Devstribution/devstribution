@@ -104,6 +104,7 @@ export interface RunRecord {
   status: RunStatus;
   duration_ms: number;
   outputs: Record<string, unknown>;
+  cut?: Record<string, CutOutput>;
   error?: string | null;
   /** What the user can try about the error. */
   hint?: string | null;
@@ -152,9 +153,17 @@ export interface JournalReport {
   cleanups: JournalEntry[];
 }
 
+/** A table or text result too long to keep whole: the start of it is in `outputs`, all of it in
+ * `file` (a CSV for a table), and `rows` is the whole table's length. */
+export interface CutOutput {
+  file: string | null;
+  rows?: number | null;
+}
+
 export interface RunResult {
   status: RunStatus;
   outputs: Record<string, unknown>;
+  cut?: Record<string, CutOutput>;
   error?: string | null;
   traceback?: string | null;
   hint?: string | null;

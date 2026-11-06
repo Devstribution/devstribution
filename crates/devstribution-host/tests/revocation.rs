@@ -83,7 +83,12 @@ fn write(tmp: &Path, name: &str, text: &str) -> PathBuf {
 
 fn can_run(store: &Store) -> anyhow::Result<()> {
     let runner_dir = runner::install(&store.paths)?;
-    store.prepare_run("alice/hello", &Map::new(), &runner_dir)?;
+    let (_, mut record) = store.prepare_run("alice/hello", &Map::new(), &runner_dir)?;
+    // Recorded as ended, so the next check does not find the app still running.
+    let ended = serde_json::from_value(serde_json::json!({
+        "status": "cancelled", "error": null, "traceback": null, "duration_ms": 0
+    }))?;
+    store.finish_run(&mut record, &ended)?;
     Ok(())
 }
 

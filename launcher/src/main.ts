@@ -120,7 +120,7 @@ async function boot() {
       icon(ic, 18), label, label === "Apps" ? appCount : label === "Activity" ? liveDot : null));
   const pinLabel = h("div", { class: "nav-label" }, "Pinned");
   const pinList = h("div");
-  const modeLine = h("div", { class: "mode-line" }, h("span", { class: "dot" }), "Free mode · signatures checked");
+  const modeLine = h("div", { class: "mode-line" }, h("span", { class: "dot" }), "You decide what to install");
   const sidebar = h("nav", { class: "sidebar", "aria-label": "Main" },
     h("div", { class: "brand" }, h("div", { class: "brand-mark" }, icon(Play, 12)), "devstribution",
       api.preview ? h("span", { class: "preview-badge", title: "Demo data: this is the browser preview, not the launcher" }, "Preview") : null),

@@ -96,8 +96,8 @@ default.
 | `type` | Return |
 |---|---|
 | `file` | a path inside `ctx.output_dir`, or inside a folder the user chose as an input |
-| `text` | anything; it is shown as text |
-| `table` | a list of dicts (one per row) or a list of lists; keep it under 16 KB |
+| `text` | anything; it is shown as text. Over 256 KB, the rest is in `<name>.txt` in `ctx.output_dir` |
+| `table` | a list of dicts (one per row) or a list of lists. Over 256 KB (as JSON), the launcher shows the first rows and saves all of them as `<name>.csv` in `ctx.output_dir` |
 
 ### What `ctx` gives you
 
