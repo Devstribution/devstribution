@@ -330,6 +330,59 @@ def run(name: str, ctx) -> dict:
     assert!(lines.iter().any(|l| l == "still running"));
 }
 
+/// A table too long for the run's record arrives cut, with all of it in a CSV the record points
+/// to; and an app runs once at a time.
+#[test]
+fn long_tables_arrive_cut_and_an_app_runs_once_at_a_time() {
+    const TABLE: &str = r#"
+def run(name: str, ctx) -> dict:
+    out = ctx.output_dir / "greeting.txt"
+    out.write_text("hi")
+    return {"greeting": out, "rows": [{"n": i, "name": f"row {i}"} for i in range(30000)]}
+"#;
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Store::open(Paths {
+        root: tmp.path().join("home"),
+    })
+    .unwrap();
+    let src = tmp.path().join("src");
+    write_app_with(&src, "1.0.0", TABLE);
+    let pyproject = fs::read_to_string(src.join("pyproject.toml")).unwrap()
+        + "\n[[tool.devstribution.outputs]]\nname = \"rows\"\ntype = \"table\"\n";
+    fs::write(src.join("pyproject.toml"), pyproject).unwrap();
+    let pkg = tmp.path().join("table.dsapp");
+    pack(&src, &signer(), &pkg).unwrap();
+    let pending = store.inspect(&pkg).unwrap();
+    store.install(&pending.token, &mut |_| {}).unwrap();
+    let runner_dir = runner::install(&store.paths).unwrap();
+
+    let (spec, mut record) = store
+        .prepare_run("alice/hello", &Map::new(), &runner_dir)
+        .unwrap();
+    let Err(second) = store.prepare_run("alice/hello", &Map::new(), &runner_dir) else {
+        panic!("a second run of the same app must wait");
+    };
+    assert!(
+        format!("{second:#}").contains("already running"),
+        "{second:#}"
+    );
+    let result = run::start(spec, Arc::new(|_| {})).unwrap().wait();
+    assert_eq!(result.status, RunStatus::Ok, "{:?}", result.error);
+    let kept = result.outputs["rows"].as_array().unwrap().len();
+    assert!(kept > 0 && kept < 30000, "{kept} rows kept");
+    let cut = &result.cut["rows"];
+    assert_eq!(cut.rows, Some(30000));
+    let csv = fs::read_to_string(cut.file.as_ref().unwrap()).unwrap();
+    assert_eq!(csv.lines().count(), 30001);
+    store.finish_run(&mut record, &result).unwrap();
+    assert_eq!(store.run(&record.id).unwrap().cut, result.cut);
+
+    // Finished: the app can run again.
+    store
+        .prepare_run("alice/hello", &Map::new(), &runner_dir)
+        .unwrap();
+}
+
 /// A package of `alice/hello` (or `id`) at `version`, signed with `key`.
 fn package(
     tmp: &Path,

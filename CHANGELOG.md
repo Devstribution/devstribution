@@ -10,6 +10,23 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 
 ## [Unreleased]
 
+### Changed
+
+- Runs start faster: an app's code starts ~0.2 s sooner on every run (0.18 s instead of 0.40 s
+  for an app without dependencies), and the first run after an install no longer compiles the
+  dependencies (pandas: 1.9 s instead of 4.1–4.7 s). Installs take that time instead, 0.7–2.4 s
+  more. The standard library's compiled code is kept in the data folder; the runner's own is
+  still compiled from its checked source on every run.
+- One run at a time per app: Run waits until the app's current run has finished or was stopped.
+- Plainer words about trust: no signing keys on the install screen or in the main window, and a
+  short explanation of publishers and trust before the first install.
+
+### Fixed
+
+- A table or text result over 16 KB ended the run "without a result". Results up to 256 KB are
+  kept whole; a longer one shows its start, and all of it is saved in the results folder (a CSV
+  for a table), one click away.
+
 ### Security
 
 - An app that declares no network can no longer reach it by starting another program: `curl`,

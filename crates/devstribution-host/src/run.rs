@@ -1,6 +1,7 @@
 //! Starting a run and supervising it: messages from the runner, the run log, Cancel, timeout,
 //! and the hard kill (Job Object on Windows, plus the COM servers the app registered).
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -25,6 +26,9 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(2 * 3600);
 
 /// Longest line kept from the app's output; the rest of a longer line is dropped.
 const MAX_LINE: usize = 16 * 1024;
+/// Longest message from the runner: a result holds tables and texts of up to 256 KB each (the
+/// runner cuts longer ones, `RESULT_LIMIT` in `_runner.py`).
+const MAX_MESSAGE: usize = 8 * 1024 * 1024;
 
 /// The values of a run's secrets, taken out of what the launcher keeps or shows of the run: its
 /// log, its result and its messages, where an app that prints a secret would leave it in plain
@@ -179,6 +183,21 @@ pub struct RunResult {
     /// What the runtime guard did; a `stop` among them ended the run.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub guard: Vec<GuardHit>,
+    /// Table and text results kept only in part, by output name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub cut: BTreeMap<String, CutOutput>,
+}
+
+/// A table or text result too long to keep whole in the run's record: the runner kept the
+/// start of it and saved all of it in the run's output folder.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CutOutput {
+    /// The whole result: a CSV file for a table, a text file for text. None when it could not
+    /// be saved.
+    pub file: Option<String>,
+    /// How many rows the whole table has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rows: Option<u64>,
 }
 
 impl RunResult {
@@ -301,6 +320,9 @@ fn child_dir(run_dir: &Path) -> PathBuf {
 enum Control {
     Cancel,
     Kill,
+    /// The app sent its result or closed its output: it is about to end, so the wait checks
+    /// for that every few milliseconds instead of on its usual tick.
+    Ending,
 }
 
 /// A run in progress.
@@ -333,6 +355,7 @@ impl RunHandle {
             hint: Some("This is a problem in devstribution, not the app: try again, and if it happens again, send the diagnostics from Settings to its developers.".into()),
             duration_ms: 0,
             guard: Vec::new(),
+            cut: BTreeMap::new(),
         })
     }
 }
@@ -380,9 +403,25 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
     // `-X utf8`: the app's output reaches the launcher as UTF-8 whatever the Windows code page.
     // `-S`: the runner loads `site` itself, after the runtime guard, so the code dependencies
     // run from `.pth` files when Python starts is checked too.
-    // `-B`: no `__pycache__` in the runner's folder, which is checked to hold exactly the
-    // runner's files before each run; the runner turns caching back on for the app's code.
-    cmd.args(["-I", "-S", "-B", "-X", "utf8"])
+    // `pycache_prefix`: the standard library's bytecode is cached in devstribution's data
+    // folder, not compiled again on every run, and no `__pycache__` appears in the runner's
+    // folder, which is checked to hold exactly the runner's files before each run. The
+    // runner's own modules are always compiled from source (`bootstrap.py`), and the runner
+    // points the cache at the app's own folder before the app's code runs. `-B` when the
+    // cache folder cannot be made.
+    let stdlib_cache = crate::paths::Paths {
+        root: spec.data_dir.clone(),
+    }
+    .stdlib_cache();
+    cmd.args(["-I", "-S"]);
+    if fs::create_dir_all(&stdlib_cache).is_ok() {
+        let mut prefix = std::ffi::OsString::from("pycache_prefix=");
+        prefix.push(&stdlib_cache);
+        cmd.arg("-X").arg(prefix);
+    } else {
+        cmd.arg("-B");
+    }
+    cmd.args(["-X", "utf8"])
         .arg(spec.runner_dir.join("bootstrap.py"))
         .current_dir(&spec.run_dir)
         .env_clear()
@@ -486,19 +525,21 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
         });
     }
 
+    let (control, control_rx) = mpsc::channel();
     let mask = Mask::new(&spec.secrets);
     let stdout = child.stdout.take().expect("piped");
     let stdout_thread = {
-        let (on_event, result_msg, com, report, mask) = (
+        let (on_event, result_msg, com, report, mask, ending) = (
             on_event.clone(),
             result_msg.clone(),
             com_processes.clone(),
             report.clone(),
             mask.clone(),
+            control.clone(),
         );
         let run_start = platform::filetime(started_at);
         std::thread::spawn(move || {
-            for_each_line(stdout, |line| {
+            for_each_line(stdout, MAX_MESSAGE, |line| {
                 let Ok(msg) = serde_json::from_str::<Value>(&line) else {
                     on_event(RunEvent::Output {
                         line: mask.text(&line),
@@ -534,10 +575,14 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
                             report(hit);
                         }
                     }
-                    Some("result") => *result_msg.lock().unwrap() = Some(msg),
+                    Some("result") => {
+                        *result_msg.lock().unwrap() = Some(msg);
+                        let _ = ending.send(Control::Ending);
+                    }
                     _ => {}
                 }
             });
+            let _ = ending.send(Control::Ending);
         })
     };
 
@@ -548,7 +593,7 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
         std::thread::spawn(move || {
             let mut log = fs::File::create(&log_path).ok();
             let mut written = 0u64;
-            for_each_line(stderr, |line| {
+            for_each_line(stderr, MAX_LINE, |line| {
                 let line = mask.text(&line);
                 if let Some(f) = log.as_mut() {
                     written += line.len() as u64 + 1;
@@ -564,7 +609,6 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
         })
     };
 
-    let (control, control_rx) = mpsc::channel();
     let outputs_declared: Vec<(String, OutputType)> = spec
         .manifest
         .outputs
@@ -585,14 +629,28 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
             }
             stdin.take();
         };
+        // A few checks a second while the app works; every few milliseconds for a moment once
+        // it is ending, so a short run is not kept waiting for the next tick.
+        let mut ending: Option<Instant> = None;
         let exit = loop {
             if let Ok(Some(status)) = child.try_wait() {
                 break Some(status);
             }
-            let request = match control_rx.recv_timeout(Duration::from_millis(100)) {
+            let tick = match ending {
+                Some(at) if at.elapsed() < Duration::from_secs(1) => Duration::from_millis(2),
+                _ => Duration::from_millis(100),
+            };
+            let request = match control_rx.recv_timeout(tick) {
+                Ok(Control::Ending) => {
+                    ending.get_or_insert_with(Instant::now);
+                    None
+                }
                 Ok(c) => Some(c),
                 Err(RecvTimeoutError::Timeout) => None,
-                Err(RecvTimeoutError::Disconnected) => None,
+                Err(RecvTimeoutError::Disconnected) => {
+                    std::thread::sleep(tick);
+                    None
+                }
             };
             if !killed && guard_hits.lock().unwrap().iter().any(GuardHit::is_stop) {
                 kill(&mut child, &mut stdin);
@@ -641,6 +699,7 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
                 hint: m["hint"].as_str().map(|s| mask.text(s)),
                 duration_ms,
                 guard: Vec::new(),
+                cut: serde_json::from_value(m["cut"].clone()).unwrap_or_default(),
             },
             None if killed || cancel_at.is_some() => RunResult {
                 status: RunStatus::Cancelled,
@@ -650,6 +709,7 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
                 hint: None,
                 duration_ms,
                 guard: Vec::new(),
+                cut: BTreeMap::new(),
             },
             None => RunResult {
                 status: RunStatus::Error,
@@ -667,6 +727,7 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
                 ),
                 duration_ms,
                 guard: Vec::new(),
+                cut: BTreeMap::new(),
             },
         };
         result.outputs.values_mut().for_each(|v| mask.value(v));
@@ -677,6 +738,7 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
             result.traceback = None;
             result.hint = None;
             result.outputs.clear();
+            result.cut.clear();
         }
         if result.status == RunStatus::Error && result.traceback.is_some() && result.hint.is_none()
         {
@@ -693,6 +755,7 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
                 message: problem,
             });
         }
+        keep_cut(&outputs_declared, &result_folders, &mut result);
         // An app that crashed or was stopped cannot close the Excel (or other COM server)
         // it started; do it for it.
         if result.status != RunStatus::Ok {
@@ -709,8 +772,8 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
 }
 
 /// Calls `f` with every line read from `r`, decoded leniently (an invalid byte becomes `�`
-/// instead of ending the reading) and cut at [`MAX_LINE`] bytes, until the end of the stream.
-fn for_each_line(r: impl Read, mut f: impl FnMut(String)) {
+/// instead of ending the reading) and cut at `max` bytes, until the end of the stream.
+fn for_each_line(r: impl Read, max: usize, mut f: impl FnMut(String)) {
     let mut reader = BufReader::new(r);
     let mut line: Vec<u8> = Vec::new();
     let mut overflow = false;
@@ -719,12 +782,12 @@ fn for_each_line(r: impl Read, mut f: impl FnMut(String)) {
             Ok([]) | Err(_) => break,
             Ok(buf) => match buf.iter().position(|&b| b == b'\n') {
                 Some(i) => {
-                    let room = MAX_LINE.saturating_sub(line.len());
+                    let room = max.saturating_sub(line.len());
                     line.extend_from_slice(&buf[..i.min(room)]);
                     (i + 1, true)
                 }
                 None => {
-                    let room = MAX_LINE.saturating_sub(line.len());
+                    let room = max.saturating_sub(line.len());
                     overflow |= buf.len() > room;
                     line.extend_from_slice(&buf[..buf.len().min(room)]);
                     (buf.len(), false)
@@ -804,6 +867,26 @@ fn keep_declared_outputs(
         true
     });
     problems
+}
+
+/// Keeps what the runner says it cut only for declared table and text outputs it returned, with
+/// the whole result in the run's output folder (the first of `folders`): "Open" opens it.
+fn keep_cut(declared: &[(String, OutputType)], folders: &[PathBuf], result: &mut RunResult) {
+    let outputs = &result.outputs;
+    result.cut.retain(|name, cut| {
+        let declared = declared
+            .iter()
+            .any(|(n, kind)| n == name && matches!(kind, OutputType::Table | OutputType::Text));
+        if let Some(file) = &cut.file {
+            let inside = folders
+                .first()
+                .is_some_and(|dir| is_inside(Path::new(file), dir) && Path::new(file).is_file());
+            if !inside {
+                cut.file = None;
+            }
+        }
+        declared && outputs.contains_key(name)
+    });
 }
 
 fn join_for(handle: JoinHandle<()>, limit: Duration) {
@@ -982,7 +1065,7 @@ pub(crate) mod platform {
                         job_failed("cannot put the app in the Job Object that watches it")
                     );
                 }
-                resume(child.id())?;
+                resume(child)?;
                 Ok(job)
             }
         }
@@ -1092,8 +1175,26 @@ pub(crate) mod platform {
         }
     }
 
-    /// Resumes the threads of a process created suspended (it has exactly one).
-    fn resume(pid: u32) -> Result<()> {
+    // Not in windows-sys: undocumented, but in ntdll since Windows XP and relied on by debuggers
+    // and Process Explorer.
+    #[link(name = "ntdll", kind = "raw-dylib")]
+    unsafe extern "system" {
+        fn NtResumeProcess(process: HANDLE) -> i32;
+    }
+
+    /// Resumes a process created suspended (it has exactly one thread): through its process
+    /// handle, or, should Windows refuse that, by finding its thread in a snapshot of every
+    /// thread on the system, which takes tens of milliseconds.
+    fn resume(child: &Child) -> Result<()> {
+        // SAFETY: `child` keeps its process handle open for the call; the handle has
+        // PROCESS_ALL_ACCESS, which includes PROCESS_SUSPEND_RESUME.
+        if unsafe { NtResumeProcess(child.as_raw_handle() as HANDLE) } >= 0 {
+            return Ok(());
+        }
+        resume_threads(child.id())
+    }
+
+    fn resume_threads(pid: u32) -> Result<()> {
         // SAFETY: `entry` is zeroed and has its `dwSize` set, as the API asks; the snapshot and
         // each thread handle are checked and closed.
         unsafe {
@@ -1296,7 +1397,7 @@ mod tests {
         data.extend(std::iter::repeat_n(b'x', MAX_LINE * 3));
         data.extend(b"\nlast");
         let mut lines = Vec::new();
-        for_each_line(&data[..], |l| lines.push(l));
+        for_each_line(&data[..], MAX_LINE, |l| lines.push(l));
         assert_eq!(lines[0], "caf\u{fffd}");
         assert!(lines[1].len() < MAX_LINE + 10 && lines[1].ends_with("[…]"));
         assert_eq!(lines[2], "last");

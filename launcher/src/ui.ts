@@ -129,15 +129,15 @@ export function statusText(status: RunStatus): HTMLElement {
 
 export function trustTag(trust: string): HTMLElement {
   if (trust === "approved") {
-    return h("span", { class: "tag green", title: "Your organisation approves this author and its signing key" }, icon(ShieldCheck, 12), "Approved");
+    return h("span", { class: "tag green", title: "Your organisation approves apps from this publisher" }, icon(ShieldCheck, 12), "Approved");
   }
   if (trust === "not_approved") {
-    return h("span", { class: "tag red", title: "Your organisation's policy does not approve this author and key" }, icon(ShieldX, 12), "Not approved");
+    return h("span", { class: "tag red", title: "Your organisation doesn't approve apps from this publisher" }, icon(ShieldX, 12), "Not approved");
   }
   return trust === "first_use" || trust === "rotated"
-    ? h("span", { class: "tag green", title: "Signed with the key pinned when you installed this publisher's first app" },
-        icon(ShieldCheck, 12), "Signature verified")
-    : h("span", { class: "tag amber", title: "First app seen from this publisher" }, icon(ShieldAlert, 12), "New publisher");
+    ? h("span", { class: "tag green", title: "Signed by the same publisher as when you first installed one of their apps" },
+        icon(ShieldCheck, 12), "Same publisher")
+    : h("span", { class: "tag amber", title: "The first app you have from this publisher" }, icon(ShieldAlert, 12), "New publisher");
 }
 
 /** What an app works with, from what its manifest declares: the Apps page filters on these. */

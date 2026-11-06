@@ -478,6 +478,13 @@ kbd { font: inherit; font-size: var(--fs-xs); border: 1px solid var(--border-str
 .welcome .art div:nth-child(1) { background: var(--app-1); }
 .welcome .art div:nth-child(2) { background: var(--app-3); }
 .welcome .art div:nth-child(3) { background: var(--app-2); }
+.welcome .how-trust {
+  margin-top: 26px; max-width: 520px; text-align: left; padding: var(--sp-4) 20px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-xl);
+}
+.welcome .how-trust h2 { font-size: var(--fs-sm); font-weight: var(--fw-bold); margin: 0 0 8px; }
+.welcome .how-trust ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px; color: var(--muted); font-size: var(--fs-sm); }
+.welcome .how-trust strong { color: var(--text); }
 
 /* ---------- apps ---------- */
 .app-list { display: flex; flex-direction: column; gap: 10px; }

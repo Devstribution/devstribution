@@ -367,6 +367,7 @@ async fn start_run(app: AppHandle, id: String, inputs: Map<String, Value>) -> Cm
                         hint: None,
                         duration_ms: 0,
                         guard: Vec::new(),
+                        cut: Default::default(),
                     },
                 );
                 return Err(e);
@@ -493,7 +494,8 @@ fn output_target(
             .unwrap_or_else(|| output_dir.clone()),
         None => output_dir.clone(),
         Some(p) => {
-            if !record.outputs.values().any(|v| v.as_str() == Some(p)) {
+            let whole = record.cut.values().any(|c| c.file.as_deref() == Some(p));
+            if !whole && !record.outputs.values().any(|v| v.as_str() == Some(p)) {
                 anyhow::bail!("this file is not a result of the run");
             }
             // The resolved path is the one opened, so it cannot change after the check.

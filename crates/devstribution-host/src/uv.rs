@@ -265,6 +265,39 @@ fn installed_app_settings(cmd: &mut Command, app_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Compiles the app's code and its dependencies' into `cache` (the app's own bytecode folder,
+/// which its runs use), so the first run does not spend seconds compiling (pandas: 2–3 s).
+/// `-S`: nothing of the environment runs (no `.pth` file), only the compiler reads it. Best
+/// effort: a file that does not compile (a package's test data) leaves it to the first run;
+/// only Cancel is an error.
+pub fn compile_bytecode(
+    env_dir: &Path,
+    app_dir: &Path,
+    cache: &Path,
+    stop: &dyn Fn() -> bool,
+) -> Result<()> {
+    let mut prefix = OsString::from("pycache_prefix=");
+    prefix.push(cache);
+    let mut cmd = Command::new(python_in(env_dir, false));
+    cmd.args(["-I", "-S", "-X"])
+        .arg(prefix)
+        .args(["-m", "compileall", "-q", "-j", "0"])
+        .arg(env_dir)
+        .arg(app_dir)
+        .env_clear();
+    for (k, v) in std::env::vars_os() {
+        if k.to_str()
+            .is_some_and(|k| KEPT_ENV.iter().any(|kept| kept.eq_ignore_ascii_case(k)))
+        {
+            cmd.env(k, v);
+        }
+    }
+    match supervise(cmd, &mut |_| {}, stop, Duration::from_secs(10 * 60)) {
+        Err(e) if e.is::<Cancelled>() => Err(e),
+        _ => Ok(()),
+    }
+}
+
 /// The environment's interpreter. GUI apps on Windows use `pythonw.exe` (no console window).
 pub fn python_in(env_dir: &Path, gui: bool) -> PathBuf {
     if cfg!(windows) {

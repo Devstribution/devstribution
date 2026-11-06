@@ -109,6 +109,12 @@ impl Paths {
         self.root.join("cache").join("pycache")
     }
 
+    /// Bytecode of the Python standard library, written while the runner starts, before any app
+    /// code runs; the runtime guard stops apps from writing in the data folder.
+    pub fn stdlib_cache(&self) -> PathBuf {
+        self.root.join("cache").join("stdlib")
+    }
+
     /// Environments of `devstribution dev`.
     pub fn dev_envs(&self) -> PathBuf {
         self.root.join("dev-envs")

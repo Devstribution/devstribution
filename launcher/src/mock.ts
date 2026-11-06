@@ -52,6 +52,7 @@ const apps: AppView[] = [
     outputs: [
       { name: "report", type: "file", label: "Summary workbook" },
       { name: "summary", type: "text" },
+      { name: "rows", type: "table", label: "Rows read" },
     ],
     permissions: { ...noPerms, folders: ["user-selected"] },
     installed_at: now() - 9 * DAY,
@@ -205,6 +206,11 @@ function demoRuns(): RunRecord[] {
 }
 
 let runs = demoRuns();
+// `?empty`: a first start, with no app installed yet.
+if (typeof location !== "undefined" && new URLSearchParams(location.search).has("empty")) {
+  apps.length = 0;
+  runs = [];
+}
 /** Set by cancelEnvironment: the demo install stops at its next step. */
 let envCancelled = false;
 const cleanups: JournalEntry[] = [];
@@ -438,8 +444,13 @@ export function mockApi(): Api {
         const result = {
           status: "ok" as const,
           outputs: app.outputs.length
-            ? { report: `${record.output_dir}\\orders-2026-by-customer.xlsx`, summary: "1842 rows in 6 groups of Customer" }
+            ? {
+                report: `${record.output_dir}\\orders-2026-by-customer.xlsx`, summary: "1842 rows in 6 groups of Customer",
+                rows: Array.from({ length: 60 }, (_, n) => ({ Row: n + 2, Customer: ["Acme", "Globex", "Initech"][n % 3], Amount: 120 + n * 7 })),
+              }
             : {},
+          // A table too long to keep whole: its start above, all of it in a CSV.
+          cut: { rows: { rows: 1842, file: `${record.output_dir}\\rows.csv` } },
           duration_ms: Date.now() - started,
           // What the runtime guard reported, for the result's "What it did" line.
           guard: [
@@ -447,7 +458,7 @@ export function mockApi(): Api {
             { action: "observe" as const, rule: "files", message: "wrote 1 file in its output folder", detail: "" },
           ],
         };
-        Object.assign(record, { status: "ok", outputs: result.outputs, duration_ms: result.duration_ms, finished_at: now(), guard: result.guard });
+        Object.assign(record, { status: "ok", outputs: result.outputs, cut: result.cut, duration_ms: result.duration_ms, finished_at: now(), guard: result.guard });
         emit(record.id, { type: "finished", result });
         for (const l of changed) l();
       }, 650);

@@ -269,16 +269,29 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
             h("button", { class: "btn small", title: "Show in folder", "aria-label": "Show in folder", onclick: () => ctx.api.openOutput(run!.runId, path, true).catch((e) => toast(errorText(e), "error")) }, icon(FolderOpen, 15)),
             h("button", { class: "btn primary small", onclick: () => ctx.api.openOutput(run!.runId, path, false).catch((e) => toast(errorText(e), "error")) }, icon(ExternalLink, 14), "Open"));
         }
+        // A result too long to keep whole: its start is shown, and all of it is in a file.
+        const cut = res.cut?.[o.name];
+        const openWhole = (label: string) => cut?.file
+          ? h("button", { class: "btn small", onclick: () => ctx.api.openOutput(run!.runId, cut.file, false).catch((e) => toast(errorText(e), "error")) }, icon(ExternalLink, 14), label)
+          : null;
         if (o.type === "table" && Array.isArray(value)) {
           const rows = value as unknown[];
           const cols = rows.length && typeof rows[0] === "object" && !Array.isArray(rows[0]) ? Object.keys(rows[0] as object) : [];
+          const total = cut?.rows ?? rows.length;
+          const shown = Math.min(rows.length, 50);
           return h("div", { class: "output-text" }, h("div", { class: "label" }, o.label ?? o.name),
             h("div", { class: "table-scroll" }, h("table", { class: "table" },
               cols.length ? h("thead", null, h("tr", null, cols.map((c) => h("th", null, c)))) : null,
               h("tbody", null, rows.slice(0, 50).map((row) => h("tr", null,
-                (cols.length ? cols.map((c) => (row as Record<string, unknown>)[c]) : (row as unknown[])).map((cell) => h("td", null, String(cell ?? "")))))))));
+                (cols.length ? cols.map((c) => (row as Record<string, unknown>)[c]) : (row as unknown[])).map((cell) => h("td", null, String(cell ?? "")))))))),
+            total > shown
+              ? h("div", { class: "row muted small" }, h("span", { class: "grow" }, `The first ${shown} of ${total.toLocaleString()} rows.`),
+                  openWhole(`All ${total.toLocaleString()} rows`))
+              : null);
         }
-        return h("div", { class: "output-text" }, h("div", { class: "label" }, o.label ?? o.name), h("div", null, String(value)));
+        return h("div", { class: "output-text" }, h("div", { class: "label" }, o.label ?? o.name), h("div", null, String(value)),
+          cut ? h("div", { class: "row muted small" }, h("span", { class: "grow" }, cut.file ? "Too long to show it all here." : "Too long to show it all, and it could not be saved."),
+            openWhole("All of it")) : null);
       });
       const stopped = res.guard?.some((g) => g.action === "stop");
       const head = stopped ? ["error", "Stopped by devstribution", "The app did something apps should not do."] : {

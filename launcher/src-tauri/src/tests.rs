@@ -28,6 +28,7 @@ fn record(
         error: None,
         hint: None,
         guard: Vec::new(),
+        cut: Default::default(),
         output_dir: output_dir.to_path_buf(),
         result_folders,
         output_removed: None,
@@ -127,6 +128,25 @@ fn open_result_opens_the_runs_results_only() {
         json!({ "d": path_str(&r.out) }),
     );
     assert!(output_target(&rec3, Some(&path_str(&r.out)), false).is_err());
+
+    // The whole of a result kept only in part opens too, from the output folder only.
+    let whole = r.out.join("rows.csv");
+    fs::write(&whole, "n\n1\n").unwrap();
+    let mut rec4 = record(&r.out, vec![r.out.clone()], json!({ "rows": [] }));
+    for (name, file) in [("rows", &whole), ("leak", &r.outside)] {
+        rec4.cut.insert(
+            name.into(),
+            devstribution_host::run::CutOutput {
+                file: Some(path_str(file)),
+                rows: Some(2),
+            },
+        );
+    }
+    assert_eq!(
+        output_target(&rec4, Some(&path_str(&whole)), false).unwrap(),
+        (dunce::canonicalize(&whole).unwrap(), false)
+    );
+    assert!(output_target(&rec4, Some(&path_str(&r.outside)), false).is_err());
 }
 
 #[test]

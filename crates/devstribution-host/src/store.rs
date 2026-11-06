@@ -258,6 +258,9 @@ pub struct RunRecord {
     /// What the runtime guard did during the run.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub guard: Vec<GuardHit>,
+    /// Table and text results kept only in part ([`RunResult::cut`]).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub cut: BTreeMap<String, run::CutOutput>,
     pub output_dir: PathBuf,
     /// Where the run's file results may be: `output_dir` and the folders chosen for the run
     /// (see [`run::result_folders`]). "Open result" opens nothing outside them. Empty in
@@ -367,6 +370,9 @@ pub struct Store {
     /// Held for every read-modify-write of `state.json`, so that an install confirmed while
     /// a run starts (or two installs) cannot overwrite each other's changes.
     state_lock: Mutex<()>,
+    /// Held while a run is checked and recorded as running, so two clicks on Run cannot both
+    /// find the app idle ([`Store::prepare_run`]).
+    run_start: Mutex<()>,
     /// Managed mode's policy, read when the store opens; `None` in free mode.
     policy: Option<Policy>,
     /// Guard stops that `state.json` could not record (disk full, a file held by an
@@ -413,6 +419,7 @@ impl Store {
         let store = Store {
             paths,
             state_lock: Mutex::new(()),
+            run_start: Mutex::new(()),
             policy: Policy::from_system(),
             unsaved_stops: Mutex::new(BTreeMap::new()),
             staged: Mutex::new(BTreeMap::new()),
@@ -1232,6 +1239,8 @@ impl Store {
             // The installed version, if any, is untouched: only new files go.
             if !same_content_installed {
                 let _ = fs::remove_dir_all(&app_dir);
+                // Made already when Cancel came while the code was being compiled.
+                let _ = fs::remove_dir_all(&env_dir);
             }
             return Err(e);
         }
@@ -1390,7 +1399,16 @@ impl Store {
         on_line: &mut dyn FnMut(&str),
     ) -> Result<()> {
         let stop = || self.env_cancel.load(Ordering::SeqCst) != cancel_from;
-        build_env(app_dir, env_dir, on_line, &stop)
+        build_env(app_dir, env_dir, on_line, &stop)?;
+        // The app's bytecode folder for this version (see `prepare_run`), emptied: what was
+        // compiled for the environment it replaces is of no use.
+        if let Ok(version) = app_dir.strip_prefix(self.paths.apps()) {
+            let cache = self.paths.pycache().join(version);
+            let _ = fs::remove_dir_all(&cache);
+            on_line("Compiling the app's Python code");
+            uv::compile_bytecode(env_dir, app_dir, &cache, &stop)?;
+        }
+        Ok(())
     }
 
     /// Rebuilds an app's environment from its lockfile.
@@ -1433,6 +1451,16 @@ impl Store {
         // A stop still in memory blocks the app either way (`describe`); keep trying to save it.
         let _ = self.save_unsaved_stops();
         let app = self.app(id)?;
+        // One run at a time per app: two would work on the same files (the folder the user
+        // chose, the workbook Excel has open) and the panel follows only one. Held until the
+        // run is recorded as running, at the end.
+        let _starting = self.run_start.lock().unwrap_or_else(|e| e.into_inner());
+        if self.is_running(id) {
+            bail!(
+                "{} is already running: wait for it to finish, or stop it, before you start it again",
+                app.manifest.title
+            );
+        }
         let key = self.publisher_key(&app.record, &app.app_dir);
         let mut reasons = self.policy_reasons(
             &app.manifest.id.namespace,
@@ -1520,6 +1548,7 @@ impl Store {
             error: None,
             hint: None,
             guard: Vec::new(),
+            cut: BTreeMap::new(),
             output_dir: output_dir.clone(),
             result_folders: run::result_folders(&app.manifest, &resolved, &output_dir),
             output_removed: None,
@@ -1558,6 +1587,7 @@ impl Store {
         record.error = result.error.clone();
         record.hint = result.hint.clone();
         record.guard = result.guard.clone();
+        record.cut = result.cut.clone();
         let mut stop_unsaved = None;
         if let Some(hit) = result.guard_stop() {
             let quarantine = Quarantine {
@@ -2384,6 +2414,7 @@ mod tests {
             error: None,
             hint: None,
             guard: Vec::new(),
+            cut: BTreeMap::new(),
             output_dir,
             result_folders: Vec::new(),
             output_removed: None,
