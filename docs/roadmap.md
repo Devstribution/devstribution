@@ -24,15 +24,17 @@ The numbered sections after the stages are the record per area. Earlier revision
 
 Roughly in this order; N1 and N2 first, as they finish what 0.4.0 started and close known gaps.
 
-- ☐ **N1. Finish the 0.4.0 rollout**: mark the release as the latest (not a pre-release), so
-  installed 0.3.0 launchers are offered it, and see that update happen in a launcher. That is the
-  last check of B5 (self-update), B13 (the first tag run worked on 5 November) and B15.
-- ◐ **N2. Guard gaps from the 5 November assessment**: ☑ programs that reach the network (`curl`, …)
-  now count as network use for an app that declares none ([`security.md`](security.md)). Left:
-  commands that steal credentials or tamper with the system which the process rules do not know
-  yet, and the gaps left by B10. Details are tracked privately,
-  as [`SECURITY.md`](../SECURITY.md) asks of reporters; each fix goes into
-  [`security.md`](security.md) and the changelog with its release.
+- ☑ **N1. Finish the 0.4.0 rollout**: 0.4.0 is the latest release, and an installed 0.3.0
+  launcher offered it and updated itself to it (6 November): the last check of B5 (self-update),
+  B13 and B15. The installer's progress window showed during the update; from 0.5.0 on, updates
+  install without it.
+- ☑ **N2. Guard gaps from the 5 November assessment**: programs that reach the network (`curl`,
+  …) count as network use for an app that declares none; the process rules know the commands that
+  dump or list saved passwords, add accounts, open files to everyone or clear the event logs;
+  Python code a run wrote is not run; and the gaps B10 left (databases opened past the `sqlite3`
+  module, this PC's own shares, junctions above a trust folder) are closed
+  ([`security.md`](security.md)). What remains is tracked privately, as
+  [`SECURITY.md`](../SECURITY.md) asks of reporters.
 - ☑ **N3. Faster runs** (section 9): an app's code starts after 0.16 s instead of 0.4 s. The
   standard library's bytecode is cached in the data folder, where the guard stops apps' writes
   (the runner's own modules are still compiled from their checked source every run); the
@@ -40,10 +42,11 @@ Roughly in this order; N1 and N2 first, as they finish what 0.4.0 started and cl
   through its process handle, not a snapshot of every thread on the system. The app's code and
   its dependencies are compiled at install, so the first run of a pandas app takes 1.9 s, not
   4.1–4.7 s.
-- ☐ **N4. A stand-in for a company PC**, so B1 and B2 stop waiting for a company: a standard
-  (non-admin) account or a VM with AppLocker rules, a TLS-inspecting proxy (mitmproxy) for uv,
-  and an SMB share for the trust folder. A script to set it up and a checklist; then run B1 and B2
-  there and time cold installs behind the proxy. A real company still confirms it later.
+- ◐ **N4. A stand-in for a company PC**, so B1 and B2 stop waiting for a company: ☑ a script
+  that sets up a Windows VM (a standard account, AppLocker's default rules, mitmproxy as a
+  TLS-inspecting proxy, trust folders on an SMB share, managed mode) and a checklist
+  ([`company-pc.md`](company-pc.md)). Left: run B1 and B2 there, and time cold installs behind
+  the proxy. A real company still confirms it later.
 - ☐ **N5. Signing, both routes at once**: apply to SignPath Foundation (was A9) with 0.4.0 linked,
   and to Certum's open-source certificate, which checks who we are rather than the project's
   reputation. Whichever says yes first → B4.
@@ -52,13 +55,14 @@ Roughly in this order; N1 and N2 first, as they finish what 0.4.0 started and cl
   before the first install; table and text results over 256 KB show their start, with all of it
   saved in the results folder (they used to end "without a result" over 16 KB); one run at a
   time per app.
-- ☐ **N7. Results shown in the launcher, first step**: CSV and table results as a table, without
-  opening another program (section 7). Excel, images and charts later.
-- ☐ **N8. On GitHub**: secret scanning with push protection, and code scanning (CodeQL), both free
-  for public repositories.
-- ☐ **N9. Keep measuring**: `crates/devstribution-host/examples/perf.rs` times install, first run
-  and later runs; its numbers go into section 9 and [`report.md`](report.md) with each release that
-  changes them.
+- ☑ **N7. Results shown in the launcher, first step**: a CSV or TSV result shows its first 50
+  rows as a table under the file, as table results do, with the number of rows (section 7). Excel,
+  images and charts later.
+- ☑ **N8. On GitHub**: secret scanning with push protection, and code scanning (CodeQL's default
+  setup), on since 6 November.
+- ☑ **N9. Keep measuring**: `crates/devstribution-host/examples/perf.rs` times install, first run
+  and later runs; the numbers are in section 9 and [`report.md`](report.md), and timing them is a
+  step of a release that changes installs or runs ([`releasing.md`](releasing.md)).
 
 ## A. First public release (done)
 
@@ -98,12 +102,13 @@ as other documents refer to them.
   scrolling (section 2).
 - ☐ **B4. Signing in CI**, once SignPath or Certum has said yes (N5), then the Windows checks again
   with the signed installer (section 3).
-- ◐ **B15. A release with the B10 fixes**: 0.4.0, released 5 November from the hardened workflow (its
-  first tag run). Left: N1.
+- ☑ **B15. A release with the B10 fixes**: 0.4.0, released 5 November from the hardened workflow (its
+  first tag run), and installed launchers update to it (N1).
 
 Done:
 
-- ☑ **B5.** The launcher updates itself (signed update feed; IT can turn it off). Still to see: N1.
+- ☑ **B5.** The launcher updates itself (signed update feed; IT can turn it off); seen from 0.3.0 to
+  0.4.0 (N1).
 - ☑ **B6.** Revocation, first two steps: the list check and owners' withdrawal and rotation statements
   ([`revocation.md`](revocation.md)).
 - ☑ **B7.** Fuzzing of everything that reads untrusted bytes, nightly in CI ([`fuzz/README.md`](../fuzz/README.md)).
@@ -228,7 +233,7 @@ it sees. Neither needs admin rights. The process rules live in one file,
 - ☑ **Tests** per rule in `runner/tests/test_guard.py` (Windows, Linux, macOS), shared command-line
   cases with the launcher, and the stop → quarantine → allow flow in `flow.rs`; checked in the
   installed launcher on Windows (`report.md`).
-- ◐ **Gaps found on 5 November** → N2 (network through other programs ☑).
+- ☑ **Gaps found on 5 November** (N2).
 
 The hook runs inside the app's process, so code that patches memory through `ctypes` can get past
 it; the Job Object check does not depend on the app, and the sandbox (C) is the real wall.
@@ -266,15 +271,16 @@ repository, fetching and the policy values → C.
 ☑ The "Launchpad" design and its written language ([design.md](design.md)); the code scan on the
 install screen; results in a folder the user chose; "Uninstall devstribution" in Settings; `.zip`
 downloads install; error messages, About page, cancellable install, keyboard and screen reader
-basics (stage A); plainer trust wording, large table results, one run per app (N6). ◐ Uninstall
-easy to find: check with users. Open: results shown in the launcher → N7, then C.
+basics (stage A); plainer trust wording, large table results, one run per app (N6); CSV results
+as a table (N7). ◐ Uninstall easy to find: check with users. Open: Excel, images and charts → C.
 
 ## 8. Release engineering and evidence for IT
 
 ☑ Security reviews before signing and again on 30 October (B10; repeat before each release that
 changes install, runs or the guard); `SECURITY.md` with private reporting; versioning and release
 notes; "Copy diagnostics"; docs for authors; fuzzing (B7); a performance and security assessment
-on 5 November (N2, N3). Open: secret scanning and CodeQL → N8; Windows Event Log and SBOM → C.
+on 5 November (N2, N3); secret scanning with push protection and CodeQL (N8). Open: Windows
+Event Log and SBOM → C.
 
 ## 9. Performance
 

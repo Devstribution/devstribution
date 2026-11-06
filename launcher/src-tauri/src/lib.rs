@@ -469,6 +469,21 @@ async fn open_output(
     .await
 }
 
+/// The start of a CSV result, as a table: only a file "open result" would open.
+#[tauri::command]
+async fn preview_table(
+    app: AppHandle,
+    run_id: String,
+    path: String,
+) -> CmdResult<table::TablePreview> {
+    blocking(move || {
+        let record = state(&app).store.run(&run_id)?;
+        let (target, _) = output_target(&record, Some(&path), false)?;
+        table::read(&target)
+    })
+    .await
+}
+
 /// What "open result" may open, and whether to show it in its folder instead of opening it.
 /// Nothing else can be opened, whatever the page asks: the path must be one of the run's
 /// recorded results and resolve inside its output folder or a folder chosen for the run. With
@@ -1130,6 +1145,7 @@ pub fn run() {
             list_runs,
             run_log,
             open_output,
+            preview_table,
             open_data_folder,
             open_notices,
             cleanup_preview,
@@ -1156,6 +1172,8 @@ pub fn run() {
         std::process::exit(1);
     }
 }
+
+mod table;
 
 #[cfg(test)]
 mod tests;

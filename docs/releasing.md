@@ -31,6 +31,9 @@ behaviour, a patch (0.1.1) only fixes. The package format has its own number (fo
    Commit the file if it changed. Also `python scripts/update_dep_data.py`: it refreshes the lists
    the dependency check bundles (malicious and popular PyPI packages), which go stale within
    weeks (it needs a network connection). Commit them if they changed.
+   If the release changes how apps install or start, time it:
+   `cargo run --release -p devstribution-host --example perf -- <empty folder>`, and put the
+   numbers in section 9 of [`roadmap.md`](roadmap.md) and in [`report.md`](report.md).
 3. **Check.** `python scripts/release.py check v0.2.0` must say the versions and the changelog
    agree. Open a PR with these changes and merge it when CI passes.
 4. **Dry run (optional).** Actions → Release → *Run workflow* on `main`: it builds everything
@@ -87,8 +90,9 @@ off), and from Settings → "Look for updates". They read
 public half is in `tauri.conf.json` (`plugins.updater.pubkey`), so a launcher installs only an
 installer signed with that key, and only the version the signature names (`requireSignedVersion`:
 a feed edited to pair a new version number with an older installer is refused). The launcher
-then runs the installer in passive mode: a progress window, no questions, no administrator
-rights, and it opens the new version.
+then runs the installer in quiet mode: no window, no questions, no administrator rights, and it
+opens the new version. (Up to 0.4.0 it was passive mode, which shows the installer's progress
+window; the launcher doing the update decides.)
 
 The key cannot be replaced without a manual reinstall everywhere: launchers trust only the
 public key they were built with. Keep the private key file and its password outside the

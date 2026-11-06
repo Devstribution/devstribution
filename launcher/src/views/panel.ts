@@ -264,10 +264,19 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
         if (value === undefined || value === null) return null;
         if (o.type === "file") {
           const path = String(value);
-          return h("div", { class: "output-file" },
+          const row = h("div", { class: "output-file" },
             h("div", { class: "grow" }, h("div", { class: "name", title: fileName(path) }, fileName(path)), h("div", { class: "label" }, o.label ?? o.name)),
             h("button", { class: "btn small", title: "Show in folder", "aria-label": "Show in folder", onclick: () => ctx.api.openOutput(run!.runId, path, true).catch((e) => toast(errorText(e), "error")) }, icon(FolderOpen, 15)),
             h("button", { class: "btn primary small", onclick: () => ctx.api.openOutput(run!.runId, path, false).catch((e) => toast(errorText(e), "error")) }, icon(ExternalLink, 14), "Open"));
+          if (!/\.(csv|tsv)$/i.test(path)) return row;
+          // A CSV is shown here too, as a table: its start, read by the launcher.
+          const preview = h("div", { class: "csv-preview" });
+          ctx.api.previewTable(run!.runId, path).then((t) => {
+            if (!t.columns.length && !t.rows.length) return;
+            preview.classList.add("output-text");
+            clear(preview, tableView(t.columns, t.rows, t.total, () => ctx.api.openOutput(run!.runId, path, false).catch((e) => toast(errorText(e), "error"))));
+          }).catch(() => preview.remove());
+          return h("div", null, row, preview);
         }
         // A result too long to keep whole: its start is shown, and all of it is in a file.
         const cut = res.cut?.[o.name];
@@ -277,17 +286,11 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
         if (o.type === "table" && Array.isArray(value)) {
           const rows = value as unknown[];
           const cols = rows.length && typeof rows[0] === "object" && !Array.isArray(rows[0]) ? Object.keys(rows[0] as object) : [];
-          const total = cut?.rows ?? rows.length;
-          const shown = Math.min(rows.length, 50);
+          const cells = rows.map((row) => (cols.length ? cols.map((c) => (row as Record<string, unknown>)[c]) : (row as unknown[])));
+          const file = cut?.file;
           return h("div", { class: "output-text" }, h("div", { class: "label" }, o.label ?? o.name),
-            h("div", { class: "table-scroll" }, h("table", { class: "table" },
-              cols.length ? h("thead", null, h("tr", null, cols.map((c) => h("th", null, c)))) : null,
-              h("tbody", null, rows.slice(0, 50).map((row) => h("tr", null,
-                (cols.length ? cols.map((c) => (row as Record<string, unknown>)[c]) : (row as unknown[])).map((cell) => h("td", null, String(cell ?? "")))))))),
-            total > shown
-              ? h("div", { class: "row muted small" }, h("span", { class: "grow" }, `The first ${shown} of ${total.toLocaleString()} rows.`),
-                  openWhole(`All ${total.toLocaleString()} rows`))
-              : null);
+            tableView(cols, cells, cut?.rows ?? rows.length,
+              file ? () => ctx.api.openOutput(run!.runId, file, false).catch((e) => toast(errorText(e), "error")) : null));
         }
         return h("div", { class: "output-text" }, h("div", { class: "label" }, o.label ?? o.name), h("div", null, String(value)),
           cut ? h("div", { class: "row muted small" }, h("span", { class: "grow" }, cut.file ? "Too long to show it all here." : "Too long to show it all, and it could not be saved."),
@@ -491,4 +494,20 @@ function programName(command: string): string {
   const program = text.match(/^(.*?\.(?:exe|com|bat|cmd))(?:\s|$)/i);
   const path = program ? program[1] : text.split(/\s/)[0];
   return path.split(/[\\/]/).pop() || command;
+}
+
+/** A table's first rows and how many there are in all; `openAll` opens the whole of it. */
+function tableView(cols: string[], rows: unknown[][], total: number | null, openAll: (() => void) | null): HTMLElement {
+  const shown = Math.min(rows.length, 50);
+  const more = total === null ? rows.length >= 50 : total > shown;
+  const all = total === null ? "All rows" : `All ${total.toLocaleString()} rows`;
+  return h("div", null,
+    h("div", { class: "table-scroll" }, h("table", { class: "table" },
+      cols.length ? h("thead", null, h("tr", null, cols.map((c) => h("th", null, c)))) : null,
+      h("tbody", null, rows.slice(0, 50).map((row) => h("tr", null, row.map((cell) => h("td", null, String(cell ?? "")))))))),
+    more
+      ? h("div", { class: "row muted small" },
+          h("span", { class: "grow" }, total === null ? `The first ${shown} rows.` : `The first ${shown} of ${total.toLocaleString()} rows.`),
+          openAll ? h("button", { class: "btn small", onclick: openAll }, icon(ExternalLink, 14), all) : null)
+      : null);
 }

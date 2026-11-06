@@ -93,6 +93,14 @@ export interface Quarantine {
 
 export type RunStatus = "running" | "ok" | "error" | "cancelled";
 
+/** The start of a CSV result, read by the launcher to show as a table. */
+export interface TablePreview {
+  columns: string[];
+  rows: string[][];
+  /** Data rows in the whole file; null when it is too large to count. */
+  total: number | null;
+}
+
 export interface RunRecord {
   id: string;
   app_id: string;
@@ -376,6 +384,8 @@ export interface Api {
   /** `null` when the run has no log file; an empty string when the app wrote nothing. */
   runLog(runId: string): Promise<string | null>;
   openOutput(runId: string, path: string | null, reveal: boolean): Promise<void>;
+  /** The start of a CSV file the run returned, as a table. */
+  previewTable(runId: string, path: string): Promise<TablePreview>;
   openDataFolder(): Promise<void>;
   /** Opens the licences of the software inside devstribution. */
   openNotices(): Promise<void>;
@@ -459,6 +469,7 @@ async function tauriApi(): Promise<Api> {
     listRuns: (appId, limit) => invoke("list_runs", { appId: appId ?? null, limit: limit ?? null }),
     runLog: (runId) => invoke("run_log", { runId }),
     openOutput: (runId, path, reveal) => invoke("open_output", { runId, path, reveal }),
+    previewTable: (runId, path) => invoke("preview_table", { runId, path }),
     openDataFolder: () => invoke("open_data_folder"),
     openNotices: () => invoke("open_notices"),
     cleanupPreview: (olderThanDays, appId, removeRecords) => invoke("cleanup_preview", { olderThanDays, appId, removeRecords }),

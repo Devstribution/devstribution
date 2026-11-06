@@ -10,6 +10,14 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 
 ## [Unreleased]
 
+### Added
+
+- A CSV result shows its first 50 rows as a table in the launcher, under the file, with how many
+  rows it has: no need to open Excel to look.
+- `scripts/company-pc/setup.ps1` and [`docs/company-pc.md`](docs/company-pc.md): a Windows VM set
+  up like a locked-down company PC (standard account, AppLocker, a TLS-inspecting proxy, trust
+  folders on a share), and what to check there.
+
 ### Changed
 
 - Runs start faster: an app's code starts ~0.2 s sooner on every run (0.18 s instead of 0.40 s
@@ -17,6 +25,9 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
   dependencies (pandas: 1.9 s instead of 4.1–4.7 s). Installs take that time instead, 0.7–2.4 s
   more. The standard library's compiled code is kept in the data folder; the runner's own is
   still compiled from its checked source on every run.
+- The launcher's own updates install without showing the installer's window: devstribution
+  closes and opens again on the new version. (The update to 0.5.0 still shows it, as the
+  version doing the update decides.)
 - One run at a time per app: Run waits until the app's current run has finished or was stopped.
 - Plainer words about trust: no signing keys on the install screen or in the main window, and a
   short explanation of publishers and trust before the first install.
@@ -33,7 +44,18 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
   `wget`, `bitsadmin`, `ftp`, `tftp`, `ssh`, `scp`, `sftp`, `telnet` and PowerShell's web commands
   count as network use. The call fails like a Python connection would; one started behind the
   runner's back ends the run. From the technical assessment of 5 November
-  ([`docs/security.md`](docs/security.md)).
+  ([`docs/security.md`](docs/security.md)), like the items below.
+- Programs that dump or list saved passwords (an LSASS dump, `reg save HKLM\SAM`, Wi-Fi keys,
+  `cmdkey`, `vaultcmd`), add user accounts, open files to everyone or clear the event logs now end
+  the run.
+- A database opened through `_sqlite3` instead of the `sqlite3` module is refused: it could read
+  any database file unseen. Apps that use `sqlite3`, pandas or SQLAlchemy are not affected.
+- Python code a run wrote, then imported or ran, ends the run like a program it wrote: the
+  install scan never saw it.
+- The guard reads a path through one of this PC's own shares (`\\localhost\data\…`) as the
+  folder it is.
+- Managed mode: a trust folder reached through a junction a user made, or whose real location
+  users can rename, now approves no one.
 
 ## [0.4.0] - 2026-11-04
 

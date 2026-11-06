@@ -605,6 +605,7 @@ kbd { font: inherit; font-size: var(--fs-xs); border: 1px solid var(--border-str
 .output-file { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3) 14px; border-radius: var(--r-md); background: var(--surface); border: 1px solid var(--border); }
 .output-file .name { font-weight: var(--fw-bold); font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .output-file .label { font-size: var(--fs-xs); color: var(--muted); }
+.csv-preview:not(:empty) { margin-top: var(--sp-2); }
 .output-text { padding: var(--sp-3) 14px; border-radius: var(--r-md); background: var(--surface); border: 1px solid var(--border); overflow-wrap: anywhere; }
 .output-text .label { font-size: var(--fs-xs); color: var(--muted); font-weight: var(--fw-bold); }
 .table-scroll { overflow-x: auto; margin-top: var(--sp-2); }

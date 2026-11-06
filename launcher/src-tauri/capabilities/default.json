@@ -22,6 +22,7 @@
     "allow-list-runs",
     "allow-run-log",
     "allow-open-output",
+    "allow-preview-table",
     "allow-open-data-folder",
     "allow-open-notices",
     "allow-cleanup-preview",

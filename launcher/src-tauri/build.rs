@@ -13,6 +13,7 @@ const COMMANDS: &[&str] = &[
     "list_runs",
     "run_log",
     "open_output",
+    "preview_table",
     "open_data_folder",
     "open_notices",
     "cleanup_preview",
