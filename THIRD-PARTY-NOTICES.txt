@@ -297,7 +297,7 @@ Used by:
   aho-corasick 1.1.5 (Unlicense OR MIT)
   byteorder 1.5.0 (Unlicense OR MIT)
   globset 0.4.19 (Unlicense OR MIT)
-  ignore 0.4.33 (Unlicense OR MIT)
+  ignore 0.4.34 (Unlicense OR MIT)
   memchr 2.8.3 (Unlicense OR MIT)
   same-file 1.0.6 (Unlicense/MIT)
   walkdir 2.5.0 (Unlicense/MIT)
@@ -312,7 +312,7 @@ Used by:
   aho-corasick 1.1.5 (Unlicense OR MIT)
   byteorder 1.5.0 (Unlicense OR MIT)
   globset 0.4.19 (Unlicense OR MIT)
-  ignore 0.4.33 (Unlicense OR MIT)
+  ignore 0.4.34 (Unlicense OR MIT)
   memchr 2.8.3 (Unlicense OR MIT)
   walkdir 2.5.0 (Unlicense/MIT)
 
@@ -343,7 +343,7 @@ Used by:
   aho-corasick 1.1.5 (Unlicense OR MIT)
   byteorder 1.5.0 (Unlicense OR MIT)
   globset 0.4.19 (Unlicense OR MIT)
-  ignore 0.4.33 (Unlicense OR MIT)
+  ignore 0.4.34 (Unlicense OR MIT)
   memchr 2.8.3 (Unlicense OR MIT)
   same-file 1.0.6 (Unlicense/MIT)
   walkdir 2.5.0 (Unlicense/MIT)
@@ -4815,10 +4815,10 @@ Used by:
   tauri 2.12.5 (Apache-2.0 OR MIT)
   tauri-codegen 2.7.4 (Apache-2.0 OR MIT)
   tauri-macros 2.7.4 (Apache-2.0 OR MIT)
-  tauri-plugin-dialog 2.8.3 (Apache-2.0 OR MIT)
+  tauri-plugin-dialog 2.8.4 (Apache-2.0 OR MIT)
   tauri-plugin-fs 2.7.1 (Apache-2.0 OR MIT)
   tauri-plugin-opener 2.7.2 (Apache-2.0 OR MIT)
-  tauri-plugin-single-instance 2.5.4 (Apache-2.0 OR MIT)
+  tauri-plugin-single-instance 2.5.5 (Apache-2.0 OR MIT)
   tauri-plugin-updater 2.14.1 (Apache-2.0 OR MIT)
   tauri-runtime 2.12.2 (Apache-2.0 OR MIT)
   tauri-runtime-wry 2.12.3 (Apache-2.0 OR MIT)
@@ -8774,7 +8774,7 @@ THE SOFTWARE.
 
 ------------------------------------------------------------------------------
 Used by:
-  rfd 0.16.0 (MIT)
+  rfd 0.17.2 (MIT)
 
 MIT License
 
@@ -10625,7 +10625,7 @@ Used by:
   tauri 2.12.5 (Apache-2.0 OR MIT)
   tauri-codegen 2.7.4 (Apache-2.0 OR MIT)
   tauri-macros 2.7.4 (Apache-2.0 OR MIT)
-  tauri-plugin-dialog 2.8.3 (Apache-2.0 OR MIT)
+  tauri-plugin-dialog 2.8.4 (Apache-2.0 OR MIT)
   tauri-plugin-fs 2.7.1 (Apache-2.0 OR MIT)
   tauri-plugin-opener 2.7.2 (Apache-2.0 OR MIT)
   tauri-plugin-updater 2.14.1 (Apache-2.0 OR MIT)
@@ -10657,11 +10657,11 @@ SOFTWARE.
 
 ------------------------------------------------------------------------------
 Used by:
-  @tauri-apps/plugin-dialog 2.8.3 (MIT OR Apache-2.0)
-  tauri-plugin-dialog 2.8.3 (Apache-2.0 OR MIT)
+  @tauri-apps/plugin-dialog 2.8.4 (MIT OR Apache-2.0)
+  tauri-plugin-dialog 2.8.4 (Apache-2.0 OR MIT)
   tauri-plugin-fs 2.7.1 (Apache-2.0 OR MIT)
   tauri-plugin-opener 2.7.2 (Apache-2.0 OR MIT)
-  tauri-plugin-single-instance 2.5.4 (Apache-2.0 OR MIT)
+  tauri-plugin-single-instance 2.5.5 (Apache-2.0 OR MIT)
   tauri-plugin-updater 2.14.1 (Apache-2.0 OR MIT)
 
 SPDXVersion: SPDX-2.1
@@ -10687,7 +10687,7 @@ Creator: Person: Daniel Thompson-Yvetot
 
 ------------------------------------------------------------------------------
 Used by:
-  tauri-plugin-single-instance 2.5.4 (Apache-2.0 OR MIT)
+  tauri-plugin-single-instance 2.5.5 (Apache-2.0 OR MIT)
 
 MIT License
 
@@ -12283,7 +12283,7 @@ DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
 Used by:
-  zip 9.1.2 (MIT)
+  zip 9.3.0 (MIT)
 
 The MIT License (MIT)
 
@@ -12662,7 +12662,7 @@ Creator: Person: Daniel Thompson-Yvetot
 
 ------------------------------------------------------------------------------
 Used by:
-  lucide 1.61.0 (ISC)
+  lucide 1.66.0 (ISC)
 
 ISC License
 
