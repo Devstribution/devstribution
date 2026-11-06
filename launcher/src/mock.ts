@@ -51,6 +51,7 @@ const apps: AppView[] = [
     ],
     outputs: [
       { name: "report", type: "file", label: "Summary workbook" },
+      { name: "groups", type: "file", label: "Groups (CSV)" },
       { name: "summary", type: "text" },
       { name: "rows", type: "table", label: "Rows read" },
     ],
@@ -445,7 +446,8 @@ export function mockApi(): Api {
           status: "ok" as const,
           outputs: app.outputs.length
             ? {
-                report: `${record.output_dir}\\orders-2026-by-customer.xlsx`, summary: "1842 rows in 6 groups of Customer",
+                report: `${record.output_dir}\\orders-2026-by-customer.xlsx`,
+                groups: `${record.output_dir}\\groups.csv`, summary: "1842 rows in 6 groups of Customer",
                 rows: Array.from({ length: 60 }, (_, n) => ({ Row: n + 2, Customer: ["Acme", "Globex", "Initech"][n % 3], Amount: 120 + n * 7 })),
               }
             : {},
@@ -482,6 +484,13 @@ export function mockApi(): Api {
       return "openpyxl: reading sheet 'Orders' (read-only mode)\nTraceback (most recent call last):\n  File \"main.py\", line 17, in run\n    sum_index = _column(header, sum_column)\nValueError: column 'Amount' not found; the sheet has: Order, Customer, Total\n";
     },
     async openOutput() {},
+    async previewTable() {
+      return {
+        columns: ["Customer", "Orders", "Total (€)"],
+        rows: ["Acme", "Globex", "Initech", "Umbrella", "Hooli", "Stark"].map((c, n) => [c, String(120 + n * 31), (4200.5 + n * 1337.25).toFixed(2)]),
+        total: 6,
+      };
+    },
     async openDataFolder() {},
     async openNotices() {},
     async cleanupPreview(olderThanDays, appId, removeRecords) {

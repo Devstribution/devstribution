@@ -101,6 +101,22 @@ safe choice).
 The checks used a throwaway test app (`wincheck`: `tree-*` / `excel-*` modes, a secret input) and
 `examples/hello-gui`.
 
+## How long users wait
+
+Timed with `crates/devstribution-host/examples/perf.rs` (release build, uv 0.13.4, Python 3.15,
+Windows 11 on this PC). "Cold" downloads Python and every wheel; "warm" has them in uv's cache.
+Before the faster runs of 0.5.0 (5 November 2026) → after (6 November):
+
+| App | Install, cold | Install, warm | First run | Later runs |
+|---|---|---|---|---|
+| No dependencies | 2.1 s → 4.5 s | 0.4 s → 1.1 s | 0.5–0.7 s → 0.4 s | 0.40 s → 0.18 s |
+| openpyxl (1,000 rows to `.xlsx`) | 2.5 s → 3.6 s | 0.4 s → 1.4 s | 1.4 s → 0.8–0.9 s | 0.71 s → 0.50 s |
+| pandas + openpyxl (10,000 rows to `.xlsx`) | 4.8 s → 7.2 s | 0.9 s → 3.2 s | 4.1–4.7 s → 1.9 s | 1.7 s → 1.4 s |
+
+Installs now compile the app and its dependencies, which the first run used to do. The guard
+costs no time in proportion to the work: the pandas job takes 1.3 s on its own and 1.4 s under
+devstribution. Behind a company proxy, installs will be slower: not timed yet (roadmap N4).
+
 ## Still to check on Windows
 
 - The data folder move with real old data (a pre-0.2 launcher's `state.json`).

@@ -44,6 +44,27 @@ class PathSpellingTest(unittest.TestCase):
         self.assertEqual(_guard._normal("C:\\"), "c:\\")
         self.assertEqual(_guard._normal("\\\\.\\nul"), "\\\\.\\nul")
 
+    def test_a_share_of_this_pc_is_its_folder(self):
+        if os.name != "nt":
+            self.skipTest("Windows paths")
+        saved = dict(_guard._LOCAL_SHARES)
+        self.addCleanup(lambda: (_guard._LOCAL_SHARES.clear(), _guard._LOCAL_SHARES.update(saved)))
+        _guard._LOCAL_SHARES.clear()
+        _guard._LOCAL_SHARES["users"] = "c:\\users"
+        plain = _guard._normal(r"C:\Users\x\key.kdbx")
+        pc = os.environ.get("COMPUTERNAME", "pc")
+        for other in (
+            "\\\\localhost\\Users\\x\\key.kdbx",
+            "\\\\127.0.0.1\\users\\x\\key.kdbx",
+            f"\\\\{pc}\\Users\\x\\key.kdbx",
+            f"\\\\?\\UNC\\{pc}.corp.example\\Users\\x\\key.kdbx",
+        ):
+            self.assertEqual(_guard._normal(other), plain, other)
+        self.assertEqual(_guard._normal("\\\\localhost\\Users"), "c:\\users")
+        # Another PC's share of the same name is another folder.
+        self.assertEqual(_guard._normal("\\\\fileserver\\users\\x"), "\\\\fileserver\\users\\x")
+        _guard.load_local_shares()  # reads the registry without failing
+
     def test_a_sqlite_uri_names_its_file(self):
         for uri in (
             "file:C:/x/Login%20Data?mode=ro",
@@ -267,6 +288,85 @@ class GuardTest(RunnerBase):
             """,
             "browser-passwords",
         )
+
+    def test_python_code_the_run_wrote_is_not_run(self):
+        for i, how in enumerate((
+            "import sys; sys.path.insert(0, str(d)); import fresh0",
+            "import runpy; runpy.run_path(str(d / 'fresh1.py'))",
+            "exec(compile((d / 'fresh2.py').read_text(), str(d / 'fresh2.py'), 'exec'))",
+        )):
+            with self.subTest(how=how):
+                self.assert_stopped(
+                    f"""
+                    d = ctx.output_dir / "code"
+                    d.mkdir(exist_ok=True)
+                    (d / "fresh{i}.py").write_text("x = 1")
+                    {how}
+                    """,
+                    "downloaded-program",
+                )
+
+    def test_bytecode_the_run_wrote_is_not_loaded(self):
+        self.assert_stopped(
+            """
+            import marshal, importlib.util, sys
+            d = ctx.output_dir / "code"
+            d.mkdir()
+            code = compile("x = 1", "C:/elsewhere/innocent.py", "exec")
+            (d / "fresh.pyc").write_bytes(importlib.util.MAGIC_NUMBER + bytes(12) + marshal.dumps(code))
+            sys.path.insert(0, str(d))
+            import fresh
+            """,
+            "downloaded-program",
+        )
+
+    def test_python_code_written_as_a_result_is_fine(self):
+        code, messages, err = self.run_guarded(
+            """
+            p = ctx.output_dir / "script.py"
+            p.write_text("print(1)")
+            return {"v": p.read_text()}
+            """
+        )
+        self.assertEqual(code, 0, (messages, err))
+        self.assertIn('"v": "print(1)"', json.dumps(messages))
+
+    def test_a_database_opened_past_the_sqlite3_module_is_refused(self):
+        code, messages, _ = self.run_guarded(
+            """
+            import _sqlite3
+            p = ctx.output_dir / "Google" / "Chrome" / "User Data" / "Default"
+            p.mkdir(parents=True)
+            c = _sqlite3.connect(":memory:")
+            c.set_authorizer(None)
+            c.execute(f"ATTACH DATABASE '{p / 'Login Data'}' AS x")
+            return {"v": "attached"}
+            """
+        )
+        self.assertNotIn('"v": "attached"', json.dumps(messages))
+        self.assertTrue(any(m["rule"] == "sqlite" for m in self.guard_messages(messages, "block")))
+
+    def test_a_connection_class_of_the_apps_own_still_works(self):
+        code, messages, err = self.run_guarded(
+            """
+            import sqlite3, _sqlite3
+            class Mine(sqlite3.Connection):
+                pass
+            class Raw(_sqlite3.Connection):
+                pass
+            a = sqlite3.connect(":memory:", factory=Mine)
+            b = sqlite3.connect(":memory:", factory=Raw)
+            p = ctx.output_dir / "Google" / "Chrome" / "User Data" / "Default"
+            p.mkdir(parents=True)
+            for db in (a, b):
+                db.execute("SELECT 1")
+            b.execute(f"ATTACH DATABASE '{p / 'Login Data'}' AS x")
+            return {"v": "attached"}
+            """
+        )
+        self.assertNotIn('"v": "attached"', json.dumps(messages))
+        stops = self.guard_messages(messages, "stop")
+        self.assertEqual([m["rule"] for m in stops], ["browser-passwords"], messages)
 
     def test_attaching_ordinary_databases_still_works(self):
         result = self.run_guarded(

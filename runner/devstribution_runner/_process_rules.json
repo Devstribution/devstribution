@@ -98,6 +98,59 @@
       "contains": ["state off", "opmode disable", "opmode=disable"]
     },
     {
+      "id": "credential-theft",
+      "message": "tried to read the passwords Windows keeps",
+      "programs": ["rundll32"],
+      "contains": ["minidump", "comsvcs"]
+    },
+    {
+      "id": "credential-theft",
+      "message": "tried to read the passwords Windows keeps",
+      "programs": ["procdump", "procdump64"],
+      "contains": ["lsass"]
+    },
+    {
+      "id": "credential-theft",
+      "message": "tried to read the passwords Windows keeps",
+      "programs": ["reg"],
+      "contains": ["hklm\\sam", "hklm\\security", "hkey_local_machine\\sam", "hkey_local_machine\\security", "save hklm\\system", "save hkey_local_machine\\system"]
+    },
+    {
+      "id": "credential-theft",
+      "message": "tried to read the passwords Windows keeps",
+      "programs": ["netsh"],
+      "contains": ["key=clear"]
+    },
+    {
+      "id": "credential-theft",
+      "message": "tried to read the passwords Windows keeps",
+      "programs": ["cmdkey", "vaultcmd"]
+    },
+    {
+      "id": "accounts-and-permissions",
+      "message": "tried to add a user account or open files to everyone",
+      "programs": ["net", "net1"],
+      "flags": ["-add"]
+    },
+    {
+      "id": "accounts-and-permissions",
+      "message": "tried to add a user account or open files to everyone",
+      "programs": ["icacls", "cacls"],
+      "contains": ["everyone:", "*s-1-1-0:"]
+    },
+    {
+      "id": "clear-logs",
+      "message": "tried to clear the Windows event logs, which hides what a program did",
+      "programs": ["wevtutil"],
+      "flags": ["cl", "clear-log"]
+    },
+    {
+      "id": "clear-logs",
+      "message": "tried to clear the Windows event logs, which hides what a program did",
+      "programs": ["powershell", "pwsh"],
+      "contains": ["clear-eventlog", "remove-eventlog", "wevtutil cl"]
+    },
+    {
       "id": "network",
       "when": "no-network",
       "message": "uses the network through another program, which it does not declare",

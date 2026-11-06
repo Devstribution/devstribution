@@ -177,8 +177,10 @@ _CLOUD_CREDENTIALS = ("\\.aws\\", "\\.azure\\", "\\.kube\\", "\\.docker\\config.
 # Files an app writes and then runs or loads: how a download-and-run hides from the command line.
 _RUNNABLE_EXTENSIONS = (
     ".exe", ".dll", ".pyd", ".scr", ".com", ".bat", ".cmd", ".ps1", ".vbs", ".js", ".jse",
-    ".wsf", ".hta", ".msi", ".py", ".pyw",
+    ".wsf", ".hta", ".msi", ".py", ".pyw", ".pyc",
 )
+# Python code a run wrote and then imported or ran: hidden from the install scan.
+_PYTHON_CODE = (".py", ".pyw", ".pyc")
 
 # `os.devnull` and other devices (`\\.\nul`, `/dev/null`): not files.
 _DEVICES = ("\\\\.\\", "\\dev\\")
@@ -222,6 +224,7 @@ class Guard:
         self._observed: Dict[str, int] = {}
         self._key_paths: Dict[int, str] = {}
         self._own_names = {n.lower() for n in (os.environ.get("COMPUTERNAME"),) if n}
+        load_local_shares()
         # Other Pythons the app starts run `child.py` with the settings file `config`.
         child = config.get("child") or {}
         self._child_script: Optional[str] = child.get("script")
@@ -278,6 +281,7 @@ class Guard:
             "winreg.DeleteValue": self._on_set_value,
             "open": self._on_open,
             "sqlite3.connect": self._on_sqlite,
+            "sqlite3.connect/handle": self._on_sqlite_handle,
             "shutil.copyfile": self._on_copy,
             "os.rename": self._on_rename,
             "os.link": self._on_link,
@@ -298,6 +302,7 @@ class Guard:
             "ctypes.dlsym": self._on_dlsym,
             "marshal.loads": self._on_marshal,
             "marshal.load": self._on_marshal,
+            "exec": self._on_exec_code,
         }
 
     def install(self) -> None:
@@ -609,9 +614,40 @@ class Guard:
         )
         if writing:
             self._check_change(args[0], "write")
+        elif path.endswith(".pyc") and self._written_programs:
+            # Bytecode the run wrote, read back: only to load it, and its code names any file.
+            self._ran_written_code(path, args[0])
+
+    def _on_exec_code(self, args: tuple) -> None:
+        """Code about to run: a module imported, `runpy`, `exec(compile(...))`. Code compiled from a
+        file the run wrote is code the install scan never saw."""
+        if not self._written_programs or not args:
+            return
+        name = getattr(args[0], "co_filename", None)
+        if isinstance(name, str) and name.lower().endswith(_PYTHON_CODE):
+            self._ran_written_code(_abs_path(name), name)
+
+    def _ran_written_code(self, path: Optional[str], given: Any) -> None:
+        if path and (path in self._written_programs or _real(given) in self._written_programs):
+            self._stop("downloaded-program", "ran Python code it had just written", path)
 
     def _on_sqlite(self, args: tuple) -> None:
         self._check_read(_sqlite_path(args[0]) if args else None)
+
+    def _on_sqlite_handle(self, args: tuple) -> None:
+        """Every connection (Python 3.10+), also one opened through `_sqlite3` rather than
+        `sqlite3`. A connection cannot be given an authorizer while it opens, so one the wrapper
+        below does not open is refused: it could `ATTACH` any file unseen."""
+        connection = args[0] if args else None
+        if connection is None or getattr(connection, "_guarded", False):
+            return
+        if getattr(self._local, "sqlite_connect", False):
+            return  # the wrapper's `connect`, which gives it the authorizer once open
+        self._block(
+            "sqlite",
+            "opened a database past devstribution's checks (use the sqlite3 module)",
+            type(connection).__module__ + "." + type(connection).__qualname__,
+        )
 
     def _watch_sqlite(self) -> None:
         """`ATTACH DATABASE` opens a file inside SQLite, with no audit event, but SQLite asks an
@@ -627,6 +663,7 @@ class Guard:
         class Connection(plain):
             __qualname__ = plain.__qualname__
             __module__ = plain.__module__
+            _guarded = True
 
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 super().__init__(*args, **kwargs)
@@ -643,7 +680,12 @@ class Guard:
         def connect(*args: Any, **kwargs: Any) -> Any:
             if len(args) < 6:  # the sixth is `factory`
                 kwargs.setdefault("factory", Connection)
-            connection = plain_connect(*args, **kwargs)
+            local = self._local
+            local.sqlite_connect = True
+            try:
+                connection = plain_connect(*args, **kwargs)
+            finally:
+                local.sqlite_connect = False
             if not isinstance(connection, Connection):
                 plain.set_authorizer(connection, guard)
             return connection
@@ -899,9 +941,53 @@ def _text(value: Any) -> str:
     return str(value)
 
 
+#: This PC's shared folders (`\\\\pc\\data` is `c:\\data`), read once before any app code runs.
+_LOCAL_SHARES: Dict[str, str] = {}
+
+
+def load_local_shares() -> None:
+    """The folders this PC shares, from the registry, which users can read (the share API tells
+    only administrators where a share is). A path through one is the folder's own path."""
+    if os.name != "nt":
+        return
+    try:
+        import winreg
+
+        key = winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Services\LanmanServer\Shares"
+        )
+    except OSError:
+        return
+    shares = {}
+    with key:
+        for i in range(10000):
+            try:
+                name, data, _ = winreg.EnumValue(key, i)
+            except OSError:
+                break
+            if not isinstance(data, list):
+                continue
+            fields = dict(f.split("=", 1) for f in data if isinstance(f, str) and "=" in f)
+            path = fields.get("Path", "")
+            if fields.get("Type", "0") == "0" and re.match(r"[A-Za-z]:\\", path):
+                shares[name.lower()] = path.lower().rstrip("\\")
+    _LOCAL_SHARES.clear()
+    _LOCAL_SHARES.update(shares)
+
+
+def _this_pc(host: str) -> bool:
+    name = (os.environ.get("COMPUTERNAME") or "").lower()
+    return (
+        host in ("localhost", ".", "0--1.ipv6-literal.net")
+        or host.startswith("127.")
+        or (bool(name) and (host == name or host.startswith(name + ".")))
+    )
+
+
 def _normal(path: str) -> str:
     """How the guard compares paths: lower case, backslashes, no `\\\\?\\` or `\\\\.\\` prefix on a
-    disk path, an admin share (`\\\\host\\c$\\x`) as the disk path (`c:\\x`), no trailing slash, and for
+    disk path, an admin share (`\\\\host\\c$\\x`) or one of this PC's shares (`\\\\localhost\\data\\x`)
+    as the disk path (`c:\\x`, `c:\\data\\x`), no trailing slash, and for
     the last name no NTFS stream (`file::$DATA`) and no trailing dots or spaces, which Windows
     ignores: all of them spell the same file."""
     text = path.replace("/", "\\").lower()
@@ -912,6 +998,11 @@ def _normal(path: str) -> str:
     share = re.match(r"\\\\[^\\]+\\([a-z])\$(?:\\|$)", text)
     if share:
         text = share.group(1) + ":\\" + text[share.end() :]
+    elif _LOCAL_SHARES:
+        named = re.match(r"\\\\([^\\]+)\\([^\\]+)(?:\\|$)", text)
+        if named and named.group(2) in _LOCAL_SHARES and _this_pc(named.group(1)):
+            rest = text[named.end() :]
+            text = _LOCAL_SHARES[named.group(2)] + "\\" + rest
     text = text.rstrip("\\") if len(text) > 3 else text
     if os.name == "nt" and len(text) > 3 and not text.startswith("\\\\.\\"):
         folder, sep, name = text.rpartition("\\")
