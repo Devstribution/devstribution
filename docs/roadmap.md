@@ -24,10 +24,10 @@ The numbered sections after the stages are the record per area. Earlier revision
 
 Roughly in this order; N1 and N2 first, as they finish what 0.4.0 started and close known gaps.
 
-- ◐ **N1. Finish the 0.4.0 rollout**: ☑ 0.4.0 is the latest release, so the update feed
-  (`releases/latest/download/latest.json`) now answers, and its installer's signature checks out
-  against the key 0.3.0 launchers carry (6 November). Left: see a 0.3.0 launcher offer and install
-  it. That is the last check of B5 (self-update), B13 and B15.
+- ☑ **N1. Finish the 0.4.0 rollout**: 0.4.0 is the latest release, and an installed 0.3.0
+  launcher offered it and updated itself to it (6 November): the last check of B5 (self-update),
+  B13 and B15. The installer's progress window showed during the update; from 0.5.0 on, updates
+  install without it.
 - ☑ **N2. Guard gaps from the 5 November assessment**: programs that reach the network (`curl`,
   …) count as network use for an app that declares none; the process rules know the commands that
   dump or list saved passwords, add accounts, open files to everyone or clear the event logs;
@@ -102,12 +102,13 @@ as other documents refer to them.
   scrolling (section 2).
 - ☐ **B4. Signing in CI**, once SignPath or Certum has said yes (N5), then the Windows checks again
   with the signed installer (section 3).
-- ◐ **B15. A release with the B10 fixes**: 0.4.0, released 5 November from the hardened workflow (its
-  first tag run). Left: N1.
+- ☑ **B15. A release with the B10 fixes**: 0.4.0, released 5 November from the hardened workflow (its
+  first tag run), and installed launchers update to it (N1).
 
 Done:
 
-- ☑ **B5.** The launcher updates itself (signed update feed; IT can turn it off). Still to see: N1.
+- ☑ **B5.** The launcher updates itself (signed update feed; IT can turn it off); seen from 0.3.0 to
+  0.4.0 (N1).
 - ☑ **B6.** Revocation, first two steps: the list check and owners' withdrawal and rotation statements
   ([`revocation.md`](revocation.md)).
 - ☑ **B7.** Fuzzing of everything that reads untrusted bytes, nightly in CI ([`fuzz/README.md`](../fuzz/README.md)).

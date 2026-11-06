@@ -25,6 +25,9 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
   dependencies (pandas: 1.9 s instead of 4.1–4.7 s). Installs take that time instead, 0.7–2.4 s
   more. The standard library's compiled code is kept in the data folder; the runner's own is
   still compiled from its checked source on every run.
+- The launcher's own updates install without showing the installer's window: devstribution
+  closes and opens again on the new version. (The update to 0.5.0 still shows it, as the
+  version doing the update decides.)
 - One run at a time per app: Run waits until the app's current run has finished or was stopped.
 - Plainer words about trust: no signing keys on the install screen or in the main window, and a
   short explanation of publishers and trust before the first install.

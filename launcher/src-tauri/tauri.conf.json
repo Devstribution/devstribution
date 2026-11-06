@@ -33,7 +33,7 @@
       ],
       "requireSignedVersion": true,
       "windows": {
-        "installMode": "passive"
+        "installMode": "quiet"
       }
     }
   },
