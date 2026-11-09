@@ -1,7 +1,7 @@
 import { X, Check, Pipette, FolderOpen, FolderPlus, Trash2, ClipboardCopy, FileUp } from "lucide";
 import type { Ctx } from "../main";
 import { openCleanup } from "./cleanup";
-import { checkForUpdate } from "./update";
+import { checkForUpdate, openWhatsNew } from "./update";
 import type { Policy, Settings } from "../api";
 import { h, icon, clear, relTime, toast, errorText, copyText, trapFocus, keepFocus } from "../ui";
 import { ACCENTS, DEFAULT_LOOK, textOn, type Look, type Theme, type StatusColours } from "../look";
@@ -162,6 +162,8 @@ function aboutGroup(ctx: Ctx, s: Settings) {
   return h("div", { class: "settings-group" },
     h("span", { class: "section-label" }, "About"),
     h("div", { class: "small soft-text" }, `devstribution ${s.version} · ${s.uv_version ?? "uv not found"} · ${s.platform}`),
+    h("button", { class: "link small self-start", onclick: () => ctx.api.releaseNotes().then(openWhatsNew, (e) => toast(errorText(e), "error")) },
+      `What’s new in ${s.version}`),
     updates(ctx, s),
     h("div", { class: "small soft-text" }, "Free software, MIT or Apache-2.0: github.com/Devstribution/devstribution"),
     h("div", { class: "muted tiny wrap-anywhere" }, `Log: ${s.log_file}`),

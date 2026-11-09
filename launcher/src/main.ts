@@ -11,7 +11,7 @@ import { openAppPanel } from "./views/panel";
 import { toggleSettings } from "./views/settings";
 import { applyLook, cleanLook, onSystemThemeChange, type Look } from "./look";
 import { installFlow } from "./views/install";
-import { checkForUpdate } from "./views/update";
+import { checkForUpdate, showWhatsNew } from "./views/update";
 
 /** Live state of runs started in this session, kept across page changes. */
 export interface LiveRun {
@@ -281,6 +281,8 @@ async function boot() {
   });
 
   await ctx.refresh();
+  // The first start after devstribution itself was updated.
+  showWhatsNew(ctx);
   // In the background: a share can take a while to answer, and the window must not wait for it.
   ctx.appUpdates.check().then(({ updates }) => {
     if (updates.length === 1) {

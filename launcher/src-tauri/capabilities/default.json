@@ -23,6 +23,7 @@
     "allow-run-log",
     "allow-open-output",
     "allow-preview-table",
+    "allow-preview-image",
     "allow-open-data-folder",
     "allow-open-notices",
     "allow-cleanup-preview",
@@ -46,6 +47,9 @@
     "allow-remove-from-start",
     "allow-set-schedule",
     "allow-remove-schedule",
-    "allow-take-pending-app"
+    "allow-take-pending-app",
+    "allow-whats-new",
+    "allow-release-notes",
+    "allow-dismiss-whats-new"
   ]
 }

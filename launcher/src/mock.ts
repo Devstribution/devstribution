@@ -1,6 +1,6 @@
 // Demo backend for previewing the UI in a browser. Nothing here runs in the real launcher.
 
-import type { Api, AppView, JournalEntry, PendingInstall, Policy, RunEvent, RunRecord, ScheduleView, Settings, StepEvent, Stats, Trust } from "./api";
+import type { Api, AppView, JournalEntry, PendingInstall, Policy, RunEvent, RunRecord, ScheduleView, Settings, StepEvent, Stats, Trust, WhatsNew } from "./api";
 
 const now = () => Math.floor(Date.now() / 1000);
 const DAY = 86_400;
@@ -52,6 +52,7 @@ const apps: AppView[] = [
     outputs: [
       { name: "report", type: "file", label: "Summary workbook" },
       { name: "groups", type: "file", label: "Groups (CSV)" },
+      { name: "chart", type: "file", label: "Chart" },
       { name: "summary", type: "text" },
       { name: "rows", type: "table", label: "Rows read" },
     ],
@@ -299,6 +300,14 @@ export function mockApi(): Api {
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   const emit = (id: string, e: RunEvent) => { for (const l of runListeners) l([id, e]); };
   const off = <T>(list: T[], item: T) => () => { const i = list.indexOf(item); if (i >= 0) list.splice(i, 1); };
+  let whatsNewShown = false;
+  const WHATS_NEW: WhatsNew = {
+    version: "0.6.0", from: "0.4.0",
+    sections: [
+      { version: "0.6.0", date: "2026-11-20", text: "### Added\n\n- **Run on a schedule**: a form app can run on its own every day, Monday to Friday or once a week.\n- **A notification when a run ends** while devstribution is not in front.\n- **Add to Start menu**, in the app's ⋯ menu.\n\n### Changed\n\n- A failed download says what to ask IT for." },
+      { version: "0.5.0", date: "2026-11-06", text: "### Added\n\n- A CSV result shows its first 50 rows as a table in the launcher.\n\n### Changed\n\n- Runs start faster." },
+    ],
+  };
   const find = (id: string) => {
     const a = apps.find((x) => x.id === id);
     if (!a) throw new Error(`\`${id}\` is not installed`);
@@ -452,7 +461,7 @@ export function mockApi(): Api {
           outputs: app.outputs.length
             ? {
                 report: `${record.output_dir}\\orders-2026-by-customer.xlsx`,
-                groups: `${record.output_dir}\\groups.csv`, summary: "1842 rows in 6 groups of Customer",
+                groups: `${record.output_dir}\\groups.csv`, chart: `${record.output_dir}\\by-customer.png`, summary: "1842 rows in 6 groups of Customer",
                 rows: Array.from({ length: 60 }, (_, n) => ({ Row: n + 2, Customer: ["Acme", "Globex", "Initech"][n % 3], Amount: 120 + n * 7 })),
               }
             : {},
@@ -495,6 +504,20 @@ export function mockApi(): Api {
         rows: ["Acme", "Globex", "Initech", "Umbrella", "Hooli", "Stark"].map((c, n) => [c, String(120 + n * 31), (4200.5 + n * 1337.25).toFixed(2)]),
         total: 6,
       };
+    },
+    async previewImage() {
+      // A bar chart, drawn here as the app would have saved it.
+      const c = document.createElement("canvas");
+      c.width = 640; c.height = 300;
+      const g = c.getContext("2d")!;
+      g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);
+      g.fillStyle = "#222"; g.font = "16px sans-serif"; g.fillText("Total by customer", 20, 30);
+      ["Acme", "Globex", "Initech", "Umbrella", "Hooli", "Stark"].forEach((name, n) => {
+        const v = 60 + ((n * 37) % 5) * 40;
+        g.fillStyle = "#3b6fd8"; g.fillRect(30 + n * 100, 270 - v, 60, v);
+        g.fillStyle = "#555"; g.font = "12px sans-serif"; g.fillText(name, 30 + n * 100, 290);
+      });
+      return c.toDataURL("image/png");
     },
     async openDataFolder() {},
     async openNotices() {},
@@ -584,6 +607,9 @@ export function mockApi(): Api {
         notes: "## Added\n\n- **The launcher updates itself**: it looks for a new version when it starts.\n- Keyboard and screen reader basics.\n\n## Fixed\n\n- Error messages stay until you close them.",
       };
     },
+    async whatsNew() { return whatsNewShown ? null : WHATS_NEW; },
+    async releaseNotes() { return { ...WHATS_NEW, from: null, sections: WHATS_NEW.sections.slice(0, 1) }; },
+    async dismissWhatsNew() { whatsNewShown = true; },
     async installUpdate() {
       const total = 14_200_000;
       for (let done = 0; done <= total; done += 1_420_000) { for (const l of updateListeners) l([done, total]); await sleep(250); }

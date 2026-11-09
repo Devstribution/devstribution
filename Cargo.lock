@@ -973,6 +973,7 @@ dependencies = [
  "devstribution-core",
  "devstribution-host",
  "dunce",
+ "quick-xml",
  "serde",
  "serde_json",
  "tauri",
@@ -985,6 +986,7 @@ dependencies = [
  "tempfile",
  "windows",
  "windows-sys 0.61.2",
+ "zip",
 ]
 
 [[package]]

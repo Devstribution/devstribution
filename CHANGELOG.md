@@ -22,6 +22,14 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 - **Add to Start menu** (the app's ⋯ menu): a shortcut, with the app's icon, that opens
   devstribution on that app. Removed with the app, and by the uninstaller.
 - Managed mode: `PythonMirror`, where Python itself is downloaded from when GitHub is blocked.
+- **Excel results and pictures in the launcher**: an `.xlsx` result shows its first visible
+  sheet as a table (dates as dates, numbers as Excel shows them), as CSV results already did; a
+  PNG or JPEG result shows as a picture, which opens full size when pressed.
+- **What's new, after an update**: the first time devstribution starts on a newer version, a
+  notice offers what changed since the version you had (every version in between too). It stays
+  until you open it or close it with ×. Settings → About shows this version's notes any time.
+  The notes are built into devstribution, so this also works with no connection and after an
+  update IT installed.
 - **`ctx.data_dir`** for app authors: the app's own folder, kept from one run to the next and
   through updates (settings, caches), removed when the app is uninstalled. No other app can read
   it, and code in it is never run.

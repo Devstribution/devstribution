@@ -669,6 +669,27 @@ fn take_pending_app(app: AppHandle) -> Option<String> {
     lock(&state(&app).pending_app).take()
 }
 
+/// What changed since the version the user had, the first time this version starts after an
+/// update, and at every start until the user opens or closes the notice.
+#[tauri::command]
+fn whats_new(app: AppHandle) -> Option<news::WhatsNew> {
+    let store = &state(&app).store;
+    let used_before = store.installed().is_ok_and(|a| !a.is_empty())
+        || store.runs(None, 1).is_ok_and(|r| !r.is_empty());
+    news::on_start(&store.paths, env!("CARGO_PKG_VERSION"), used_before)
+}
+
+/// This version's notes, from Settings.
+#[tauri::command]
+fn release_notes() -> news::WhatsNew {
+    news::current(env!("CARGO_PKG_VERSION"))
+}
+
+#[tauri::command]
+fn dismiss_whats_new(app: AppHandle) -> CmdResult<()> {
+    news::dismiss(&state(&app).store.paths).map_err(err)
+}
+
 #[tauri::command]
 fn cancel_run(app: AppHandle, run_id: String) {
     if let Some(h) = lock(&state(&app).runs).get(&run_id) {
@@ -737,7 +758,18 @@ async fn open_output(
     .await
 }
 
-/// The start of a CSV result, as a table: only a file "open result" would open.
+/// A PNG or JPEG result, as a picture: only a file "open result" would open.
+#[tauri::command]
+async fn preview_image(app: AppHandle, run_id: String, path: String) -> CmdResult<String> {
+    blocking(move || {
+        let record = state(&app).store.run(&run_id)?;
+        let (target, _) = output_target(&record, Some(&path), false)?;
+        table::image(&target)
+    })
+    .await
+}
+
+/// The start of a CSV or Excel result, as a table: only a file "open result" would open.
 #[tauri::command]
 async fn preview_table(
     app: AppHandle,
@@ -1457,6 +1489,7 @@ pub fn run() {
             run_log,
             open_output,
             preview_table,
+            preview_image,
             open_data_folder,
             open_notices,
             cleanup_preview,
@@ -1481,6 +1514,9 @@ pub fn run() {
             set_schedule,
             remove_schedule,
             take_pending_app,
+            whats_new,
+            release_notes,
+            dismiss_whats_new,
         ])
         .run(tauri::generate_context!());
     if let Err(e) = result {
@@ -1489,8 +1525,10 @@ pub fn run() {
     }
 }
 
+mod news;
 mod shell;
 mod table;
+mod xlsx;
 
 #[cfg(test)]
 mod tests;

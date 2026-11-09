@@ -1,6 +1,6 @@
 import { Download, X } from "lucide";
 import type { Ctx } from "../main";
-import type { LauncherUpdate } from "../api";
+import type { LauncherUpdate, WhatsNew } from "../api";
 import { h, icon, clear, bytes, toast, errorText, trapFocus, announce } from "../ui";
 
 /**
@@ -78,6 +78,50 @@ function openUpdate(ctx: Ctx, u: LauncherUpdate) {
       off();
     }
   }
+}
+
+/** After an update: a notice that stays until it is opened or closed with its ×. */
+export async function showWhatsNew(ctx: Ctx) {
+  let news: WhatsNew | null;
+  try {
+    news = await ctx.api.whatsNew();
+  } catch {
+    return; // not worth a message: Settings shows the notes on request
+  }
+  if (!news) return;
+  const w = news;
+  const dismiss = () => ctx.api.dismissWhatsNew().catch(() => { /* shown again next time */ });
+  toast(`devstribution is now ${w.version}`, "info", { label: "See what’s new", run: () => { dismiss(); openWhatsNew(w); } },
+    { sticky: true, onClose: dismiss });
+}
+
+/** What changed: each version since the one the user had, newest first. */
+export function openWhatsNew(w: WhatsNew) {
+  const close = () => { release(); overlay.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+  document.addEventListener("keydown", onKey);
+  const date = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" });
+  const several = w.sections.length > 1;
+  const ok = h("button", { class: "btn primary", onclick: close }, "Close") as HTMLButtonElement;
+  const overlay = h("div", { class: "overlay", onclick: (e: Event) => { if (e.target === overlay) close(); } },
+    h("div", { class: "modal", role: "dialog", "aria-label": `What’s new in devstribution ${w.version}` },
+      h("div", { class: "modal-head" },
+        h("div", { class: "grow" }, h("h2", null, `What’s new in devstribution ${w.version}`),
+          h("div", { class: "muted small" }, [
+            w.from ? `You had ${w.from}${several ? ", so this includes what came in between" : ""}.` : null,
+            !several && w.sections[0]?.date ? ` Released ${date(w.sections[0].date)}.` : null,
+          ].filter(Boolean).join("").trim() || null)),
+        h("button", { class: "icon-btn", "aria-label": "Close", onclick: close }, icon(X, 16))),
+      h("div", { class: "modal-body" },
+        w.sections.length
+          ? w.sections.map((s) => [
+              several ? h("div", { class: "section-label" }, `${s.version}${s.date ? ` · ${date(s.date)}` : ""}`) : null,
+              h("div", { class: `release-notes${several ? "" : " tall"}` }, plainNotes(s.text)),
+            ])
+          : h("div", { class: "muted small" }, "This version has no notes: it is a development build.")),
+      h("div", { class: "modal-foot" }, h("span", { class: "grow" }), ok)));
+  document.body.appendChild(overlay);
+  const release = trapFocus(overlay.firstElementChild as HTMLElement, ok);
 }
 
 /** Release notes are Markdown: shown as text, without the marks that only format it. */

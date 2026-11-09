@@ -385,6 +385,15 @@ export interface LauncherUpdate {
   notes?: string | null;
 }
 
+/** What changed in devstribution: after an update, or on request. */
+export interface WhatsNew {
+  version: string;
+  /** The version the user had before, when known. */
+  from?: string | null;
+  /** Newest first. */
+  sections: { version: string; date?: string | null; text: string }[];
+}
+
 type Unlisten = () => void;
 
 export interface Api {
@@ -414,8 +423,10 @@ export interface Api {
   /** `null` when the run has no log file; an empty string when the app wrote nothing. */
   runLog(runId: string): Promise<string | null>;
   openOutput(runId: string, path: string | null, reveal: boolean): Promise<void>;
-  /** The start of a CSV file the run returned, as a table. */
+  /** The start of a CSV file, or the first sheet of an Excel file, the run returned. */
   previewTable(runId: string, path: string): Promise<TablePreview>;
+  /** A PNG or JPEG the run returned, as a `data:` address. */
+  previewImage(runId: string, path: string): Promise<string>;
   openDataFolder(): Promise<void>;
   /** Opens the licences of the software inside devstribution. */
   openNotices(): Promise<void>;
@@ -443,6 +454,11 @@ export interface Api {
   checkUpdate(): Promise<LauncherUpdate | null>;
   /** Downloads and checks the update found, then closes the launcher for its installer. */
   installUpdate(): Promise<void>;
+  /** The notice after an update, until it is opened or closed. */
+  whatsNew(): Promise<WhatsNew | null>;
+  /** This version's notes, from Settings. */
+  releaseNotes(): Promise<WhatsNew>;
+  dismissWhatsNew(): Promise<void>;
   /** Looks through the update folders. Reads only: nothing installs without the usual screen. */
   checkAppUpdates(): Promise<UpdateCheck>;
   /** Asks the user for a folder to check; returns the folders now checked. */
@@ -510,6 +526,7 @@ async function tauriApi(): Promise<Api> {
     runLog: (runId) => invoke("run_log", { runId }),
     openOutput: (runId, path, reveal) => invoke("open_output", { runId, path, reveal }),
     previewTable: (runId, path) => invoke("preview_table", { runId, path }),
+    previewImage: (runId, path) => invoke("preview_image", { runId, path }),
     openDataFolder: () => invoke("open_data_folder"),
     openNotices: () => invoke("open_notices"),
     cleanupPreview: (olderThanDays, appId, removeRecords) => invoke("cleanup_preview", { olderThanDays, appId, removeRecords }),
@@ -529,6 +546,9 @@ async function tauriApi(): Promise<Api> {
     saveTrustRequest: (token) => invoke("save_trust_request", { token }),
     checkUpdate: () => invoke("check_update"),
     installUpdate: () => invoke("install_update"),
+    whatsNew: () => invoke("whats_new"),
+    releaseNotes: () => invoke("release_notes"),
+    dismissWhatsNew: () => invoke("dismiss_whats_new"),
     checkAppUpdates: () => invoke("check_app_updates"),
     addUpdateFolder: () => invoke("add_update_folder"),
     removeUpdateFolder: (folder) => invoke("remove_update_folder", { folder }),

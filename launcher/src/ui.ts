@@ -290,15 +290,18 @@ export function progressToast(message: string, stop?: { label: string; busy: str
   return { update: (m) => { text.textContent = m; }, end: () => el.remove() };
 }
 
-/** A short message at the bottom. Errors stay until closed, so there is time to read them. */
-export function toast(message: string, kind: "info" | "error" | "ok" = "info", action?: { label: string; run: () => void }) {
+/** A short message at the bottom. Errors stay until closed, so there is time to read them; so
+ * does a `sticky` one, whose `onClose` runs when its × is pressed. */
+export function toast(message: string, kind: "info" | "error" | "ok" = "info", action?: { label: string; run: () => void },
+  opts: { sticky?: boolean; onClose?: () => void } = {}) {
   const toastBox = toastsBox();
   const ic = kind === "error" ? CircleAlert : kind === "ok" ? CircleCheck : Info;
+  const stays = kind === "error" || !!opts.sticky;
   const el = h("div", { class: `toast ${kind}`, role: kind === "error" ? "alert" : null }, icon(ic, 17), h("div", null, message),
     action ? h("button", { class: "link", onclick: () => { el.remove(); action.run(); } }, action.label) : null,
-    kind === "error" ? h("button", { class: "toast-close", "aria-label": "Close", title: "Close", onclick: () => el.remove() }, icon(X, 15)) : null);
+    stays ? h("button", { class: "toast-close", "aria-label": "Close", title: "Close", onclick: () => { el.remove(); opts.onClose?.(); } }, icon(X, 15)) : null);
   toastBox.appendChild(el);
-  if (kind !== "error") setTimeout(() => el.remove(), action ? 9000 : 4000);
+  if (!stays) setTimeout(() => el.remove(), action ? 9000 : 4000);
 }
 
 /** Copies text; the webview allows it from a click. */
