@@ -330,13 +330,24 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
             h("div", { class: "grow" }, h("div", { class: "name", title: fileName(path) }, fileName(path)), h("div", { class: "label" }, o.label ?? o.name)),
             h("button", { class: "btn small", title: "Show in folder", "aria-label": "Show in folder", onclick: () => ctx.api.openOutput(run!.runId, path, true).catch((e) => toast(errorText(e), "error")) }, icon(FolderOpen, 15)),
             h("button", { class: "btn primary small", onclick: () => ctx.api.openOutput(run!.runId, path, false).catch((e) => toast(errorText(e), "error")) }, icon(ExternalLink, 14), "Open"));
-          if (!/\.(csv|tsv)$/i.test(path)) return row;
-          // A CSV is shown here too, as a table: its start, read by the launcher.
+          const open = () => ctx.api.openOutput(run!.runId, path, false).catch((e) => toast(errorText(e), "error"));
+          if (/\.(png|jpe?g)$/i.test(path)) {
+            // A picture is shown here too; pressing it opens it full size.
+            const preview = h("div", { class: "csv-preview" });
+            ctx.api.previewImage(run!.runId, path).then((src) => {
+              clear(preview, h("button", { class: "image-preview", title: "Open", "aria-label": `Open ${fileName(path)}`, onclick: open },
+                h("img", { src, alt: o.label ?? fileName(path) })));
+            }).catch(() => preview.remove());
+            return h("div", null, row, preview);
+          }
+          if (!/\.(csv|tsv|xlsx|xlsm)$/i.test(path)) return row;
+          // A CSV, or an Excel file's first sheet, is shown here too, as a table: its start,
+          // read by the launcher.
           const preview = h("div", { class: "csv-preview" });
           ctx.api.previewTable(run!.runId, path).then((t) => {
             if (!t.columns.length && !t.rows.length) return;
             preview.classList.add("output-text");
-            clear(preview, tableView(t.columns, t.rows, t.total, () => ctx.api.openOutput(run!.runId, path, false).catch((e) => toast(errorText(e), "error"))));
+            clear(preview, tableView(t.columns, t.rows, t.total, open));
           }).catch(() => preview.remove());
           return h("div", null, row, preview);
         }

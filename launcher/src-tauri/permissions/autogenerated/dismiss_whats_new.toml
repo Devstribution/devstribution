@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-dismiss-whats-new"
+description = "Enables the dismiss_whats_new command without any pre-configured scope."
+commands.allow = ["dismiss_whats_new"]
+
+[[permission]]
+identifier = "deny-dismiss-whats-new"
+description = "Denies the dismiss_whats_new command without any pre-configured scope."
+commands.deny = ["dismiss_whats_new"]

@@ -14,6 +14,7 @@ const COMMANDS: &[&str] = &[
     "run_log",
     "open_output",
     "preview_table",
+    "preview_image",
     "open_data_folder",
     "open_notices",
     "cleanup_preview",
@@ -38,6 +39,9 @@ const COMMANDS: &[&str] = &[
     "set_schedule",
     "remove_schedule",
     "take_pending_app",
+    "whats_new",
+    "release_notes",
+    "dismiss_whats_new",
 ];
 
 fn main() {

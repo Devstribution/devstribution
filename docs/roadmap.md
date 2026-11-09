@@ -65,8 +65,11 @@ come first; each is checked on the stand-in (N4).
 - ☐ **P7. Several files in one input** (`multiple = true`), the most asked-for input after the
   ones that exist; and "Run for each file", one run per file with the same other inputs. (Dates
   and choices exist already; C said otherwise.)
-- ☐ **P8. Excel results and images shown in the launcher**: the first sheet of an `.xlsx` as a
-  table, as N7 did for CSV; PNG and JPEG results as a picture (was in C).
+- ◐ **P8. Excel results and images shown in the launcher**: the first sheet of an `.xlsx` as a
+  table, as N7 did for CSV; PNG and JPEG results as a picture (was in C). Done: the first visible
+  sheet, dates as dates and numbers to Excel's 15 digits, read by the launcher's own reader
+  (checked on files written by openpyxl, XlsxWriter and pandas); a picture is recognised by its
+  bytes, and pressing it opens it. Left: seen in an installed build, on a workbook saved by Excel.
 - ◐ **P9. An app in the Start menu**: "Add to Start" in the panel's ⋯ menu makes a shortcut that
   opens the launcher on that app; removed with the app. Done, in "devstribution apps" with the
   app's icon (ICO, or PNG up to 256 px); the uninstaller removes them. Left: tried in an installed
@@ -220,8 +223,8 @@ company evaluates devstribution: IT asks for both.
   with its offline keys, fetching the list, the policy values, two-of-three signing.
 - **Evidence for IT** (section 8): Windows Event Log; SBOM written by `pack` (Tier 4 of 0.6.0 as
   soon as a company evaluates).
-- **Results shown in the launcher, the rest** (section 7): charts; Excel, images and several files
-  moved to 0.6.0 (P7, P8).
+- **Results shown in the launcher, the rest** (section 7): charts drawn by the launcher; other
+  sheets of a workbook. Excel, images and several files moved to 0.6.0 (P7, P8).
 - **Launcher, smaller items** (section 7): Settings: stop trusting a publisher; languages after
   Italian (P6); an accessible version of the runs chart.
 - **CLI**: `verify` shows the scan and can check against a `.trust` file.
@@ -356,7 +359,7 @@ repository, fetching and the policy values → C.
 install screen; results in a folder the user chose; "Uninstall devstribution" in Settings; `.zip`
 downloads install; error messages, About page, cancellable install, keyboard and screen reader
 basics (stage A); plainer trust wording, large table results, one run per app (N6); CSV results
-as a table (N7). ◐ Uninstall easy to find: check with users. Open: Excel, images and charts → C.
+as a table (N7). ◐ Uninstall easy to find: check with users. Open: Excel and images → P8 (0.6.0); charts → C.
 
 ## 8. Release engineering and evidence for IT
 

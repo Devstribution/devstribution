@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-release-notes"
+description = "Enables the release_notes command without any pre-configured scope."
+commands.allow = ["release_notes"]
+
+[[permission]]
+identifier = "deny-release-notes"
+description = "Denies the release_notes command without any pre-configured scope."
+commands.deny = ["release_notes"]

@@ -606,6 +606,8 @@ kbd { font: inherit; font-size: var(--fs-xs); border: 1px solid var(--border-str
 .output-file .name { font-weight: var(--fw-bold); font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .output-file .label { font-size: var(--fs-xs); color: var(--muted); }
 .csv-preview:not(:empty) { margin-top: var(--sp-2); }
+.image-preview { display: block; padding: 0; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); overflow: hidden; cursor: zoom-in; max-width: 100%; }
+.image-preview img { display: block; max-width: 100%; max-height: 320px; object-fit: contain; }
 .output-text { padding: var(--sp-3) 14px; border-radius: var(--r-md); background: var(--surface); border: 1px solid var(--border); overflow-wrap: anywhere; }
 .output-text .label { font-size: var(--fs-xs); color: var(--muted); font-weight: var(--fw-bold); }
 .table-scroll { overflow-x: auto; margin-top: var(--sp-2); }
@@ -658,6 +660,7 @@ kbd { font: inherit; font-size: var(--fs-xs); border: 1px solid var(--border-str
 }
 .modal.narrow { width: min(460px, 100%); }
 .release-notes { white-space: pre-wrap; max-height: 220px; overflow: auto; padding: var(--sp-3) 14px; border-radius: var(--r-md); background: var(--surface-2); font-size: var(--fs-sm); }
+.release-notes.tall { max-height: min(420px, 55vh); }
 .modal-head { display: flex; gap: var(--sp-4); align-items: center; padding: 26px 28px var(--sp-4); }
 .modal-head h2 { font-size: var(--fs-xl); font-weight: var(--fw-heavy); }
 .modal-head.center { flex-direction: column; text-align: center; gap: var(--sp-3); padding-top: var(--sp-8); }

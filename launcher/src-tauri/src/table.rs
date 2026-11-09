@@ -1,5 +1,6 @@
-//! The start of a CSV result, to show as a table in the launcher without opening another
-//! program. Only reads: the file is one `output_target` allowed.
+//! The start of a CSV or Excel result, to show as a table in the launcher without opening
+//! another program, and a picture result to show as one. Only reads: the file is one
+//! `output_target` allowed.
 
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -10,7 +11,7 @@ use serde::Serialize;
 /// Rows sent to the window: what the panel shows, as for a table output.
 pub const ROWS: usize = 50;
 /// Columns and characters per cell sent to the window; the rest is in the file.
-const COLUMNS: usize = 60;
+pub const COLUMNS: usize = 60;
 const CELL: usize = 300;
 /// Bytes read for the rows shown.
 const HEAD: u64 = 1 << 20;
@@ -25,17 +26,51 @@ pub struct TablePreview {
     pub total: Option<u64>,
 }
 
-/// Whether a result file is one the launcher shows as a table.
-pub fn is_table_file(path: &Path) -> bool {
+/// Pictures sent to the window, at most: a larger one is opened instead.
+const IMAGE: u64 = 12 << 20;
+
+fn extension(path: &Path) -> String {
     path.extension()
         .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("csv") || e.eq_ignore_ascii_case("tsv"))
+        .unwrap_or_default()
+        .to_ascii_lowercase()
 }
 
 pub fn read(path: &Path) -> anyhow::Result<TablePreview> {
-    if !is_table_file(path) {
-        anyhow::bail!("only CSV results are shown as a table");
+    match extension(path).as_str() {
+        "csv" | "tsv" => read_csv(path),
+        "xlsx" | "xlsm" => crate::xlsx::read(path),
+        _ => anyhow::bail!("only CSV and Excel results are shown as a table"),
     }
+}
+
+/// A PNG or JPEG result as a `data:` address, the only kind of picture the window's CSP lets
+/// it show. The bytes decide the type, not the name: anything else, SVG included, is refused.
+pub fn image(path: &Path) -> anyhow::Result<String> {
+    use base64::Engine as _;
+    if !matches!(extension(path).as_str(), "png" | "jpg" | "jpeg") {
+        anyhow::bail!("only PNG and JPEG results are shown as a picture");
+    }
+    let file = File::open(path)?;
+    if file.metadata()?.len() > IMAGE {
+        anyhow::bail!("this picture is too large to show here");
+    }
+    let mut bytes = Vec::new();
+    file.take(IMAGE + 1).read_to_end(&mut bytes)?;
+    let mime = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        "image/png"
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        "image/jpeg"
+    } else {
+        anyhow::bail!("this file is not a PNG or JPEG picture");
+    };
+    Ok(format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(&bytes)
+    ))
+}
+
+fn read_csv(path: &Path) -> anyhow::Result<TablePreview> {
     let file = File::open(path)?;
     let size = file.metadata()?.len();
     let mut head = Vec::new();
@@ -70,7 +105,7 @@ pub fn read(path: &Path) -> anyhow::Result<TablePreview> {
     })
 }
 
-fn clip(row: Vec<String>) -> Vec<String> {
+pub fn clip(row: Vec<String>) -> Vec<String> {
     row.into_iter()
         .take(COLUMNS)
         .map(|cell| {
@@ -260,9 +295,22 @@ mod tests {
     }
 
     #[test]
-    fn only_csv_files() {
-        let (_t, p) = write("r.xlsx", b"a,b\n");
+    fn only_tables_and_pictures() {
+        let (_t, p) = write("r.txt", b"a,b\n");
         assert!(read(&p).is_err());
+        let (_t, p) = write("r.png", b"\x89PNG\r\n\x1a\nrest");
+        assert!(
+            image(&p)
+                .unwrap()
+                .starts_with("data:image/png;base64,iVBORw0KGg")
+        );
+        let (_t, p) = write("r.JPG", &[0xFF, 0xD8, 0xFF, 0xE0]);
+        assert!(image(&p).unwrap().starts_with("data:image/jpeg;base64,"));
+        // A name that says picture is not enough.
+        let (_t, p) = write("r.png", b"<svg onload=\"x\"/>");
+        assert!(image(&p).is_err());
+        let (_t, p) = write("r.svg", b"\x89PNG\r\n\x1a\n");
+        assert!(image(&p).is_err());
         let (_t, p) = write("empty.csv", b"");
         assert_eq!(
             read(&p).unwrap(),
