@@ -1,4 +1,5 @@
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -54,9 +55,13 @@ class Context:
         allowed_secrets: Iterable[str] = (),
         web_port: Optional[int] = None,
         web_token: Optional[str] = None,
+        data_dir: Optional[Path] = None,
     ):
         self._emit = emit
         self.output_dir = Path(output_dir)
+        # The app's own folder, kept from one run to the next and through updates (settings,
+        # caches); removed when the app is uninstalled, and no other app can read it.
+        self.data_dir = Path(data_dir) if data_dir is not None else Path(tempfile.mkdtemp(prefix="app-data-"))
         self.secrets = Secrets(secrets or {}, allowed_secrets)
         self.web_port = web_port
         self.web_token = web_token
@@ -142,11 +147,18 @@ class Context:
 def local_context(
     output_dir: Optional[Path] = None,
     secrets: Optional[Dict[str, str]] = None,
+    data_dir: Optional[Path] = None,
 ) -> Context:
-    """A context for running an app's code directly, e.g. in tests: messages go to stderr."""
+    """A context for running an app's code directly, e.g. in tests: messages go to stderr.
+
+    `data_dir` defaults to `output/app-data`, kept between calls like the launcher keeps it
+    between runs (and inside `output/`, which `.dsappignore` keeps out of the package)."""
     if output_dir is None:
         output_dir = Path("output") / time.strftime("%Y%m%d-%H%M%S")
+    if data_dir is None:
+        data_dir = Path("output") / "app-data"
     Path(output_dir).mkdir(parents=True, exist_ok=True)
+    Path(data_dir).mkdir(parents=True, exist_ok=True)
 
     def emit(msg: Dict[str, Any]) -> None:
         if msg["type"] == "progress":
@@ -155,4 +167,6 @@ def local_context(
         elif msg["type"] == "log":
             print(f"[{msg['level']}] {msg['message']}", file=sys.stderr)
 
-    return Context(emit, Path(output_dir), secrets, allowed_secrets=(secrets or {}).keys())
+    return Context(
+        emit, Path(output_dir), secrets, allowed_secrets=(secrets or {}).keys(), data_dir=Path(data_dir)
+    )

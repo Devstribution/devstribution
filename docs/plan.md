@@ -298,7 +298,7 @@ def run(excel_file: Path, ctx) -> dict:
     return {"report": out_path}
 ```
 - The manifest is the **single source** of inputs; `devstribution dev` and `devstribution pack` check that the signature of `run()` matches (same names and compatible types) and refuse the package otherwise.
-- `ctx` exposes `progress()`, `log()`, `output_dir`, `secrets.get(name)`, `cancelled`, `on_cleanup(fn)` and `track_com(obj)` (see "Cancellation and cleanup").
+- `ctx` exposes `progress()`, `log()`, `output_dir`, `data_dir` (kept between runs), `secrets.get(name)`, `cancelled`, `on_cleanup(fn)` and `track_com(obj)` (see "Cancellation and cleanup").
 - The return value is a dict whose keys are the `outputs`; files must be written to `ctx.output_dir`, or inside a folder the user chose for a `folder` input of the same run (apps that keep their work between runs, like a working Excel file).
 - Errors: an exception = failed run, with the traceback in the local log and an offer to create a diagnostic package.
 - For development, the same `ctx` API is published on PyPI as `devstribution-runner` (type hints, local tests). Apps add it as a **dev dependency** only; it is never installed in production environments (`--no-dev`), because the launcher provides the runner.
@@ -409,7 +409,7 @@ The outcome decides the default installation mode, and whether the per-machine s
 4. Install from a `.dsapp` file (file association) with safe extraction.
 5. `devstribution keygen` / `dev` / `pack` commands for developers (`pack` checks wheels-only and the `run()` signature, and signs the package).
 
-Status: all five items are built as a proof of concept (launcher in `launcher/`, install and runs in `devstribution-host`), with key pinning on first use already in place from Phase 2. Tested end to end on Linux; the Windows-specific parts (Job Object, COM cleanup, Mark-of-the-Web, file association) compile but still have to be run on Windows. See `docs/HANDOFF.md`.
+Status: all five items are built as a proof of concept (launcher in `launcher/`, install and runs in `devstribution-host`), with key pinning on first use already in place from Phase 2. Tested end to end on Linux; the Windows-specific parts (Job Object, COM cleanup, Mark-of-the-Web, file association) compile but still have to be run on Windows. See [`CONTRIBUTING.md`](../CONTRIBUTING.md) to build and run it.
 
 **Phase 2: trust**
 6. Enforcement of the author signature (minisign format, trusted comment), namespace binding (catalog, download source, "unverified name" for TOFU).

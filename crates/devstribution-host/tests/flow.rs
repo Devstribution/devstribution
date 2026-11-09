@@ -644,6 +644,40 @@ fn run_recorded(store: &Store) -> anyhow::Result<run::RunResult> {
     Ok(result)
 }
 
+/// `ctx.data_dir` is kept from one run to the next, is not counted as files the app changed,
+/// and goes with the app.
+#[test]
+fn the_kept_folder_lasts_until_uninstall() {
+    const COUNTER: &str = r#"
+def run(name: str, ctx) -> dict:
+    count = ctx.data_dir / "count.txt"
+    n = int(count.read_text()) + 1 if count.exists() else 1
+    count.write_text(str(n))
+    out = ctx.output_dir / "greeting.txt"
+    out.write_text(str(n))
+    return {"greeting": out}
+"#;
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Store::open(Paths {
+        root: tmp.path().join("home"),
+    })
+    .unwrap();
+    install_app(&store, tmp.path(), COUNTER);
+    for _ in 0..2 {
+        let result = run_recorded(&store).unwrap();
+        assert_eq!(result.status, RunStatus::Ok, "{:?}", result.error);
+        assert!(
+            result.guard.iter().all(|h| !h.rule.starts_with("file-")),
+            "{:?}",
+            result.guard
+        );
+    }
+    let kept = store.paths.app_data(&"alice/hello".parse().unwrap());
+    assert_eq!(fs::read_to_string(kept.join("count.txt")).unwrap(), "2");
+    store.uninstall("alice/hello").unwrap();
+    assert!(!kept.exists());
+}
+
 /// A failed run says what the user can try: the runner's hint for errors that come from the PC,
 /// the "send it to the author" hint for a bug, and nothing extra for an `AppError`; the hint is
 /// kept in the run's record.

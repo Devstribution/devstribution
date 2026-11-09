@@ -22,7 +22,8 @@ explains how to allow only the authors you approve.
 ## What exists today
 
 A proof of concept that works end to end; what has been verified so far, and on which systems, is
-in [docs/status_quo.md](docs/status_quo.md):
+in [docs/report.md](docs/report.md), and what comes next in [docs/roadmap.md](docs/roadmap.md). To
+work on devstribution itself, start with [CONTRIBUTING.md](CONTRIBUTING.md).
 
 | Part | Where |
 |---|---|

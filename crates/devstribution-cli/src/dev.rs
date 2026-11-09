@@ -55,6 +55,7 @@ pub fn dev(dir: &Path, inputs: &[String], args: &[String], json_output: bool) ->
         .join(format!("{}-{}", stamp(now_secs()), manifest.id.app));
     let output_dir = run_dir.join("output");
     eprintln!("Running {} {} ...", manifest.id, manifest.version);
+    let app_data_dir = paths.dev_app_data(&manifest.id);
     let spec = RunSpec {
         python: uv::python_in(&env_dir, manifest.kind == Kind::Gui),
         manifest,
@@ -63,6 +64,7 @@ pub fn dev(dir: &Path, inputs: &[String], args: &[String], json_output: bool) ->
         run_dir,
         output_dir: output_dir.clone(),
         pycache_dir: paths.pycache(),
+        app_data_dir,
         data_dir: paths.root.clone(),
         inputs: resolved,
         secrets,

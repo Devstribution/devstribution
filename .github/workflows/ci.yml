@@ -138,3 +138,32 @@ jobs:
             $ds scan "$RUNNER_TEMP/$name.dsapp"
             echo "::endgroup::"
           done
+      # The action authors use to pack in their own CI (actions/pack), with the CLI built here
+      # instead of a released one.
+      - name: A key in a secret, as an author would have it
+        id: key
+        run: |
+          {
+            echo "key<<KEY_END"
+            cat "$RUNNER_TEMP/keys/devstribution.key"
+            echo "KEY_END"
+            echo "pub<<KEY_END"
+            cat "$RUNNER_TEMP/keys/devstribution.pub"
+            echo "KEY_END"
+          } >> "$GITHUB_OUTPUT"
+      - id: pack
+        uses: ./actions/pack
+        with:
+          key: ${{ steps.key.outputs.key }}
+          public-key: ${{ steps.key.outputs.pub }}
+          app-dir: examples/excel-report
+          out-dir: ${{ runner.temp }}/action
+          cli: target/debug/devstribution
+      - name: The action's package
+        env:
+          PACKAGE: ${{ steps.pack.outputs.package }}
+          APP: ${{ steps.pack.outputs.id }}
+        run: |
+          test "$APP" = devstribution/excel-report
+          test -f "$PACKAGE"
+          if ls "$RUNNER_TEMP"/devstribution-key-* 2> /dev/null; then echo "::error::the key was left on the runner"; exit 1; fi

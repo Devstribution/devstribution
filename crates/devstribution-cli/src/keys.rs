@@ -96,6 +96,11 @@ pub(crate) fn load_signer(path: &Path) -> Result<Signer> {
     }
     let password = match std::env::var(PASSWORD_ENV) {
         Ok(pw) => pw,
+        // Nobody to type it (CI, a script): a prompt would wait for ever on some systems.
+        Err(_) if !std::io::IsTerminal::is_terminal(&std::io::stdin()) => bail!(
+            "{} has a password and there is no terminal to ask for it: set {PASSWORD_ENV}",
+            path.display()
+        ),
         Err(_) => rpassword::prompt_password(format!("Password for {}: ", path.display()))?,
     };
     Ok(Signer::from_encrypted(&text, password)?)

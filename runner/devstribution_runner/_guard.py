@@ -258,6 +258,9 @@ class Guard:
             list(config.get("protected") or ()) + [str(runner_root), sys.prefix, sys.base_prefix]
         )
         self._private = _folders(config.get("private"))
+        # The app's folder kept between runs (`ctx.data_dir`): its own, but a program in it may
+        # have been written by an earlier run, so it is run as one this run wrote.
+        self._kept = _folders(config.get("kept"))
         self._system = _folders(_system_folders())
         temp = config.get("temp")
         self._temp = _folders([tempfile.gettempdir()] if temp is None else temp)
@@ -614,22 +617,32 @@ class Guard:
         )
         if writing:
             self._check_change(args[0], "write")
-        elif path.endswith(".pyc") and self._written_programs:
+        elif path.endswith(".pyc") and (self._written_programs or self._kept):
             # Bytecode the run wrote, read back: only to load it, and its code names any file.
             self._ran_written_code(path, args[0])
 
     def _on_exec_code(self, args: tuple) -> None:
         """Code about to run: a module imported, `runpy`, `exec(compile(...))`. Code compiled from a
         file the run wrote is code the install scan never saw."""
-        if not self._written_programs or not args:
+        if not (self._written_programs or self._kept) or not args:
             return
         name = getattr(args[0], "co_filename", None)
         if isinstance(name, str) and name.lower().endswith(_PYTHON_CODE):
             self._ran_written_code(_abs_path(name), name)
 
     def _ran_written_code(self, path: Optional[str], given: Any) -> None:
-        if path and (path in self._written_programs or _real(given) in self._written_programs):
+        if path and self._is_written(path, given):
             self._stop("downloaded-program", "ran Python code it had just written", path)
+
+    def _is_written(self, path: str, given: Any) -> bool:
+        """A program or code file this run wrote, or one in the folder kept between runs."""
+        real = _real(given)
+        return (
+            path in self._written_programs
+            or real in self._written_programs
+            or _inside_any(path, self._kept)
+            or (real is not None and _inside_any(real, self._kept))
+        )
 
     def _on_sqlite(self, args: tuple) -> None:
         self._check_read(_sqlite_path(args[0]) if args else None)
@@ -733,7 +746,7 @@ class Guard:
 
     def _on_dlopen(self, args: tuple) -> None:
         path = _abs_path(args[0]) if args else None
-        if path and (path in self._written_programs or _real(args[0]) in self._written_programs):
+        if path and self._is_written(path, args[0]):
             self._stop("downloaded-program", "ran a program it had just written", path)
 
     def report_files(self) -> None:
@@ -770,9 +783,13 @@ class Guard:
             self._block(rule["id"], rule["message"], command)
         elif rule is not None:
             self._stop(rule["id"], rule["message"], command)
-        if self._written_programs:
+        if self._written_programs or self._kept:
             text = normalize_command(command).replace("/", "\\")
-            if any(p in text for p in self._written_programs):
+            if any(p in text for p in self._written_programs) or any(
+                m.group().endswith(_RUNNABLE_EXTENSIONS)
+                for f in self._kept
+                for m in re.finditer(re.escape(f.rstrip("\\") + "\\") + r'[^"\s]*', text)
+            ):
                 self._stop("downloaded-program", "ran a program it had just written", command)
         self._observe("program", command)
 
