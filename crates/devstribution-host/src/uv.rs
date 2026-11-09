@@ -7,7 +7,7 @@ use std::process::{Command, Stdio};
 use std::sync::{OnceLock, mpsc};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow};
 use devstribution_core::manifest::Manifest;
 
 use crate::run::platform;
@@ -47,14 +47,14 @@ pub fn command() -> Command {
 }
 
 #[cfg(windows)]
-pub(crate) fn hide_window(cmd: &mut Command) {
+pub fn hide_window(cmd: &mut Command) {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     cmd.creation_flags(CREATE_NO_WINDOW);
 }
 
 #[cfg(not(windows))]
-pub(crate) fn hide_window(_cmd: &mut Command) {}
+pub fn hide_window(_cmd: &mut Command) {}
 
 pub fn version() -> Option<String> {
     let out = command().arg("--version").output().ok()?;
@@ -88,6 +88,16 @@ impl std::fmt::Display for Cancelled {
 
 impl std::error::Error for Cancelled {}
 
+/// Where an installed app's downloads come from, when IT names somewhere other than the
+/// defaults (managed mode's policy).
+#[derive(Debug, Clone, Default)]
+pub struct Sources {
+    /// Replaces `https://github.com/astral-sh/python-build-standalone/releases/download`, where
+    /// uv downloads Python itself. uv checks every Python download against the hash built into
+    /// it, so a mirror can make a download fail but cannot change what is installed.
+    pub python_mirror: Option<String>,
+}
+
 /// `uv sync` the app's locked dependencies into `env_dir`, reporting uv's progress lines.
 /// `stop` is asked a few times a second; when it says yes, or after [`TIMEOUT`], uv and
 /// everything it started are ended.
@@ -95,6 +105,7 @@ pub fn sync(
     app_dir: &Path,
     env_dir: &Path,
     mode: LockMode,
+    sources: &Sources,
     on_line: &mut dyn FnMut(&str),
     stop: &dyn Fn() -> bool,
 ) -> Result<()> {
@@ -112,7 +123,181 @@ pub fn sync(
     }
     // After the settings above, which clear the environment.
     cmd.env("UV_PROJECT_ENVIRONMENT", env_dir);
-    supervise(cmd, on_line, stop, TIMEOUT)
+    if let Some(mirror) = &sources.python_mirror {
+        cmd.env("UV_PYTHON_INSTALL_MIRROR", mirror);
+    }
+    supervise(cmd, on_line, stop, TIMEOUT).map_err(|e| match e.downcast::<Failed>() {
+        Ok(failed) => anyhow!(failed.explain(sources, &proxy_in_use())),
+        Err(e) => e,
+    })
+}
+
+/// uv ended with an error; its last lines.
+#[derive(Debug)]
+struct Failed(Vec<String>);
+
+impl std::fmt::Display for Failed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "preparing the Python environment failed. This is usually the internet connection or \
+             a proxy blocking the download: check it and try again.\n{}",
+            self.0.join("\n")
+        )
+    }
+}
+
+impl std::error::Error for Failed {}
+
+/// What went wrong with a download, as far as uv's error lines tell. Windows translates its
+/// own error texts, so the codes (`os error 11001`) are matched, not the words.
+#[derive(Debug, PartialEq, Eq)]
+enum Cause {
+    /// The name of the host could not be found.
+    Dns,
+    /// The proxy wants a login (NTLM, Kerberos), which uv cannot give.
+    ProxyLogin,
+    /// The proxy could not be reached, or would not open the connection.
+    Proxy,
+    /// The certificate the connection presented is not trusted.
+    Certificate,
+    /// The host or a firewall refused (403), or the connection was refused or timed out.
+    Blocked,
+    /// The host does not have the file (404).
+    Missing,
+}
+
+impl Failed {
+    fn cause(&self) -> Option<Cause> {
+        let text = self.0.join("\n").to_ascii_lowercase();
+        let has = |needles: &[&str]| needles.iter().any(|n| text.contains(n));
+        Some(
+            if has(&[
+                "proxy authentication required",
+                "proxy authorization required",
+                " 407",
+            ]) {
+                Cause::ProxyLogin
+            } else if has(&[
+                "certificate",
+                "unknownissuer",
+                "unknown issuer",
+                "os error -2146762487",
+            ]) {
+                Cause::Certificate
+            } else if has(&["tunnel error", "proxy"]) {
+                Cause::Proxy
+            } else if has(&[
+                "dns error",
+                "os error 11001",
+                "os error 11004",
+                "failed to lookup address",
+            ]) {
+                Cause::Dns
+            } else if has(&[
+                "403 forbidden",
+                "os error 10061",
+                "os error 10060",
+                "os error 10054",
+                "timed out",
+            ]) {
+                Cause::Blocked
+            } else if has(&["404 not found"]) {
+                Cause::Missing
+            } else {
+                return None;
+            },
+        )
+    }
+
+    /// The host of the download that failed: the URL in uv's last lines.
+    fn host(&self) -> Option<String> {
+        self.0.iter().rev().find_map(|line| {
+            let start = line.find("https://").or_else(|| line.find("http://"))?;
+            let rest = &line[start..];
+            let rest = &rest[rest.find("//")? + 2..];
+            let end = rest.find(['/', ')', '`', ' ', ':']).unwrap_or(rest.len());
+            let host = &rest[..end];
+            let host = host.rsplit('@').next().unwrap_or(host);
+            (!host.is_empty()).then(|| host.to_ascii_lowercase())
+        })
+    }
+
+    /// The message the user sees: what could not be downloaded, why, and what to ask IT for,
+    /// then uv's own lines for IT.
+    fn explain(&self, sources: &Sources, proxy: &str) -> String {
+        let (Some(cause), Some(host)) = (self.cause(), self.host()) else {
+            return self.to_string();
+        };
+        let mirror_host = sources
+            .python_mirror
+            .as_deref()
+            .and_then(|m| Failed(vec![m.to_string()]).host());
+        let what = if mirror_host.as_deref() == Some(host.as_str()) {
+            "the Python mirror your organisation set"
+        } else if host == "github.com" || host.ends_with(".githubusercontent.com") {
+            "Python itself"
+        } else if host == "pypi.org" || host == "files.pythonhosted.org" {
+            "the app's packages"
+        } else {
+            "the app's Python or packages"
+        };
+        let why = match cause {
+            Cause::Dns => format!(
+                "{host} could not be found: the computer may be offline, or this network only \
+                 reaches the internet through a proxy that is not set"
+            ),
+            Cause::ProxyLogin => format!(
+                "the proxy asks for a Windows login, which devstribution cannot give. Ask IT to \
+                 let {host} through the proxy without one"
+            ),
+            Cause::Proxy => format!("the proxy ({proxy}) did not open the connection to {host}"),
+            Cause::Certificate => format!(
+                "the connection to {host} presented a certificate Windows does not trust. A \
+                 company proxy that inspects HTTPS needs its certificate installed in Windows"
+            ),
+            Cause::Blocked => format!("{host} or a firewall refused the connection"),
+            Cause::Missing => format!("{host} does not have the file: a mirror may be incomplete"),
+        };
+        let ask = match (cause, what) {
+            (Cause::Missing, _) | (_, "the Python mirror your organisation set") => {
+                format!("Ask your IT department to check the mirror at {host}.")
+            }
+            (_, "Python itself") => format!(
+                "Ask your IT department to allow downloads from {host}, or to set a Python \
+                 mirror (the PythonMirror policy)."
+            ),
+            _ => format!("Ask your IT department to allow downloads from {host}."),
+        };
+        format!(
+            "Could not download {what} from {host}: {why}. {ask}\nProxy: {proxy}.\n{}",
+            self.0.join("\n")
+        )
+    }
+}
+
+/// The proxy uv uses, as the user and IT may see it: credentials in the address are hidden.
+pub fn proxy_in_use() -> String {
+    let proxy = ["HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"]
+        .into_iter()
+        .find_map(|k| std::env::var(k).ok().filter(|v| !v.trim().is_empty()));
+    match proxy {
+        Some(p) => hide_login(p.trim()),
+        None => "none set (HTTPS_PROXY)".into(),
+    }
+}
+
+fn hide_login(url: &str) -> String {
+    match url.split_once("://") {
+        Some((scheme, rest)) => match rest.split_once('@') {
+            Some((_, host)) => format!("{scheme}://…@{host}"),
+            None => url.to_string(),
+        },
+        None => match url.split_once('@') {
+            Some((_, host)) => format!("…@{host}"),
+            None => url.to_string(),
+        },
+    }
 }
 
 /// Runs uv in a Job Object, like an app's run, so that Cancel, the timeout and closing the
@@ -189,12 +374,7 @@ fn supervise(
     }
     let status = child.wait()?;
     if !status.success() {
-        bail!(
-            "preparing the Python environment failed. This is usually the internet connection or a proxy blocking the download: check it and try again.
-{}",
-            tail.join("
-")
-        );
+        return Err(Failed(tail).into());
     }
     Ok(())
 }
@@ -347,6 +527,96 @@ mod tests {
         assert!(err.is::<Cancelled>(), "{err:#}");
         assert!(started.elapsed() < Duration::from_secs(10));
         assert_eq!(lines, ["started"]);
+    }
+
+    fn failed(lines: &str) -> Failed {
+        Failed(lines.lines().map(String::from).collect())
+    }
+
+    /// uv's last lines for a download that failed, as uv 0.13 prints them on Windows (in
+    /// Italian: Windows translates its own error texts).
+    const DNS: &str = "error: Failed to install cpython-3.10.4-windows-x86_64-none
+  cause: Failed to download `https://github.com/astral-sh/python-build-standalone/releases/download/20220528/cpython.tar.gz`
+  cause: error sending request for url (https://github.com/astral-sh/python-build-standalone/releases/download/20220528/cpython.tar.gz)
+  cause: client error (Connect)
+  cause: dns error
+  cause: Host sconosciuto. (os error 11001)";
+
+    const PROXY_DOWN: &str = "  cause: error sending request for url (https://files.pythonhosted.org/packages/pandas.whl)
+  cause: client error (Connect)
+  cause: tunnel error: failed to create underlying connection
+  cause: tcp connect error
+  cause: Impossibile stabilire la connessione. (os error 10061)";
+
+    const NOT_FOUND: &str = "  cause: Failed to download `https://mirror.example.com/pbs/20220528/cpython.tar.gz`
+  cause: HTTP status client error (404 Not Found) for url (https://mirror.example.com/pbs/20220528/cpython.tar.gz)";
+
+    #[test]
+    fn a_failed_download_says_what_to_ask_for() {
+        let none = Sources::default();
+        let dns = failed(DNS);
+        assert_eq!(dns.cause(), Some(Cause::Dns));
+        assert_eq!(dns.host().as_deref(), Some("github.com"));
+        let text = dns.explain(&none, "none set (HTTPS_PROXY)");
+        assert!(
+            text.starts_with("Could not download Python itself from github.com"),
+            "{text}"
+        );
+        assert!(text.contains("PythonMirror"), "{text}");
+        assert!(text.contains("Proxy: none set"), "{text}");
+        assert!(
+            text.contains("os error 11001"),
+            "uv's lines stay for IT: {text}"
+        );
+
+        let proxy = failed(PROXY_DOWN);
+        assert_eq!(proxy.cause(), Some(Cause::Proxy));
+        let text = proxy.explain(&none, "http://proxy.corp:8080");
+        assert!(
+            text.contains("the app's packages from files.pythonhosted.org"),
+            "{text}"
+        );
+        assert!(
+            text.contains("the proxy (http://proxy.corp:8080)"),
+            "{text}"
+        );
+
+        let mirror = Sources {
+            python_mirror: Some("https://mirror.example.com/pbs".into()),
+        };
+        let missing = failed(NOT_FOUND);
+        assert_eq!(missing.cause(), Some(Cause::Missing));
+        let text = missing.explain(&mirror, "none");
+        assert!(
+            text.contains("the Python mirror your organisation set"),
+            "{text}"
+        );
+        assert!(
+            text.contains("check the mirror at mirror.example.com"),
+            "{text}"
+        );
+
+        let login = failed(
+            "  cause: tunnel error: proxy authorization required\n  for url (https://pypi.org/simple)",
+        );
+        assert_eq!(login.cause(), Some(Cause::ProxyLogin));
+        let cert =
+            failed("  cause: invalid peer certificate: UnknownIssuer\n  url (https://pypi.org/x)");
+        assert_eq!(cert.cause(), Some(Cause::Certificate));
+
+        // What is not a download keeps the general message.
+        let other = failed("error: No solution found");
+        assert!(
+            other
+                .explain(&none, "none")
+                .starts_with("preparing the Python environment failed")
+        );
+    }
+
+    #[test]
+    fn a_proxy_login_is_not_shown() {
+        assert_eq!(hide_login("http://me:pw@proxy:8080"), "http://…@proxy:8080");
+        assert_eq!(hide_login("proxy:8080"), "proxy:8080");
     }
 
     #[test]

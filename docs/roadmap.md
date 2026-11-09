@@ -4,14 +4,18 @@ The proof of concept works end to end (see [`status_quo.md`](status_quo.md) and 
 in [`report.md`](report.md)), and a first real app has been delivered with it. This is the work
 between that and a launcher we can sign and hand to people who will never read this repository.
 
-*Revised 5 November 2026*, after 0.4.0 and a technical assessment of performance and security.
+*Revised 9 November 2026*, after 0.5.0 (earlier: 5 November, after 0.4.0 and a technical
+assessment of performance and security).
 What blocks a signed 1.0 is no longer code: it is **evidence** (the launcher checked on a locked-down
 company PC and in managed mode) and **reputation** (SignPath Foundation wants a project with a
 "verifiable reputation", which a two-week-old repository with no outside users does not have yet).
-So the next release goes after both, and fixes what the assessment found:
+0.5.0 went after both and fixed what the assessment found; 0.6.0 makes the launcher ready
+for a company network and builds the reputation:
 
-- **[Next: 0.5.0](#next-050)**: the assessment's findings, a stand-in for a company PC, signing
-  applied for on both routes, and what the first outside users meet.
+- **[Next: 0.6.0](#next-060)**: company proxies and mirrors first, then what users and authors
+  need next, in tiers.
+- **[0.5.0](#050-released-6-november)**: the assessment's findings, a stand-in for a company PC,
+  signing applied for on both routes, and what the first outside users meet.
 - **[A. First public release](#a-first-public-release-done)**: done.
 - **[B. Signed 1.0](#b-before-a-signed-10)**: what has to hold before our signature goes on it.
 - **[C. After 1.0](#c-after-10)**: wanted, but nothing about 1.0 depends on it.
@@ -20,7 +24,78 @@ The numbered sections after the stages are the record per area. Earlier revision
 27 October) and the details of finished items are in the git history and
 [`CHANGELOG.md`](../CHANGELOG.md). Status: ☐ to do · ◐ in progress · ☑ done
 
-## Next: 0.5.0
+## Next: 0.6.0
+
+*Proposed 9 November*, from a scan of the product after 0.5.0: what a company network, the
+people who run apps and the people who write them would run into next. Carried over from 0.5.0:
+N4 (run B1 and B2 on the stand-in) and N5 (signing), both on the maintainer's side.
+
+**Tier 1: what the first company PC would likely trip on.** B1 cannot pass without these, so they
+come first; each is checked on the stand-in (N4).
+
+- ☐ **P1. The proxy Windows is set to.** uv, which downloads Python and the packages, reads the
+  proxy from `HTTPS_PROXY` / `HTTP_PROXY`. Company PCs usually set it in Windows instead, often as
+  an automatic configuration script (PAC) or WPAD, and set no variable: installs would then
+  likely fail with a network error (to confirm on the stand-in first). The launcher asks Windows (WinHTTP) which proxy it uses for the download hosts
+  and gives that to uv; a proxy that wants a Windows login (NTLM, Kerberos) is named in the error
+  as such, since uv cannot log in to one. The stand-in sets `HTTPS_PROXY`, so it would not show
+  this: N4 adds a PAC-only proxy with no variable set.
+- ☐ **P2. The company's package mirror.** Many companies block pypi.org and serve packages from
+  their own mirror (Artifactory, Nexus). A policy value names it, and uv downloads from there.
+  The signed lockfile's hashes still decide what installs, so a mirror cannot change a package;
+  packages keep naming only PyPI (`lock::check_sources`).
+- ◐ **P3. Where Python comes from.** uv downloads Python from GitHub, which some companies block
+  for downloads. A policy value names a mirror (uv's `python-install-mirror`), checked the same
+  way. Done: `PythonMirror` (`https://` or `file:///`), shown in "Copy diagnostics". Left: an
+  install through a mirror on the stand-in (N4).
+- ◐ **P4. The error for a failed download says what to ask IT for**: the host it could not
+  reach, the proxy it used, and whether the certificate was the problem, in "Copy diagnostics"
+  too. Done: read from uv's error lines by their error codes (Windows translates the words),
+  checked against uv 0.13's real output for a missing name, a proxy that refuses and a 404.
+  Left: a proxy that wants a login and an untrusted certificate, seen on the stand-in.
+
+**Tier 2: a better product for the people who run apps.**
+
+- ◐ **P5. A notification when a run ends** while the window is not in front (a Windows toast:
+  "Report finished", "Report stopped"). Long runs are the ones people leave. Done; left: seen
+  from an installed build (a development build's toasts carry PowerShell's name).
+- ☐ **P6. Italian**, the language of the first users: the launcher's text in one catalogue
+  (`design.md` keeps the wording rules), then Italian, picked from Windows' language. Other
+  languages follow from the catalogue (was in C).
+- ☐ **P7. Several files in one input** (`multiple = true`), the most asked-for input after the
+  ones that exist; and "Run for each file", one run per file with the same other inputs. (Dates
+  and choices exist already; C said otherwise.)
+- ☐ **P8. Excel results and images shown in the launcher**: the first sheet of an `.xlsx` as a
+  table, as N7 did for CSV; PNG and JPEG results as a picture (was in C).
+- ◐ **P9. An app in the Start menu**: "Add to Start" in the panel's ⋯ menu makes a shortcut that
+  opens the launcher on that app; removed with the app. Done, in "devstribution apps" with the
+  app's icon (ICO, or PNG up to 256 px); the uninstaller removes them. Left: tried in an installed
+  build.
+- ◐ **P10. Runs on a schedule**: a form app with saved inputs runs daily or weekly (the weekly
+  report), through a Task Scheduler entry that starts the launcher, with the same guard, the
+  results kept as for any run and a notification (P5). Off in managed mode unless the policy
+  allows it. Done: every day, Monday to Friday or weekly, a missed time runs when the computer is
+  next on, the launcher starts hidden and closes after the run (`ScheduledRuns` in managed mode).
+  The task registers as a standard user (checked). Left: a scheduled run of an installed build.
+
+**Tier 3: for the people who write apps, and the reputation signing waits on (N5).**
+
+- ☐ **P11. A folder that stays between runs** (`ctx.data_dir`): settings and caches an app keeps,
+  outside the output folder and not counted as changed files by the guard; removed on uninstall,
+  and never shared with another app.
+- ☐ **P12. Pack and sign in CI**: a GitHub Action (or a documented workflow) that packs and signs
+  an app on a tag with its key in a repository secret and attaches the `.dsapp` to a release;
+  `keygen --unencrypted` exists for this.
+- ☐ **P13. Example apps people would use**: a few public, signed apps that do real work (merge
+  Excel files, a CSV cleaner, a PDF report), linked from the README with a short screen
+  recording. This is the "verifiable reputation" SignPath asks about.
+- ☐ **P14. Contributors**: fold `HANDOFF.md` and `status_quo.md` into `CONTRIBUTING.md`, and
+  "good first issue" labels on a few small items (was in C).
+
+**Tier 4: evidence for IT**, from C, as soon as a company evaluates (B1): Windows Event Log
+(runs, findings, quarantines) and an SBOM written by `pack`.
+
+## 0.5.0 (released 6 November)
 
 Roughly in this order; N1 and N2 first, as they finish what 0.4.0 started and close known gaps.
 
@@ -45,8 +120,8 @@ Roughly in this order; N1 and N2 first, as they finish what 0.4.0 started and cl
 - ◐ **N4. A stand-in for a company PC**, so B1 and B2 stop waiting for a company: ☑ a script
   that sets up a Windows VM (a standard account, AppLocker's default rules, mitmproxy as a
   TLS-inspecting proxy, trust folders on an SMB share, managed mode) and a checklist
-  ([`company-pc.md`](company-pc.md)). Left: run B1 and B2 there, and time cold installs behind
-  the proxy. A real company still confirms it later.
+  ([`company-pc.md`](company-pc.md)). Left: run B1 and B2 there, time cold installs behind
+  the proxy, and a proxy set only in Windows (a PAC script, no `HTTPS_PROXY`: P1). A real company still confirms it later.
 - ☐ **N5. Signing, both routes at once**: apply to SignPath Foundation (was A9) with 0.4.0 linked,
   and to Certum's open-source certificate, which checks who we are rather than the project's
   reputation. Whichever says yes first → B4.
@@ -134,13 +209,13 @@ company evaluates devstribution: IT asks for both.
   approved".
 - **Revocation, the rest** ([`revocation.md`](revocation.md)): the `Devstribution/trust` repository
   with its offline keys, fetching the list, the policy values, two-of-three signing.
-- **Evidence for IT** (section 8): Windows Event Log; SBOM written by `pack`.
-- **Results shown in the launcher, the rest** (section 7): Excel, images and charts, more input
-  types (dates, choices, several files).
-- **Launcher, smaller items** (section 7): Settings: stop trusting a publisher; other languages; an
-  accessible version of the runs chart.
+- **Evidence for IT** (section 8): Windows Event Log; SBOM written by `pack` (Tier 4 of 0.6.0 as
+  soon as a company evaluates).
+- **Results shown in the launcher, the rest** (section 7): charts; Excel, images and several files
+  moved to 0.6.0 (P7, P8).
+- **Launcher, smaller items** (section 7): Settings: stop trusting a publisher; languages after
+  Italian (P6); an accessible version of the runs chart.
 - **CLI**: `verify` shows the scan and can check against a `.trust` file.
-- **Contributors**: fold `HANDOFF.md` and `status_quo.md` into `CONTRIBUTING.md`.
 - **Phase 2 of the plan**: the rest of managed mode (the per-machine service and installs in
   Program Files, an ADMX template, IT countersignatures), the catalog with GitHub namespace
   verification and a "known publisher" hint, `devstribution://` links, the `background` app kind,

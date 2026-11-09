@@ -1387,6 +1387,13 @@ impl Store {
         self.env_cancel.fetch_add(1, Ordering::SeqCst);
     }
 
+    /// Where downloads come from: the policy's mirrors in managed mode, else uv's defaults.
+    pub fn sources(&self) -> uv::Sources {
+        uv::Sources {
+            python_mirror: self.policy.as_ref().and_then(|p| p.python_mirror.clone()),
+        }
+    }
+
     /// Builds an app's environment next to `env_dir` and moves it into place only when uv has
     /// finished: a failed, cancelled or interrupted build never leaves a half-made environment
     /// that looks ready, and the environment it replaces keeps working until then.
@@ -1399,7 +1406,7 @@ impl Store {
         on_line: &mut dyn FnMut(&str),
     ) -> Result<()> {
         let stop = || self.env_cancel.load(Ordering::SeqCst) != cancel_from;
-        build_env(app_dir, env_dir, on_line, &stop)?;
+        build_env(app_dir, env_dir, &self.sources(), on_line, &stop)?;
         // The app's bytecode folder for this version (see `prepare_run`), emptied: what was
         // compiled for the environment it replaces is of no use.
         if let Ok(version) = app_dir.strip_prefix(self.paths.apps()) {
@@ -2035,6 +2042,17 @@ impl Store {
             Err(e) => out += &format!("  could not be read: {}\n", redact(&format!("{e:#}"))),
         }
 
+        out += "\nNetwork\n";
+        out += &format!("  proxy: {}\n", redact(&uv::proxy_in_use()));
+        out += &format!(
+            "  Python from: {}\n",
+            self.sources()
+                .python_mirror
+                .as_deref()
+                .unwrap_or("GitHub (no mirror set)")
+        );
+        out += "  packages from: PyPI\n";
+
         let j = self.journal_report();
         out += "\nJournal\n";
         out += &match j.broken_at {
@@ -2139,6 +2157,7 @@ impl Store {
 fn build_env(
     app_dir: &Path,
     env_dir: &Path,
+    sources: &uv::Sources,
     on_line: &mut dyn FnMut(&str),
     stop: &dyn Fn() -> bool,
 ) -> Result<()> {
@@ -2149,7 +2168,7 @@ fn build_env(
         .and_then(|n| n.to_str())
         .unwrap_or("env");
     let building = parent.join(format!("{name}.building-{}", random_hex(4)));
-    if let Err(e) = uv::sync(app_dir, &building, LockMode::Frozen, on_line, stop) {
+    if let Err(e) = uv::sync(app_dir, &building, LockMode::Frozen, sources, on_line, stop) {
         let _ = fs::remove_dir_all(&building);
         return Err(e);
     }

@@ -211,7 +211,7 @@ not following links, the window's permissions and CSP.
 
 ## Technical assessment, 5 November 2026
 
-Performance and security, measured ahead of 0.5.0 ([`roadmap.md`](roadmap.md), "Next: 0.5.0"). No
+Performance and security, measured ahead of 0.5.0 ([`roadmap.md`](roadmap.md), "0.5.0"). No
 code had changed since the review above, so this probed the guard with test apps through the real
 runner instead of reading everything again. `cargo deny` and `npm audit` were clean, and the nightly
 fuzzing had passed every night. What it found and is fixed:

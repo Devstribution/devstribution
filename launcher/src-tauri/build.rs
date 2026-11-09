@@ -33,6 +33,11 @@ const COMMANDS: &[&str] = &[
     "check_app_updates",
     "add_update_folder",
     "remove_update_folder",
+    "add_to_start",
+    "remove_from_start",
+    "set_schedule",
+    "remove_schedule",
+    "take_pending_app",
 ];
 
 fn main() {

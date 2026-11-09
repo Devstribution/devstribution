@@ -75,6 +75,36 @@ export interface AppView {
   guard_allow: string[];
   /** False when the organisation keeps "Allow and run again" for IT. */
   may_allow_guard_rules: boolean;
+  /** Whether it has a shortcut in the Start menu. */
+  in_start: boolean;
+  /** When it runs on its own, if it was scheduled. */
+  schedule?: ScheduleView | null;
+  /** Why it cannot be scheduled (not a form app, or the organisation says no). */
+  schedule_refusal?: string | null;
+}
+
+/** When an app runs on its own (Windows Task Scheduler starts the launcher). */
+export interface Schedule {
+  every: "day" | "weekday" | "week";
+  /** For `week`: 1 is Monday, 7 is Sunday. */
+  day?: number | null;
+  /** Local time, HH:MM. */
+  time: string;
+  /** The inputs every scheduled run uses. */
+  inputs: Record<string, unknown>;
+}
+
+export interface ScheduleView extends Schedule {
+  /** "every Monday at 09:00". */
+  text: string;
+}
+
+/** A run the launcher started, by hand or on schedule. */
+export interface RunStarted {
+  run_id: string;
+  app_id: string;
+  app_title: string;
+  scheduled: boolean;
 }
 
 /** What the runtime guard did: `stop` ended the run, `block` made one call fail, `observe` only reports. */
@@ -401,6 +431,12 @@ export interface Api {
   /** Starts devstribution's own uninstaller and closes the launcher. */
   uninstallLauncher(): Promise<void>;
   takePendingFiles(): Promise<string[]>;
+  /** The app to open, when devstribution was started from its Start menu shortcut. */
+  takePendingApp(): Promise<string | null>;
+  addToStart(id: string): Promise<AppView>;
+  removeFromStart(id: string): Promise<AppView>;
+  setSchedule(id: string, schedule: Schedule): Promise<AppView>;
+  removeSchedule(id: string): Promise<AppView>;
   /** Saves a .trust file for a refused package's author, to send to IT. False if cancelled. */
   saveTrustRequest(token: string): Promise<boolean>;
   /** Asks GitHub for a newer devstribution; null when this one is the latest. */
@@ -420,6 +456,10 @@ export interface Api {
   /** A finished run that could not be saved, with the reason. */
   onRunNotRecorded(cb: (message: string) => void): Promise<Unlisten>;
   onOpenFiles(cb: (paths: string[]) => void): Promise<Unlisten>;
+  /** A Start menu shortcut was used while devstribution was open. */
+  onOpenApp(cb: (id: string) => void): Promise<Unlisten>;
+  /** Every run that starts, including scheduled ones the window did not start. */
+  onRunStarted(cb: (run: RunStarted) => void): Promise<Unlisten>;
   onDragDrop(cb: (e: { type: "over" | "leave" | "drop"; paths: string[] }) => void): Promise<Unlisten>;
 }
 
@@ -481,6 +521,11 @@ async function tauriApi(): Promise<Api> {
     settings: () => invoke("settings"),
     uninstallLauncher: () => invoke("uninstall_launcher"),
     takePendingFiles: () => invoke("take_pending_files"),
+    takePendingApp: () => invoke("take_pending_app"),
+    addToStart: (id) => invoke("add_to_start", { id }),
+    removeFromStart: (id) => invoke("remove_from_start", { id }),
+    setSchedule: (id, schedule) => invoke("set_schedule", { id, schedule }),
+    removeSchedule: (id) => invoke("remove_schedule", { id }),
     saveTrustRequest: (token) => invoke("save_trust_request", { token }),
     checkUpdate: () => invoke("check_update"),
     installUpdate: () => invoke("install_update"),
@@ -495,6 +540,8 @@ async function tauriApi(): Promise<Api> {
     onRunsChanged: (cb) => listen("runs-changed", () => cb()),
     onRunNotRecorded: (cb) => listen<string>("run-not-recorded", (e) => cb(e.payload)),
     onOpenFiles: (cb) => listen<string[]>("open-files", (e) => cb(e.payload)),
+    onOpenApp: (cb) => listen<string>("open-app", (e) => cb(e.payload)),
+    onRunStarted: (cb) => listen<RunStarted>("run-started", (e) => cb(e.payload)),
     onDragDrop: (cb) =>
       getCurrentWebview().onDragDropEvent((e) => {
         const p = e.payload;
