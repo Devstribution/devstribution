@@ -302,9 +302,6 @@ fn rows(xml: &[u8], book: &Book) -> anyhow::Result<TablePreview> {
                     "row" => {
                         row.clear();
                         col = 0;
-                        if empty {
-                            // `<row/>`: nothing in it.
-                        }
                     }
                     "c" => {
                         col = attr(e, "r").and_then(|r| column(&r)).unwrap_or(col);
@@ -332,12 +329,10 @@ fn rows(xml: &[u8], book: &Book) -> anyhow::Result<TablePreview> {
                     }
                     col += 1;
                 }
-                "row" => {
-                    if row.iter().any(|c| !c.is_empty()) {
-                        total += 1;
-                        if kept.len() <= ROWS {
-                            kept.push(clip(std::mem::take(&mut row)));
-                        }
+                "row" if row.iter().any(|c| !c.is_empty()) => {
+                    total += 1;
+                    if kept.len() <= ROWS {
+                        kept.push(clip(std::mem::take(&mut row)));
                     }
                 }
                 _ => {}
