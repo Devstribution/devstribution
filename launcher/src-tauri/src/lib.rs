@@ -50,8 +50,54 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// File types Windows runs, or that point somewhere else, when "opened": a result of one of
-/// these types is shown in its folder instead.
+/// these types is shown in its folder instead. Also documents that carry code their program
+/// runs (help files, Office macros and add-ins), installers, and files that connect to a server
+/// or mount a disk.
 const RUNNABLE: &[&str] = &[
+    // Help files, Office add-ins and documents with macros.
+    "chm",
+    "xll",
+    "xla",
+    "xlam",
+    "xlsm",
+    "xltm",
+    "xlsb",
+    "docm",
+    "dotm",
+    "pptm",
+    "potm",
+    "ppsm",
+    "ppam",
+    "sldm",
+    "accdb",
+    "accde",
+    "mdb",
+    "mde",
+    // Installers and troubleshooters.
+    "msix",
+    "msixbundle",
+    "appx",
+    "appxbundle",
+    "appinstaller",
+    "diagcab",
+    "inf",
+    // More scripts and shell files.
+    "ws",
+    "wsc",
+    "scf",
+    "sct",
+    "gadget",
+    "search-ms",
+    "searchconnector-ms",
+    // Files that connect to a server, or mount a disk.
+    "rdp",
+    "theme",
+    "themepack",
+    "deskthemepack",
+    "iso",
+    "img",
+    "vhd",
+    "vhdx",
     "exe",
     "com",
     "bat",

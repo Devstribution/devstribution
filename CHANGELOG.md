@@ -10,6 +10,8 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-09
+
 ### Added
 
 - **Run on a schedule**: a form app can run on its own every day, Monday to Friday or once a
@@ -49,6 +51,22 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
   that wants a Windows login, a mirror without the file), the proxy in use, and what to ask IT
   for. "Copy diagnostics" has a Network section: the proxy (without its password) and where
   Python and packages come from.
+
+### Security
+
+- **"Open result" no longer opens documents that run code of their own.** Help files (`.chm`),
+  Excel add-ins (`.xll`, `.xlam`), Office files with macros (`.xlsm`, `.docm`, `.pptm` and the
+  rest), app installers (`.msix`, `.appinstaller`), troubleshooters, Remote Desktop and theme
+  files, and disk images are shown in their folder instead, like programs and scripts already
+  were. An app the guard keeps from starting programs could otherwise have left one as a result
+  for you to press.
+- **A package's signature is checked before anything in it is unpacked.** An unsigned package,
+  or one signed with another key than its publisher's, now writes nothing to disk, and only the
+  files its signed list names are unpacked. Before, such a package was refused only after it had
+  been unpacked, up to the 2 GB limit.
+- **The Excel preview has the same limits as packages**: a workbook over 256 MB, with more than
+  10,000 entries in its zip, or with more shared strings than a sheet could show is not shown,
+  so a file built to fill memory cannot slow the launcher down.
 
 ## [0.5.0] - 2026-11-06
 
@@ -321,7 +339,8 @@ warns before the installer runs, and it is not meant for company PCs yet.
 - Not yet tried on a locked-down company PC or behind a company proxy.
 - The launcher does not update itself: install a newer version over it.
 
-[Unreleased]: https://github.com/Devstribution/devstribution/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/Devstribution/devstribution/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/Devstribution/devstribution/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Devstribution/devstribution/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Devstribution/devstribution/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Devstribution/devstribution/compare/v0.2.0...v0.3.0

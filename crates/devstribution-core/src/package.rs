@@ -433,7 +433,14 @@ fn open_archive(package: &Path, limits: Limits) -> Result<ZipArchive<fs::File>> 
     if file_len > limits.max_total_bytes.saturating_add(64 << 20) {
         return Err(refuse("the file is larger than any package can be".into()));
     }
-    if !index_within_limits(&mut file, file_len, limits).map_err(|e| Error::io(package, e))? {
+    if !zip_index_within(
+        &mut file,
+        file_len,
+        limits.max_files as u64 + 3,
+        MAX_INDEX_BYTES,
+    )
+    .map_err(|e| Error::io(package, e))?
+    {
         return Err(refuse(format!("more than {} files", limits.max_files)));
     }
     let archive =
@@ -445,8 +452,15 @@ fn open_archive(package: &Path, limits: Limits) -> Result<ZipArchive<fs::File>> 
 }
 
 /// Whether every end-of-index record at the end of the file (each one that could be the real one,
-/// as a zip's comment may hold look-alikes) claims an index within the limits.
-fn index_within_limits(file: &mut fs::File, len: u64, limits: Limits) -> io::Result<bool> {
+/// as a zip's comment may hold look-alikes) claims an index of at most `max_entries` entries and
+/// `max_bytes` bytes. Checked before a zip library reads the index, which it keeps in memory.
+/// Also used by the launcher before it previews an Excel workbook.
+pub fn zip_index_within(
+    file: &mut fs::File,
+    len: u64,
+    max_entries: u64,
+    max_bytes: u64,
+) -> io::Result<bool> {
     const RECORD: usize = 22;
     let tail_len = len.min(RECORD as u64 + 65_535);
     let tail_start = len - tail_len;
@@ -479,7 +493,7 @@ fn index_within_limits(file: &mut fs::File, len: u64, limits: Limits) -> io::Res
                 }
             }
         }
-        if entries > limits.max_files as u64 + 3 || size > MAX_INDEX_BYTES {
+        if entries > max_entries || size > max_bytes {
             return Ok(false);
         }
     }
@@ -518,14 +532,59 @@ fn extract_inner(package: &Path, dest: &Path, opts: &VerifyOptions) -> Result<Ve
         )));
     }
 
+    // The signature comes first, before anything is written: a package nobody signed, or one
+    // signed with another key than its publisher's, unpacks nothing (a zip bomb with a made-up
+    // file list is refused here, not after filling the disk), and only listed files are written.
+    let mut small = |name: &str, missing: String| -> Result<Vec<u8>> {
+        let mut entry = match archive.by_name(name) {
+            Ok(entry) => entry,
+            Err(zip::result::ZipError::FileNotFound) => return Err(refuse(missing)),
+            Err(e) => return Err(refuse(format!("`{name}`: {e}"))),
+        };
+        let mut data = Vec::new();
+        (&mut entry)
+            .take((16 << 20) + 1)
+            .read_to_end(&mut data)
+            .map_err(|e| refuse(format!("`{name}`: {e}")))?;
+        if data.len() > 16 << 20 {
+            return Err(refuse(format!("`{name}` is too large")));
+        }
+        Ok(data)
+    };
+    let list_data = small(FILES_LIST, format!("missing {FILES_LIST}"))?;
+    let sig_data = small(
+        FILES_SIGNATURE,
+        format!("missing {FILES_SIGNATURE} (unsigned package)"),
+    )?;
+    let key_data = small(FILES_PUBLIC_KEY, format!("missing {FILES_PUBLIC_KEY}"))?;
+    let sig_text = String::from_utf8(sig_data)
+        .map_err(|_| refuse(format!("{FILES_SIGNATURE} is not UTF-8")))?;
+    let signature = Signature::parse(&sig_text)?;
+    let key_text = String::from_utf8(key_data)
+        .map_err(|_| refuse(format!("{FILES_PUBLIC_KEY} is not UTF-8")))?;
+    let package_key = parse_public_key(&key_text)?;
+    let comment = signature.verify(&package_key, &list_data)?;
+    let key_id = public_key_id(&package_key);
+    let status = match opts.trusted_key {
+        Some(trusted) if public_key_base64(trusted) == public_key_base64(&package_key) => {
+            SignatureStatus::Trusted { key_id }
+        }
+        Some(trusted) => {
+            return Err(Error::Signature(format!(
+                "signed with key {key_id}, but this publisher's key is {}: \
+                 it was not published by the same publisher",
+                public_key_id(trusted)
+            )));
+        }
+        None => SignatureStatus::NewKey { key_id },
+    };
+    let list = FilesList::parse(&list_data)?;
+
     let mut seen = HashSet::new();
     // Every folder prefix as first spelled: `A/x.py` next to `a/y.py` would end up in one
     // folder on Windows but two on Linux.
     let mut folders: HashMap<String, String> = HashMap::new();
     let mut hashes: BTreeMap<String, [u8; 32]> = BTreeMap::new();
-    let mut list_data = None;
-    let mut sig_data = None;
-    let mut key_data = None;
     let mut total = 0u64;
     for i in 0..archive.len() {
         let mut entry = archive
@@ -573,24 +632,17 @@ fn extract_inner(package: &Path, dest: &Path, opts: &VerifyOptions) -> Result<Ve
             continue;
         }
 
-        let budget = limits.max_file_bytes.min(limits.max_total_bytes - total);
-        let mut limited = (&mut entry).take(budget + 1);
         if path == FILES_LIST || path == FILES_SIGNATURE || path == FILES_PUBLIC_KEY {
-            let mut data = Vec::new();
-            limited
-                .read_to_end(&mut data)
-                .map_err(|e| refuse(format!("`{name}`: {e}")))?;
-            total += data.len() as u64;
-            if data.len() as u64 > budget || data.len() > 16 << 20 {
-                return Err(refuse(format!("`{name}` is too large")));
-            }
-            match path {
-                FILES_LIST => list_data = Some(data),
-                FILES_SIGNATURE => sig_data = Some(data),
-                _ => key_data = Some(data),
-            }
+            // Read and checked above; a second copy is refused as a duplicate name.
             continue;
         }
+        if list.get(path).is_none() {
+            return Err(refuse(format!(
+                "files not listed in {FILES_LIST}: `{path}`"
+            )));
+        }
+        let budget = limits.max_file_bytes.min(limits.max_total_bytes - total);
+        let mut limited = (&mut entry).take(budget + 1);
 
         let target = dest.join(path);
         if let Some(parent) = target.parent() {
@@ -617,26 +669,11 @@ fn extract_inner(package: &Path, dest: &Path, opts: &VerifyOptions) -> Result<Ve
         hashes.insert(path.to_owned(), hasher.hasher.finalize().into());
     }
 
-    let list_data = list_data.ok_or_else(|| refuse(format!("missing {FILES_LIST}")))?;
-    let sig_data =
-        sig_data.ok_or_else(|| refuse(format!("missing {FILES_SIGNATURE} (unsigned package)")))?;
-    let list = FilesList::parse(&list_data)?;
     let missing: Vec<&str> = list.paths().filter(|p| !hashes.contains_key(*p)).collect();
     if !missing.is_empty() {
         return Err(refuse(format!(
             "files listed but missing: {}",
             preview(&missing)
-        )));
-    }
-    let extra: Vec<&str> = hashes
-        .keys()
-        .map(String::as_str)
-        .filter(|p| list.get(p).is_none())
-        .collect();
-    if !extra.is_empty() {
-        return Err(refuse(format!(
-            "files not listed in {FILES_LIST}: {}",
-            preview(&extra)
         )));
     }
     let modified: Vec<&str> = hashes
@@ -650,29 +687,6 @@ fn extract_inner(package: &Path, dest: &Path, opts: &VerifyOptions) -> Result<Ve
             preview(&modified)
         )));
     }
-
-    let sig_text = String::from_utf8(sig_data)
-        .map_err(|_| refuse(format!("{FILES_SIGNATURE} is not UTF-8")))?;
-    let signature = Signature::parse(&sig_text)?;
-    let key_data = key_data.ok_or_else(|| refuse(format!("missing {FILES_PUBLIC_KEY}")))?;
-    let key_text = String::from_utf8(key_data)
-        .map_err(|_| refuse(format!("{FILES_PUBLIC_KEY} is not UTF-8")))?;
-    let package_key = parse_public_key(&key_text)?;
-    let comment = signature.verify(&package_key, &list_data)?;
-    let key_id = public_key_id(&package_key);
-    let status = match opts.trusted_key {
-        Some(trusted) if public_key_base64(trusted) == public_key_base64(&package_key) => {
-            SignatureStatus::Trusted { key_id }
-        }
-        Some(trusted) => {
-            return Err(Error::Signature(format!(
-                "signed with key {key_id}, but this publisher's key is {}: \
-                 it was not published by the same publisher",
-                public_key_id(trusted)
-            )));
-        }
-        None => SignatureStatus::NewKey { key_id },
-    };
 
     for required in [PYPROJECT, UV_LOCK] {
         if list.get(required).is_none() {
@@ -1445,6 +1459,45 @@ source = { virtual = "." }
         );
         assert!(r.is_err());
         assert!(!dest.exists(), "partial extraction must be removed");
+    }
+
+    /// A package that is not signed, or adds a file to the signed list, is refused before that
+    /// file is unpacked: here the file is over the size limit, and the size is not what stops it.
+    #[test]
+    fn the_signature_is_checked_before_anything_is_unpacked() {
+        let f = fixture();
+        let pkg = f.pack();
+        let limits = Limits {
+            max_file_bytes: 1 << 20,
+            ..Limits::default()
+        };
+        let opts = VerifyOptions {
+            trusted_key: None,
+            limits,
+        };
+        let big = vec![b'x'; 2 << 20];
+        let out = f.dir.path().join("added.dsapp");
+        let cases: [(&str, &str); 2] = [(FILES_SIGNATURE, "unsigned"), ("", "not listed")];
+        for (dropped, expected) in cases {
+            rewrite(&pkg, &out, |name, data| {
+                let mut entries = if name == dropped {
+                    vec![]
+                } else {
+                    vec![(name.to_string(), data)]
+                };
+                if name == PYPROJECT {
+                    entries.insert(0, ("bomb.bin".to_string(), big.clone()));
+                }
+                entries
+            });
+            let dest = f.dir.path().join(format!("dest-{}", expected.len()));
+            let Err(err) = extract_and_verify(&out, &dest, &opts) else {
+                panic!("{expected}: installed");
+            };
+            let err = err.to_string();
+            assert!(err.contains(expected), "{expected}: {err}");
+            assert!(!dest.exists());
+        }
     }
 
     #[test]

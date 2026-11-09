@@ -12,8 +12,8 @@ company PC and in managed mode) and **reputation** (SignPath Foundation wants a 
 0.5.0 went after both and fixed what the assessment found; 0.6.0 makes the launcher ready
 for a company network and builds the reputation:
 
-- **[Next: 0.6.0](#next-060)**: company proxies and mirrors first, then what users and authors
-  need next, in tiers.
+- **[0.6.0](#060-released-9-november)**: released with Tiers 2 and 3 mostly done and a security
+  review's fixes; what is left (P1, P2, P6, P7, P13, Tier 4) goes on in 0.7.0.
 - **[0.5.0](#050-released-6-november)**: the assessment's findings, a stand-in for a company PC,
   signing applied for on both routes, and what the first outside users meet.
 - **[A. First public release](#a-first-public-release-done)**: done.
@@ -24,7 +24,14 @@ The numbered sections after the stages are the record per area. Earlier revision
 27 October) and the details of finished items are in the git history and
 [`CHANGELOG.md`](../CHANGELOG.md). Status: ☐ to do · ◐ in progress · ☑ done
 
-## Next: 0.6.0
+## 0.6.0 (released 9 November)
+
+Released with P3, P4, P5, P8, P9, P10, P11, P12 and P14 done or nearly (each says what is left),
+and the fixes of the security review of 9 November ([`security.md`](security.md)): "Open result"
+no longer opens documents that run code, a package's signature is checked before anything is
+unpacked, and the Excel preview has the package's size limits. Not done, and carried to 0.7.0:
+P1 and P2 (the Windows proxy and the package mirror), P6 (Italian), P7 (several files in one
+input), P13 (example apps) and Tier 4.
 
 *Proposed 9 November*, from a scan of the product after 0.5.0: what a company network, the
 people who run apps and the people who write them would run into next. Carried over from 0.5.0:
