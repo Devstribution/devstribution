@@ -1350,7 +1350,7 @@ impl Store {
         self.app(&pending.id)
     }
 
-    /// Removes an app, its environment and its secrets. Its publisher stays pinned, so a later
+    /// Removes an app, its environment, its secrets and its kept folder (`ctx.data_dir`). Its publisher stays pinned, so a later
     /// reinstall must still come from the same key; run history is kept.
     pub fn uninstall(&self, id: &str) -> Result<()> {
         self.refuse_if_running(id, "uninstall")?;
@@ -1377,6 +1377,7 @@ impl Store {
                 .join(&app_id.namespace)
                 .join(&app_id.app),
         );
+        let _ = fs::remove_dir_all(self.paths.app_data(&app_id));
         Ok(())
     }
 
@@ -1569,6 +1570,7 @@ impl Store {
             .join(&app.manifest.id.namespace)
             .join(&app.manifest.id.app)
             .join(&app.record.content_hash);
+        let app_data_dir = self.paths.app_data(&app.manifest.id);
         let spec = RunSpec {
             manifest: app.manifest,
             app_dir: app.app_dir,
@@ -1577,6 +1579,7 @@ impl Store {
             run_dir,
             output_dir,
             pycache_dir,
+            app_data_dir,
             data_dir: self.paths.root.clone(),
             inputs: resolved,
             secrets,

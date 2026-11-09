@@ -120,6 +120,25 @@ impl Paths {
         self.root.join("dev-envs")
     }
 
+    /// Every app's folder kept between runs (`ctx.data_dir`).
+    pub fn app_data_root(&self) -> PathBuf {
+        self.root.join("app-data")
+    }
+
+    /// An app's folder kept between runs and through updates: `app-data\<namespace>\<app>\`.
+    /// Removed with the app; no other app may read it.
+    pub fn app_data(&self, id: &AppId) -> PathBuf {
+        self.app_data_root().join(&id.namespace).join(&id.app)
+    }
+
+    /// The same for `devstribution dev`, apart from the installed app's.
+    pub fn dev_app_data(&self, id: &AppId) -> PathBuf {
+        self.root
+            .join("dev-app-data")
+            .join(&id.namespace)
+            .join(&id.app)
+    }
+
     pub fn app_dir(&self, id: &AppId, hash: &str) -> PathBuf {
         self.apps().join(&id.namespace).join(&id.app).join(hash)
     }

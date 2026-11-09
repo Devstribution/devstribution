@@ -217,6 +217,8 @@ pub struct RunSpec {
     pub run_dir: PathBuf,
     pub output_dir: PathBuf,
     pub pycache_dir: PathBuf,
+    /// The app's folder kept between runs and through updates (`ctx.data_dir`).
+    pub app_data_dir: PathBuf,
     /// devstribution's data folder: no app may change it, or read other runs' results in it.
     pub data_dir: PathBuf,
     /// Input values after [`resolve_inputs`].
@@ -299,13 +301,15 @@ fn start_message(spec: &RunSpec) -> Value {
         "allowed_secrets": secret_names(m),
         "args": spec.args,
         "pycache_dir": spec.pycache_dir,
+        "app_data_dir": spec.app_data_dir,
         "guard": {
             "network": m.permissions.network,
             "sap": m.permissions.sap,
             "allow": spec.guard_allow,
-            "own": [spec.run_dir, spec.pycache_dir],
+            "own": [spec.run_dir, spec.pycache_dir, spec.app_data_dir],
             "protected": [spec.data_dir],
-            "private": [spec.data_dir.join("runs")],
+            // Other runs' results, and the other apps' kept folders.
+            "private": [spec.data_dir.join("runs"), crate::paths::Paths { root: spec.data_dir.clone() }.app_data_root()],
             "child_dir": child_dir(&spec.run_dir),
         },
     })
@@ -383,12 +387,17 @@ pub fn start(spec: RunSpec, on_event: EventSink) -> Result<RunHandle> {
             spec.manifest.kind.as_str()
         );
     }
-    fs::create_dir_all(&spec.output_dir).with_context(|| {
-        format!(
-            "cannot create the run's output folder {}: check that the disk has free space",
-            spec.output_dir.display()
-        )
-    })?;
+    for (dir, what) in [
+        (&spec.output_dir, "the run's output folder"),
+        (&spec.app_data_dir, "the app's data folder"),
+    ] {
+        fs::create_dir_all(dir).with_context(|| {
+            format!(
+                "cannot create {what} {}: check that the disk has free space",
+                dir.display()
+            )
+        })?;
+    }
     let timeout = match spec.manifest.kind {
         Kind::Form | Kind::Cli => Some(
             spec.manifest

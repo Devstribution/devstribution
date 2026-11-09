@@ -1,7 +1,7 @@
 # Roadmap: from proof of concept to a signed 1.0
 
-The proof of concept works end to end (see [`status_quo.md`](status_quo.md) and the Windows findings
-in [`report.md`](report.md)), and a first real app has been delivered with it. This is the work
+The proof of concept works end to end (see the [changelog](../CHANGELOG.md) and the Windows
+findings in [`report.md`](report.md)), and a first real app has been delivered with it. This is the work
 between that and a launcher we can sign and hand to people who will never read this repository.
 
 *Revised 9 November 2026*, after 0.5.0 (earlier: 5 November, after 0.4.0 and a technical
@@ -80,17 +80,26 @@ come first; each is checked on the stand-in (N4).
 
 **Tier 3: for the people who write apps, and the reputation signing waits on (N5).**
 
-- ☐ **P11. A folder that stays between runs** (`ctx.data_dir`): settings and caches an app keeps,
+- ◐ **P11. A folder that stays between runs** (`ctx.data_dir`): settings and caches an app keeps,
   outside the output folder and not counted as changed files by the guard; removed on uninstall,
-  and never shared with another app.
-- ☐ **P12. Pack and sign in CI**: a GitHub Action (or a documented workflow) that packs and signs
-  an app on a tag with its key in a repository secret and attaches the `.dsapp` to a release;
-  `keygen --unencrypted` exists for this.
+  and never shared with another app. Done: `app-data\<namespace>\<app>` in the data folder,
+  kept through updates; the guard keeps other apps out and never runs code from it (so nothing
+  written by one run runs in the next). `devstribution dev` has its own, and `local_context()`
+  uses `output/app-data`. Left: a way to see or empty it from the launcher.
+- ◐ **P12. Pack and sign in CI**: a GitHub Action (or a documented workflow) that packs and signs
+  an app on a tag with its key in a repository secret and attaches the `.dsapp` to a release
+  (`keygen --no-password` exists for this). Done: `actions/pack`, which runs the released CLI
+  after checking its checksum and attestation, then `pack`, `verify` and `scan`; the release
+  workflow to copy is in `authors.md`. CI runs it on the examples with a CLI built from source.
+  A key with a password and none given now fails at once instead of waiting for someone to type
+  it. Left: a first run from an author's repository against a published release (0.6.0).
 - ☐ **P13. Example apps people would use**: a few public, signed apps that do real work (merge
   Excel files, a CSV cleaner, a PDF report), linked from the README with a short screen
   recording. This is the "verifiable reputation" SignPath asks about.
-- ☐ **P14. Contributors**: fold `HANDOFF.md` and `status_quo.md` into `CONTRIBUTING.md`, and
-  "good first issue" labels on a few small items (was in C).
+- ◐ **P14. Contributors**: fold `HANDOFF.md` and `status_quo.md` into `CONTRIBUTING.md`, and
+  "good first issue" labels on a few small items (was in C). Done: one `CONTRIBUTING.md` with
+  where things stand, setup, the layout and what to know before changing code; the two pages are
+  gone. Left: the issues themselves, on GitHub.
 
 **Tier 4: evidence for IT**, from C, as soon as a company evaluates (B1): Windows Event Log
 (runs, findings, quarantines) and an SBOM written by `pack`.

@@ -71,6 +71,33 @@ class RunnerBase(unittest.TestCase):
 
 
 class RunnerTest(RunnerBase):
+    def test_the_kept_folder_survives_runs(self):
+        self.write_app(
+            """
+            def run(ctx):
+                count = ctx.data_dir / "count.txt"
+                n = int(count.read_text()) + 1 if count.exists() else 1
+                count.write_text(str(n))
+                return {"n": str(n)}
+            """
+        )
+        kept = self.root / "kept" / "ns" / "app"
+        for expected in ("1", "2"):
+            code, messages, stderr = self.run_app(app_data_dir=str(kept), outputs=[{"name": "n", "type": "text"}])
+            self.assertEqual(code, 0, stderr)
+            self.assertEqual(messages[-1]["outputs"], {"n": expected})
+
+    def test_without_a_kept_folder_the_app_still_gets_one(self):
+        self.write_app(
+            """
+            def run(ctx):
+                (ctx.data_dir / "x").write_text("ok")
+                return {"v": "ok"}
+            """
+        )
+        code, messages, stderr = self.run_app(outputs=[{"name": "v", "type": "text"}])
+        self.assertEqual(code, 0, stderr)
+
     def test_form_run_with_typed_inputs_and_file_output(self):
         self.write_app(
             """

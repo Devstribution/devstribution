@@ -1,0 +1,175 @@
+name: devstribution pack
+description: >-
+  Checks, signs and packs a devstribution app into a .dsapp, then verifies and scans it, with the
+  publisher key from a repository secret.
+author: devstribution
+
+# How to use it: docs/authors.md, "Packing in GitHub Actions". In short:
+#
+#   - uses: actions/checkout@<sha>
+#   - id: pack
+#     uses: Devstribution/devstribution/actions/pack@v0.6.0
+#     with:
+#       key: ${{ secrets.DEVSTRIBUTION_KEY }}
+#       key-password: ${{ secrets.DEVSTRIBUTION_KEY_PASSWORD }}   # when the key has one
+#   - run: gh release create "$GITHUB_REF_NAME" "${{ steps.pack.outputs.package }}"
+#
+# The CLI is the one released with the tag the action is used at (or `version`), downloaded from
+# this repository's releases and checked against the release's SHA256SUMS.txt and its build
+# attestation before it runs. The key is written to a file only the job can read, for `pack`
+# alone, and deleted when it is done, even when it fails.
+
+inputs:
+  key:
+    description: The secret key file's contents (`<namespace>.key` from `devstribution keygen`), from a secret.
+    required: true
+  key-password:
+    description: The key's password, from a secret. Leave it out for a key made with `--no-password`.
+    required: false
+    default: ""
+  public-key:
+    description: >-
+      The `.pub` file's contents. When given, the package is verified against it, so a wrong key
+      in the secret fails here instead of at your users' launchers.
+    required: false
+    default: ""
+  app-dir:
+    description: The app folder, the one with pyproject.toml and uv.lock.
+    required: false
+    default: "."
+  out-dir:
+    description: Where the .dsapp goes.
+    required: false
+    default: dist
+  version:
+    description: >-
+      The devstribution CLI to use, as a release tag (`v0.6.0`). Defaults to the tag the action
+      is used at.
+    required: false
+    default: ""
+  cli:
+    description: A devstribution executable already on the runner, used instead of a download.
+    required: false
+    default: ""
+
+outputs:
+  package:
+    description: The path of the .dsapp.
+    value: ${{ steps.pack.outputs.package }}
+  id:
+    description: The app's id (`namespace/app`).
+    value: ${{ steps.pack.outputs.id }}
+  version:
+    description: The app's version.
+    value: ${{ steps.pack.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    # `pack` checks that uv.lock matches pyproject.toml with uv.
+    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+    - name: devstribution CLI
+      id: cli
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        CLI: ${{ inputs.cli }}
+        VERSION: ${{ inputs.version }}
+        ACTION_REF: ${{ github.action_ref }}
+        ACTION_REPO: ${{ github.action_repository }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        if [ -n "$CLI" ]; then
+          echo "path=$CLI" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        # `github.action_ref` can be empty inside a composite action; the action's own folder,
+        # `…/_actions/<owner>/<repo>/<ref>/actions/pack`, names the ref too.
+        slashed="${ACTION_PATH//\\//}"
+        from_path="${slashed#*/_actions/}"
+        if [ "$from_path" != "$slashed" ]; then
+          IFS=/ read -r path_owner path_repo path_ref _ <<< "$from_path"
+          ACTION_REF="${ACTION_REF:-$path_ref}"
+          ACTION_REPO="${ACTION_REPO:-$path_owner/$path_repo}"
+        fi
+        tag="${VERSION:-$ACTION_REF}"
+        case "$tag" in
+          v[0-9]*) ;;
+          *) echo "::error::Use the action at a release tag (@v0.6.0), or say which CLI with \`version: v0.6.0\`"; exit 1 ;;
+        esac
+        repo="${ACTION_REPO:-Devstribution/devstribution}"
+        case "$RUNNER_OS-$RUNNER_ARCH" in
+          Linux-X64) target=x86_64-unknown-linux-gnu; ext=tar.gz; exe=devstribution ;;
+          Windows-X64) target=x86_64-pc-windows-msvc; ext=zip; exe=devstribution.exe ;;
+          macOS-ARM64) target=aarch64-apple-darwin; ext=tar.gz; exe=devstribution ;;
+          *) echo "::error::No devstribution CLI is released for $RUNNER_OS on $RUNNER_ARCH: use ubuntu-latest, windows-latest or macos-latest"; exit 1 ;;
+        esac
+        name="devstribution-cli-${tag#v}-$target"
+        dir="$RUNNER_TEMP/devstribution-cli"
+        rm -rf "$dir" && mkdir -p "$dir"
+        cd "$dir"
+        gh release download "$tag" --repo "$repo" --pattern "$name.$ext" --pattern SHA256SUMS.txt
+        # The list is attested by the release workflow, and names the archive by its hash.
+        gh attestation verify SHA256SUMS.txt --repo "$repo"
+        grep " $name.$ext\$" SHA256SUMS.txt > check.txt
+        if command -v sha256sum > /dev/null; then sha256sum -c check.txt; else shasum -a 256 -c check.txt; fi
+        if [ "$ext" = zip ]; then 7z x -y "$name.zip" > /dev/null; else tar -xzf "$name.tar.gz"; fi
+        echo "path=$dir/$name/$exe" >> "$GITHUB_OUTPUT"
+
+    - name: Pack, verify and scan
+      id: pack
+      shell: bash
+      env:
+        DS: ${{ steps.cli.outputs.path }}
+        KEY: ${{ inputs.key }}
+        DEVSTRIBUTION_KEY_PASSWORD: ${{ inputs.key-password }}
+        PUBLIC_KEY: ${{ inputs.public-key }}
+        APP_DIR: ${{ inputs.app-dir }}
+        OUT_DIR: ${{ inputs.out-dir }}
+      run: |
+        set -euo pipefail
+        if [ -z "$KEY" ]; then
+          echo "::error::The key is empty: add the .key file's contents as a repository secret (Settings, Secrets and variables, Actions) and pass it as key, from secrets.NAME. Secrets do not reach workflows started from forks."
+          exit 1
+        fi
+        # The app's id and version, for the file name: what `pack` itself checks and signs.
+        py=$(command -v python3 || command -v python)
+        read -r id version < <("$py" - "$APP_DIR/pyproject.toml" <<'PY'
+        import sys, tomllib
+        with open(sys.argv[1], "rb") as f:
+            p = tomllib.load(f)
+        print(p["tool"]["devstribution"]["id"], p["project"]["version"])
+        PY
+        )
+        version="${version%$'\r'}"  # Python on Windows ends the line with \r\n
+        mkdir -p "$OUT_DIR"
+        out="$(cd "$OUT_DIR" && pwd)/${id#*/}-$version.dsapp"
+        keys="$RUNNER_TEMP/devstribution-key-$GITHUB_RUN_ID-$GITHUB_JOB"
+        trap 'rm -rf "$keys"' EXIT
+        (umask 077 && mkdir -p "$keys" && printf '%s\n' "$KEY" > "$keys/publisher.key")
+        if [ -z "$DEVSTRIBUTION_KEY_PASSWORD" ]; then unset DEVSTRIBUTION_KEY_PASSWORD; fi
+        if ! "$DS" pack "$APP_DIR" --key "$keys/publisher.key" --out "$out" < /dev/null; then
+          if [ -z "${DEVSTRIBUTION_KEY_PASSWORD:-}" ]; then
+            echo "::error::pack failed (its message is above). If it says the key has a password, pass it as key-password, from secrets.NAME."
+          fi
+          exit 1
+        fi
+        rm -rf "$keys"
+        if [ -n "$PUBLIC_KEY" ]; then
+          pub="$RUNNER_TEMP/devstribution-publisher.pub"
+          printf '%s\n' "$PUBLIC_KEY" > "$pub"
+          "$DS" verify "$out" --key "$pub"
+        else
+          "$DS" verify "$out"
+        fi
+        # Exits with 1 when something looks like malware: better here than on a user's PC.
+        "$DS" scan "$out"
+        # A Windows path on Windows runners, for the steps that are not bash.
+        if command -v cygpath > /dev/null; then out=$(cygpath -w "$out"); fi
+        {
+          echo "package=$out"
+          echo "id=$id"
+          echo "version=$version"
+        } >> "$GITHUB_OUTPUT"

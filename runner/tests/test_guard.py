@@ -584,6 +584,46 @@ class GuardTest(RunnerBase):
             guard={"private": [str(self.root / "runs")]},
         )
 
+    def test_the_apps_kept_folder_is_its_own(self):
+        kept = self.root / "app-data" / "me" / "app"
+        other = self.root / "app-data" / "someone" / "else"
+        other.mkdir(parents=True)
+        (other / "settings.json").write_text("{}")
+        code, messages, _ = self.run_guarded(
+            """
+            (ctx.data_dir / "settings.json").write_text("{}")
+            (ctx.data_dir / "cache").mkdir(exist_ok=True)
+            for i in range(80):
+                (ctx.data_dir / "cache" / f"{i}.bin").write_bytes(b"x")
+            return {"v": (ctx.data_dir / "settings.json").read_text()}
+            """,
+            app_data_dir=str(kept),
+            guard={"private": [str(self.root / "app-data")], "protected": [str(self.root)], "temp": []},
+        )
+        self.assertEqual(code, 0, messages)
+        self.assertTrue((kept / "cache" / "79.bin").is_file())
+        # Not the app's work on the user's files: neither counted nor reported.
+        self.assertFalse([m for m in self.guard_messages(messages, "observe") if m["rule"].startswith("file")], messages)
+        self.assert_stopped(
+            f"open({str(other / 'settings.json')!r})",
+            "other-app-data",
+            guard={"private": [str(self.root / "app-data")]},
+        )
+
+    def test_code_kept_from_an_earlier_run_is_not_run(self):
+        kept = self.root / "kept"
+        kept.mkdir()
+        (kept / "later.py").write_text("print('hidden from the install scan')\n")
+        self.write_app(
+            "import runpy\n"
+            "def run(ctx):\n"
+            "    runpy.run_path(str(ctx.data_dir / 'later.py'))\n"
+            "    return {'v': 'ran'}\n"
+        )
+        code, messages, _ = self.run_app(app_data_dir=str(kept), outputs=[{"name": "v", "type": "text"}])
+        self.assertEqual(code, STOPPED, messages)
+        self.assertEqual([m["rule"] for m in self.guard_messages(messages, "stop")], ["downloaded-program"])
+
     def test_many_existing_files_changed(self):
         docs = self.root / "Documents"
         docs.mkdir()

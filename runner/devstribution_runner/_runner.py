@@ -8,11 +8,13 @@ stdin, launcher → runner
      "output_dir": "...", "inputs": {"name": value}, "input_types": {"name": "file"},
      "outputs": [{"name": "report", "type": "file"}],
      "secrets": {"name": "value"}, "allowed_secrets": ["name"], "args": [],
-     "pycache_dir": "...",
+     "pycache_dir": "...", "app_data_dir": "...",
      "guard": {"network": ["api.company.com"], "sap": false, "allow": ["rule-id"],
                "own": ["<run folder>", "<bytecode cache>"], "protected": ["<data folder>"],
                "private": ["<other runs>"]}}
   `pycache_dir` keeps bytecode out of the app folder, which must stay as verified.
+  `app_data_dir` is `ctx.data_dir`, the app's folder kept between runs (a temporary folder when
+  it is missing); the launcher lists it in `own` and the other apps' folders in `private`.
   `guard` is what the runtime guard checks the run against (see `_guard.py`); a start message
   without it gets the strictest guard: no network, no SAP, nothing allowed. `own` are the run's
   folders, `protected` the folders no app may change, `private` those no app may read; the
@@ -206,8 +208,10 @@ def main() -> int:
         allowed_secrets=start.get("allowed_secrets") or [],
         web_port=start.get("web_port"),
         web_token=start.get("web_token"),
+        data_dir=Path(start["app_data_dir"]) if start.get("app_data_dir") else None,
     )
     ctx.output_dir.mkdir(parents=True, exist_ok=True)
+    ctx.data_dir.mkdir(parents=True, exist_ok=True)
     import devstribution_runner
 
     devstribution_runner.ctx = ctx
@@ -329,11 +333,12 @@ class _ChildReports:
 def _guard_config(start: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     """The launcher's guard settings, plus the run's own folders and what the user chose."""
     config = dict(start.get("guard") or {})
-    own = list(config.get("own") or ()) + [str(ctx.output_dir)]
+    own = list(config.get("own") or ()) + [str(ctx.output_dir), str(ctx.data_dir)]
     if sys.pycache_prefix:
         own.append(sys.pycache_prefix)
     config["own"] = own
     config["output"] = [str(ctx.output_dir)]
+    config["kept"] = [str(ctx.data_dir)]
     types = start.get("input_types") or {}
     config["chosen"] = [
         value

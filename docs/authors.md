@@ -104,6 +104,7 @@ default.
 | | |
 |---|---|
 | `ctx.output_dir` | The run's own folder for results. The user opens it from the launcher. |
+| `ctx.data_dir` | The app's own folder, kept from one run to the next and through updates: settings, a cache, what the last run left for the next. Removed when the app is uninstalled; no other app can read it. Code in it is never run (the runtime guard stops a run that tries), so keep code in the package. |
 | `ctx.progress(fraction, message)` | Progress from 0 to 1 (`None` when you can't tell). Call it in long loops: it is also where Cancel takes effect. |
 | `ctx.log(message, level="info")` | A line in the run's log (`info`, `warning`, `error`). `print()` goes to the log too. |
 | `ctx.secrets.get(name)` | A secret declared in `permissions.secrets`. Never hard-code credentials. |
@@ -217,6 +218,57 @@ devstribution pack my-tool --list     # only shows which files would go in
 `pack` runs every check again. It refuses data-like files (spreadsheets, databases, archives,
 logs) unless `.dsappignore` leaves them out, or names them with `!path` because the app really
 ships them (a template, say). It never packs `.env` files, keys, `.venv` or `__pycache__`.
+
+### Packing in GitHub Actions
+
+When the app's code is on GitHub, a tag can pack, sign and release it, with no key on your PC:
+
+1. Make a key for CI: `devstribution keygen --namespace yourname` (with a password) or, if only
+   CI will hold it, `--no-password`. It is the same kind of key as any other: the one your users
+   pin, so this is the key you keep and back up.
+2. In the repository, Settings → Secrets and variables → Actions, add the `.key` file's whole
+   contents as `DEVSTRIBUTION_KEY`, and its password as `DEVSTRIBUTION_KEY_PASSWORD`.
+3. Add `.github/workflows/release.yml`:
+
+```yaml
+name: Release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write  # to create the release
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: pack
+        uses: Devstribution/devstribution/actions/pack@v0.6.0
+        with:
+          key: ${{ secrets.DEVSTRIBUTION_KEY }}
+          key-password: ${{ secrets.DEVSTRIBUTION_KEY_PASSWORD }}
+          public-key: ${{ vars.DEVSTRIBUTION_PUBLIC_KEY }}  # optional: the .pub file, as a variable
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE: ${{ steps.pack.outputs.package }}
+        run: gh release create "$GITHUB_REF_NAME" "$PACKAGE" --verify-tag --notes "Version ${GITHUB_REF_NAME#v}"
+```
+
+The action downloads the devstribution CLI released with the tag you use it at (`@v0.6.0`),
+checks it against that release's checksums and their attestation, then runs `pack`, `verify` and
+`scan` on the app: a scan finding that looks like malware fails the job. The key is written to a
+file only for `pack` and deleted straight after, even when packing fails. Its outputs are
+`package` (the `.dsapp`), `id` and `version`; `app-dir` and `out-dir` say where the app is and
+where the package goes (`dist`). It runs on `ubuntu-latest`, `windows-latest` and
+`macos-latest`.
+
+- **Who can sign:** anyone who can push a tag or change a workflow in the repository can sign
+  with the key. Protect `v*` tags (Settings → Rules) and keep write access to the people you
+  would give the key to. Secrets never reach workflows started from forks.
+- **The tag and the version:** the action packs `[project].version`, not the tag: raise the
+  version first, then tag the same number.
 
 ## 8. Deliver it
 

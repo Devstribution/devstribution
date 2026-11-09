@@ -3,7 +3,7 @@
 version: 2
 updates:
   - package-ecosystem: github-actions
-    directory: /
+    directories: ["/", "/actions/pack"]
     schedule:
       interval: weekly
   - package-ecosystem: cargo

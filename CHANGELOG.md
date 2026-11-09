@@ -22,9 +22,20 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 - **Add to Start menu** (the app's ⋯ menu): a shortcut, with the app's icon, that opens
   devstribution on that app. Removed with the app, and by the uninstaller.
 - Managed mode: `PythonMirror`, where Python itself is downloaded from when GitHub is blocked.
+- **`ctx.data_dir`** for app authors: the app's own folder, kept from one run to the next and
+  through updates (settings, caches), removed when the app is uninstalled. No other app can read
+  it, and code in it is never run.
+- **Pack and sign in GitHub Actions** (`actions/pack`): packs, verifies and scans an app with the
+  publisher key from a repository secret, using the released CLI after checking it. The workflow
+  to copy is in `docs/authors.md`.
 
 ### Changed
 
+- `pack` and the other commands that use a key with a password fail at once, saying to set
+  `DEVSTRIBUTION_KEY_PASSWORD`, when there is no terminal to ask for it (CI, scripts), instead of
+  waiting.
+- `CONTRIBUTING.md` now holds what `docs/HANDOFF.md` and `docs/status_quo.md` held: setup, the
+  layout and what to know before changing code. The two pages are gone.
 - A failed download says what could not be downloaded (Python or the app's packages), from which
   host, why (the name was not found, the proxy refused, the certificate was not trusted, a proxy
   that wants a Windows login, a mirror without the file), the proxy in use, and what to ask IT
