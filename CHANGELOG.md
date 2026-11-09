@@ -10,6 +10,27 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 
 ## [Unreleased]
 
+### Added
+
+- **Run on a schedule**: a form app can run on its own every day, Monday to Friday or once a
+  week, with the inputs saved with the schedule (the app's ⋯ menu). Windows Task Scheduler starts
+  devstribution for the run, even when it is closed; a time missed while the computer was off
+  runs when it is next on. The run has the same checks and runtime guard as one started by hand.
+  In managed mode it is off unless the policy's `ScheduledRuns` is `1`.
+- **A notification when a run ends** while devstribution is not in front: finished, didn't work
+  (with the first line of the error), cancelled, or stopped by devstribution.
+- **Add to Start menu** (the app's ⋯ menu): a shortcut, with the app's icon, that opens
+  devstribution on that app. Removed with the app, and by the uninstaller.
+- Managed mode: `PythonMirror`, where Python itself is downloaded from when GitHub is blocked.
+
+### Changed
+
+- A failed download says what could not be downloaded (Python or the app's packages), from which
+  host, why (the name was not found, the proxy refused, the certificate was not trusted, a proxy
+  that wants a Windows login, a mirror without the file), the proxy in use, and what to ask IT
+  for. "Copy diagnostics" has a Network section: the proxy (without its password) and where
+  Python and packages come from.
+
 ## [0.5.0] - 2026-11-06
 
 ### Added

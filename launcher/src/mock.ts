@@ -1,6 +1,6 @@
 // Demo backend for previewing the UI in a browser. Nothing here runs in the real launcher.
 
-import type { Api, AppView, JournalEntry, PendingInstall, Policy, RunEvent, RunRecord, Settings, StepEvent, Stats, Trust } from "./api";
+import type { Api, AppView, JournalEntry, PendingInstall, Policy, RunEvent, RunRecord, ScheduleView, Settings, StepEvent, Stats, Trust } from "./api";
 
 const now = () => Math.floor(Date.now() / 1000);
 const DAY = 86_400;
@@ -30,7 +30,7 @@ const MANAGED_POLICY: Policy = {
   log_file: "C:\\Users\\edo\\AppData\\Local\\dev.devstribution.launcher\\data\\state\\policy.log",
 };
 
-const base = { trust: (MANAGED ? "approved" : "first_use") as Trust, requires: [], origin: null, last_inputs: {}, secrets: [], quarantine: null, guard_allow: [] as string[], may_allow_guard_rules: !MANAGED, revoked: null, revocation_acknowledged: false };
+const base = { trust: (MANAGED ? "approved" : "first_use") as Trust, requires: [], origin: null, last_inputs: {}, secrets: [], quarantine: null, guard_allow: [] as string[], may_allow_guard_rules: !MANAGED, revoked: null, revocation_acknowledged: false, in_start: false, schedule: null as ScheduleView | null, schedule_refusal: MANAGED ? "Your organisation does not allow scheduled runs. Ask the IT service desk (it-help@example.com)." : null };
 const noPerms = { network: [], folders: [], sap: false, secrets: [] };
 
 const apps: AppView[] = [
@@ -299,6 +299,11 @@ export function mockApi(): Api {
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   const emit = (id: string, e: RunEvent) => { for (const l of runListeners) l([id, e]); };
   const off = <T>(list: T[], item: T) => () => { const i = list.indexOf(item); if (i >= 0) list.splice(i, 1); };
+  const find = (id: string) => {
+    const a = apps.find((x) => x.id === id);
+    if (!a) throw new Error(`\`${id}\` is not installed`);
+    return a;
+  };
 
   return {
     preview: true,
@@ -538,6 +543,20 @@ export function mockApi(): Api {
     },
     async uninstallLauncher() { throw new Error("The browser demo has no uninstaller: in the launcher, this opens devstribution's own uninstaller."); },
     async takePendingFiles() { return []; },
+    async takePendingApp() { return null; },
+    async addToStart(id) { const a = find(id); a.in_start = true; return structuredClone(a); },
+    async removeFromStart(id) { const a = find(id); a.in_start = false; return structuredClone(a); },
+    async setSchedule(id, schedule) {
+      const a = find(id);
+      if (a.schedule_refusal) throw new Error(a.schedule_refusal);
+      const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+      const text = schedule.every === "day" ? `every day at ${schedule.time}`
+        : schedule.every === "weekday" ? `Monday to Friday at ${schedule.time}`
+        : `every ${days[(schedule.day ?? 1) - 1]} at ${schedule.time}`;
+      a.schedule = { ...schedule, text };
+      return structuredClone(a);
+    },
+    async removeSchedule(id) { const a = find(id); a.schedule = null; return structuredClone(a); },
     async saveTrustRequest() { return false; },
     async checkAppUpdates() {
       await sleep(300);
@@ -576,6 +595,8 @@ export function mockApi(): Api {
     async onRunsChanged(cb) { changed.push(cb); return off(changed, cb); },
     async onRunNotRecorded() { return () => {}; },
     async onOpenFiles() { return () => {}; },
+    async onOpenApp() { return () => {}; },
+    async onRunStarted() { return () => {}; },
     async onDragDrop() { return () => {}; },
   };
 }

@@ -1,8 +1,9 @@
 import {
   X, Square, MoreHorizontal, Wrench, Trash2, FolderOpen, ExternalLink, Pin, PinOff,
   Loader, Globe, Folder, KeyRound, Database, Puzzle, Sparkles, ShieldX, ShieldAlert, Download,
+  AppWindow, CalendarClock,
 } from "lucide";
-import type { AppView, GuardHit, Input, Revoked, RunRecord } from "../api";
+import type { AppView, GuardHit, Input, Revoked, RunRecord, Schedule } from "../api";
 import type { Ctx, LiveRun } from "../main";
 import { h, icon, appIcon, clear, duration, fileName, relTime, statusText, toast, progressToast, errorText, runError, trustTag, trapFocus, announce, menuButton, keepFocus, KIND_LABEL } from "../ui";
 
@@ -33,10 +34,12 @@ async function startRun(ctx: Ctx, app: AppView, values: Record<string, unknown>)
   }
   try {
     const record = await ctx.api.startRun(app.id, values);
-    const run: LiveRun = {
+    // The backend announced it already (run-started); its first events may be in there.
+    const run: LiveRun = ctx.live.get(record.id) ?? {
       runId: record.id, appId: app.id, appTitle: app.title, startedAt: Date.now(), progress: null,
-      message: app.kind === "form" ? "Starting" : "Opening the app", lines: [], cancelling: false,
+      message: "", lines: [], cancelling: false,
     };
+    if (!run.message) run.message = app.kind === "form" ? "Starting" : "Opening the app";
     ctx.live.set(record.id, run);
     return run;
   } catch (e) {
@@ -94,6 +97,65 @@ function askSecret(app: AppView, name: string): Promise<string | null> {
     input.addEventListener("keydown", (e) => { if (e.key === "Enter" && input.value) done(input.value); if (e.key === "Escape") done(null); });
     document.body.appendChild(overlay);
     const release = trapFocus(overlay.firstElementChild as HTMLElement, input);
+  });
+}
+
+const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+/** When the app runs on its own, and with which inputs: the form's values now. Resolves to the
+ *  app as the backend has it after a change, or `null` when nothing changed. */
+function scheduleDialog(ctx: Ctx, app: AppView, values: Record<string, unknown>): Promise<AppView | null> {
+  return new Promise((resolve) => {
+    const old = app.schedule;
+    let every: Schedule["every"] = old?.every ?? "week";
+    let day = old?.day ?? 1;
+    const time = h("input", { class: "input", type: "time", value: old?.time ?? "09:00", "aria-label": "Time" }) as HTMLInputElement;
+    const daySelect = h("select", { class: "input", "aria-label": "Day" },
+      DAYS.map((d, i) => h("option", { value: String(i + 1), selected: i + 1 === day }, d))) as HTMLSelectElement;
+    daySelect.addEventListener("change", () => { day = Number(daySelect.value); });
+    const dayField = h("div", { class: "field" }, h("label", null, "Day"), daySelect);
+    const seg = h("div", { class: "segmented", role: "radiogroup", "aria-label": "How often" });
+    const drawSeg = () => keepFocus([seg], () => {
+      seg.replaceChildren(...([["day", "Every day"], ["weekday", "Monday to Friday"], ["week", "Every week"]] as const).map(([v, label]) =>
+        h("button", { class: every === v ? "on" : "", role: "radio", "aria-checked": String(every === v), onclick: () => { every = v; drawSeg(); } }, label)));
+      dayField.hidden = every !== "week";
+    });
+    drawSeg();
+    const shown = app.inputs.filter((i) => i.type !== "secret" && values[i.name] !== null && values[i.name] !== undefined && values[i.name] !== "");
+    const error = h("div", { class: "error-box", hidden: true });
+    const done = (v: AppView | null) => { release(); overlay.remove(); resolve(v); };
+    const save = async () => {
+      const missing = missingRequired(app, values);
+      if (missing.length) { error.hidden = false; error.textContent = `Fill in first: ${missing.map((i) => i.label ?? i.name).join(", ")}.`; return; }
+      const unset = app.secrets.filter((x) => !x.set);
+      if (unset.length) { error.hidden = false; error.textContent = `Run it once by hand first, so it can ask for ${unset.map((x) => `“${x.name}”`).join(", ")}: nobody will be there to answer on schedule.`; return; }
+      try {
+        done(await ctx.api.setSchedule(app.id, { every, day: every === "week" ? day : null, time: time.value, inputs: { ...values } }));
+      } catch (e) { error.hidden = false; error.textContent = errorText(e); }
+    };
+    const overlay = h("div", { class: "overlay", onclick: (e: Event) => { if (e.target === overlay) done(null); } },
+      h("div", { class: "modal narrow", role: "dialog", "aria-label": `Schedule ${app.title}` },
+        h("div", { class: "modal-head" }, h("div", { class: "perm" }, h("div", { class: "pi" }, icon(CalendarClock, 18))),
+          h("div", null, h("h2", null, `Run ${app.title} on a schedule`),
+            h("div", { class: "muted small" }, "Windows starts it at that time, even with devstribution closed, and tells you when it is done. If the computer is off, it runs when it is next on."))),
+        h("div", { class: "modal-body" },
+          h("div", { class: "form" },
+            h("div", { class: "field" }, h("label", null, "How often"), seg),
+            dayField,
+            h("div", { class: "field" }, h("label", null, "At"), time),
+            h("div", { class: "note" }, shown.length
+              ? `With the inputs in the form now: ${shown.map((i) => `${i.label ?? i.name} = ${fileName(String(values[i.name]))}`).join(" · ")}.`
+              : "With no inputs set.")),
+          error),
+        h("div", { class: "modal-foot" },
+          old ? h("button", { class: "btn danger", onclick: async () => {
+            try { done(await ctx.api.removeSchedule(app.id)); } catch (e) { error.hidden = false; error.textContent = errorText(e); }
+          } }, "Remove schedule") : null,
+          h("button", { class: "btn", onclick: () => done(null) }, "Cancel"),
+          h("button", { class: "btn primary", onclick: save }, old ? "Save changes" : "Schedule"))));
+    overlay.addEventListener("keydown", (e) => { if (e.key === "Escape") done(null); });
+    document.body.appendChild(overlay);
+    const release = trapFocus(overlay.firstElementChild as HTMLElement, time);
   });
 }
 
@@ -358,6 +420,27 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
       try { await ctx.api.uninstall(app.id); toast(`${app.title} uninstalled`, "ok"); close(); await ctx.refresh(); } catch (e) { toast(errorText(e), "error"); }
     }
 
+    // ---------- schedule ----------
+    const editSchedule = async () => {
+      more.close();
+      if (app.schedule_refusal) { toast(app.schedule_refusal, "error"); return; }
+      const changed = await scheduleDialog(ctx, app, values);
+      if (!changed) return;
+      Object.assign(app, changed);
+      toast(changed.schedule ? `${app.title} runs ${changed.schedule.text}` : `${app.title} no longer runs on a schedule`, "ok");
+      drawSchedule();
+      drawMenu();
+    };
+    const scheduleBox = h("div");
+    const drawSchedule = () => clear(scheduleBox, app.schedule
+      ? h("div", { class: "banner blue" }, h("div", { class: "bi" }, icon(CalendarClock, 18)),
+          h("div", { class: "grow" },
+            h("strong", null, `Runs ${app.schedule.text}`),
+            h("div", null, app.schedule_refusal ?? "With the inputs saved with the schedule. You are told when each run ends."),
+            h("div", { class: "banner-actions" }, h("button", { class: "btn small", onclick: editSchedule }, "Change"))))
+      : null);
+    drawSchedule();
+
     // ---------- form and details ----------
     const form = isForm && app.inputs.some((i) => i.type !== "secret")
       ? h("div", { class: "form" },
@@ -409,6 +492,16 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
         icon(ctx.pins.has(app.id) ? PinOff : Pin, 16), ctx.pins.has(app.id) ? "Unpin from sidebar" : "Pin to sidebar"),
       h("button", { role: "menuitem", onclick: async () => {
         more.close();
+        try {
+          const changed = app.in_start ? await ctx.api.removeFromStart(app.id) : await ctx.api.addToStart(app.id);
+          Object.assign(app, changed);
+          toast(app.in_start ? `${app.title} is in the Start menu, under “devstribution apps”` : `${app.title} was removed from the Start menu`, "ok");
+          drawMenu();
+        } catch (e) { toast(errorText(e), "error"); }
+      } }, icon(AppWindow, 16), app.in_start ? "Remove from Start menu" : "Add to Start menu"),
+      isForm ? h("button", { role: "menuitem", onclick: editSchedule }, icon(CalendarClock, 16), app.schedule ? "Change schedule…" : "Run on a schedule…") : null,
+      h("button", { role: "menuitem", onclick: async () => {
+        more.close();
         // Cancel stops uv; the old environment stays in place until a new one is complete.
         let stopped = false;
         const progress = progressToast("Rebuilding the environment…", {
@@ -438,7 +531,7 @@ export function openAppPanel(ctx: Ctx, id: string, onClosed: () => void): () => 
             ? h("span", { class: `tag ${app.revoked.status === "malicious" ? "red" : "amber"}` }, icon(ShieldAlert, 12), app.revoked.status === "malicious" ? "Reported as harmful" : "Key withdrawn")
             : trustTag(app.trust))),
         app.description ? h("div", { class: "desc" }, app.description) : null),
-      h("div", { class: "panel-body" }, quarantine, revoked, updateBanner, form, secrets, stateBox, logCard, history, about),
+      h("div", { class: "panel-body" }, quarantine, revoked, updateBanner, scheduleBox, form, secrets, stateBox, logCard, history, about),
       h("div", { class: "panel-foot" }, runButton, menuWrap));
 
     draw();

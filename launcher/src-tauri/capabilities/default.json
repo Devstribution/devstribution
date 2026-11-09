@@ -41,6 +41,11 @@
     "allow-import-revocations",
     "allow-check-app-updates",
     "allow-add-update-folder",
-    "allow-remove-update-folder"
+    "allow-remove-update-folder",
+    "allow-add-to-start",
+    "allow-remove-from-start",
+    "allow-set-schedule",
+    "allow-remove-schedule",
+    "allow-take-pending-app"
   ]
 }

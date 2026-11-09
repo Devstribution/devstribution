@@ -16,6 +16,8 @@
 //! | `GuardReportOnly` | REG_MULTI_SZ | Guard rules that only report, for every app |
 //! | `MinLauncherVersion` | REG_SZ | Older launchers install and run nothing |
 //! | `UpdateFolder` | REG_SZ | A folder IT puts new versions of apps in; users are told of them |
+//! | `PythonMirror` | REG_SZ | Where Python itself is downloaded from, instead of GitHub (`https://` or `file:///`) |
+//! | `ScheduledRuns` | REG_DWORD | 1: users may schedule runs of form apps (off by default) |
 //!
 //! The policy file has the same settings in `snake_case`, plus `trust_files` and `[[authors]]`
 //! tables in the `.trust` format; a registry value wins over the file. The file, the trust
@@ -65,6 +67,13 @@ pub struct Policy {
     /// Where IT puts new versions of apps. What is in it gets no special trust: a package still
     /// has to pass every check and the user's confirmation, so users may be able to write here.
     pub update_folder: Option<PathBuf>,
+    /// Replaces GitHub as the place uv downloads Python from (uv's `python-install-mirror`).
+    /// uv checks each download against the hash built into it, so the mirror cannot change
+    /// what is installed.
+    pub python_mirror: Option<String>,
+    /// Whether users may schedule runs (Task Scheduler). Off unless IT allows it: a scheduled
+    /// run starts without anyone at the screen.
+    pub scheduled_runs: bool,
     /// What could not be read (a policy file, a `.trust` file). Authors that could not be read
     /// are not approved.
     pub problems: Vec<String>,
@@ -93,6 +102,8 @@ struct PolicyFile {
     min_launcher_version: Option<String>,
     launcher_updates: Option<bool>,
     update_folder: Option<PathBuf>,
+    python_mirror: Option<String>,
+    scheduled_runs: Option<bool>,
     trust_folder: Option<PathBuf>,
     #[serde(default)]
     trust_files: Vec<PathBuf>,
@@ -199,6 +210,23 @@ impl Policy {
             }
             None => file.scan_danger.unwrap_or_default(),
         };
+        let python_mirror = values
+            .string("PythonMirror")
+            .or(file.python_mirror)
+            .map(|m| m.trim().trim_end_matches('/').to_string())
+            .filter(|m| !m.is_empty())
+            .and_then(|m| {
+                let lower = m.to_ascii_lowercase();
+                if lower.starts_with("https://") || lower.starts_with("file:///") {
+                    Some(m)
+                } else {
+                    problems.push(format!(
+                        "PythonMirror `{m}` is neither an https:// nor a file:/// address: \
+                         Python is downloaded from GitHub"
+                    ));
+                    None
+                }
+            });
         let mut guard_report_only = file.guard_report_only;
         guard_report_only.extend(values.multi("GuardReportOnly").unwrap_or_default());
         guard_report_only.retain(|r| !r.trim().is_empty());
@@ -233,6 +261,12 @@ impl Policy {
                 .filter(|s| !s.trim().is_empty())
                 .map(|s| PathBuf::from(s.trim()))
                 .or(file.update_folder),
+            python_mirror,
+            scheduled_runs: values
+                .dword("ScheduledRuns")
+                .map(|v| v != 0)
+                .or(file.scheduled_runs)
+                .unwrap_or(false),
             problems,
             authors_unreachable,
         }
@@ -933,6 +967,36 @@ mod tests {
             "{:?}",
             p.problems
         );
+    }
+
+    #[test]
+    fn python_mirror_and_scheduled_runs() {
+        let p = Policy::from_values("test", &values(vec![]), &loader());
+        assert_eq!(p.python_mirror, None);
+        assert!(!p.scheduled_runs, "off unless IT allows it");
+        let p = Policy::from_values(
+            "test",
+            &values(vec![
+                (
+                    "PythonMirror",
+                    Value::String(" https://mirror.corp/pbs/ ".into()),
+                ),
+                ("ScheduledRuns", Value::Dword(1)),
+            ]),
+            &loader(),
+        );
+        assert_eq!(p.python_mirror.as_deref(), Some("https://mirror.corp/pbs"));
+        assert!(p.scheduled_runs);
+        let p = Policy::from_values(
+            "test",
+            &values(vec![(
+                "PythonMirror",
+                Value::String("http://mirror.corp".into()),
+            )]),
+            &loader(),
+        );
+        assert_eq!(p.python_mirror, None);
+        assert_eq!(p.problems.len(), 1, "{:?}", p.problems);
     }
 
     #[test]

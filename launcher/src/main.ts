@@ -81,6 +81,15 @@ async function boot() {
   const live = new Map<string, LiveRun>();
   const liveListeners = new Set<(r: LiveRun) => void>();
   let openPanel: { appId: string; close: () => void } | null = null;
+  // A run the window did not start itself (a scheduled one) is followed like the others.
+  await api.onRunStarted((s) => {
+    if (live.has(s.run_id)) return;
+    live.set(s.run_id, {
+      runId: s.run_id, appId: s.app_id, appTitle: s.app_title, startedAt: Date.now(), progress: null,
+      message: s.scheduled ? "Started on schedule" : "Starting", lines: [], cancelling: false,
+    });
+    drawLiveDot();
+  });
   await api.onRunEvents((runId, events: RunEvent[]) => {
     const r = live.get(runId);
     if (!r) return;
@@ -259,6 +268,8 @@ async function boot() {
     }
   });
   await api.onOpenFiles((paths) => { if (paths[0]) { ctx.install(paths[0]); onlyFirst(paths); } });
+  // The app's Start menu shortcut.
+  await api.onOpenApp((id) => ctx.openApp(id));
 
   // Ctrl+K: the search on Home.
   document.addEventListener("keydown", (e) => {
@@ -292,6 +303,8 @@ async function boot() {
   }).catch(() => { /* the line keeps its default */ });
   const pending = await api.takePendingFiles();
   if (pending[0]) ctx.install(pending[0]);
+  const pendingApp = await api.takePendingApp();
+  if (pendingApp) ctx.openApp(pendingApp);
 }
 
 /** The window could not be set up: say so and offer another try, instead of staying blank. */

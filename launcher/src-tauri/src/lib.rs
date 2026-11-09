@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -32,6 +33,11 @@ struct AppState {
     pending_files: Mutex<Vec<String>>,
     /// The newer launcher the last check found, until it is installed.
     update: Mutex<Option<tauri_plugin_updater::Update>>,
+    /// The app whose panel to open, when the launcher was started from its Start menu shortcut.
+    pending_app: Mutex<Option<String>>,
+    /// Started by Task Scheduler with the window hidden: the launcher closes when its runs end,
+    /// unless the user opened the window meanwhile.
+    background: AtomicBool,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -120,12 +126,27 @@ struct AppView {
     /// Whether the user may let the app run past a guard rule that stopped it (managed mode
     /// can keep that decision for IT).
     may_allow_guard_rules: bool,
+    /// Whether it has a shortcut in the Start menu.
+    in_start: bool,
+    /// When it runs on its own, if it was scheduled.
+    schedule: Option<ScheduleView>,
+    /// Why it cannot be scheduled, if it cannot (not a form app, or the policy says no).
+    schedule_refusal: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ScheduleView {
+    #[serde(flatten)]
+    schedule: shell::Schedule,
+    /// "every Monday at 09:00".
+    text: String,
 }
 
 impl AppView {
     fn new(app: InstalledApp, store: &Store) -> AppView {
         let m = app.manifest;
         let id = m.id.to_string();
+        let schedule_refusal = schedule_refusal(store, m.kind);
         let secrets = run::secret_names(&m)
             .into_iter()
             .map(|name| SecretView {
@@ -158,8 +179,31 @@ impl AppView {
             revoked: app.revoked,
             may_allow_guard_rules: store.users_may_allow_guard_rules(),
             guard_allow: app.record.guard_allow,
+            in_start: shell::shortcut(&store.paths, &id).is_some(),
+            schedule: shell::schedule(&store.paths, &id).map(|schedule| ScheduleView {
+                text: schedule.describe(),
+                schedule,
+            }),
+            schedule_refusal,
             id,
         }
+    }
+}
+
+/// Why an app may not be scheduled: only form apps run without anyone at the screen, and in
+/// managed mode only when IT allows it.
+fn schedule_refusal(store: &Store, kind: devstribution_core::manifest::Kind) -> Option<String> {
+    if kind != devstribution_core::manifest::Kind::Form {
+        return Some(
+            "Only apps that run and finish on their own (form apps) can be scheduled.".into(),
+        );
+    }
+    match store.policy() {
+        Some(p) if !p.scheduled_runs => Some(format!(
+            "Your organisation does not allow scheduled runs. {}",
+            p.ask_whom()
+        )),
+        _ => None,
     }
 }
 
@@ -265,7 +309,15 @@ async fn uninstall_app(app: AppHandle, id: String) -> CmdResult<()> {
     blocking(move || {
         let s = state(&app);
         let _guard = lock(&s.write_lock);
-        s.store.uninstall(&id)
+        s.store.uninstall(&id)?;
+        // The app is gone either way; what Windows still holds of it is only logged.
+        if let Err(e) = shell::remove_shortcut(&s.store.paths, &id) {
+            applog::write(&format!("the Start menu shortcut of {id} stays: {e:#}"));
+        }
+        if let Err(e) = shell::remove_schedule(&s.store.paths, &id) {
+            applog::write(&format!("the scheduled task of {id} stays: {e:#}"));
+        }
+        Ok(())
     })
     .await
 }
@@ -343,62 +395,278 @@ fn batched_sink(app: &AppHandle, run_id: &str) -> run::EventSink {
     })
 }
 
+#[derive(Clone, Serialize)]
+struct RunStarted {
+    run_id: String,
+    app_id: String,
+    app_title: String,
+    scheduled: bool,
+}
+
 #[tauri::command]
 async fn start_run(app: AppHandle, id: String, inputs: Map<String, Value>) -> CmdResult<RunRecord> {
-    blocking(move || {
-        let s = state(&app);
-        // The runner is checked against the copy built into the launcher before every run,
-        // not once at start: anything the user runs can write the data folder in between.
-        let runner_dir = runner::install(&s.store.paths)?;
-        let (spec, record) = s.store.prepare_run(&id, &inputs, &runner_dir)?;
-        let run_id = record.id.clone();
-        let sink = batched_sink(&app, &run_id);
-        let handle = match run::start(spec, sink) {
-            Ok(h) => Arc::new(h),
-            Err(e) => {
-                let mut failed = record.clone();
-                let _ = s.store.finish_run(
-                    &mut failed,
-                    &run::RunResult {
-                        status: run::RunStatus::Error,
-                        outputs: Map::new(),
-                        error: Some(format!("{e:#}")),
-                        traceback: None,
-                        hint: None,
-                        duration_ms: 0,
-                        guard: Vec::new(),
-                        cut: Default::default(),
-                    },
-                );
-                return Err(e);
-            }
-        };
-        lock(&s.runs).insert(run_id.clone(), handle.clone());
+    blocking(move || begin_run(&app, &id, &inputs, false)).await
+}
 
-        // Record the result when the run ends, then tell the UI to refresh its lists.
-        let app2 = app.clone();
-        let mut finished = record.clone();
-        std::thread::spawn(move || {
-            while !handle.is_finished() {
-                std::thread::sleep(std::time::Duration::from_millis(100));
+/// Starts a run, by hand or on schedule, and records its result when it ends.
+fn begin_run(
+    app: &AppHandle,
+    id: &str,
+    inputs: &Map<String, Value>,
+    scheduled: bool,
+) -> anyhow::Result<RunRecord> {
+    let s = state(app);
+    // The runner is checked against the copy built into the launcher before every run,
+    // not once at start: anything the user runs can write the data folder in between.
+    let runner_dir = runner::install(&s.store.paths)?;
+    let (spec, record) = s.store.prepare_run(id, inputs, &runner_dir)?;
+    let run_id = record.id.clone();
+    // Before the run's first events: a run the window did not start (a scheduled one) is
+    // followed like the others.
+    let _ = app.emit(
+        "run-started",
+        RunStarted {
+            run_id: run_id.clone(),
+            app_id: record.app_id.clone(),
+            app_title: record.app_title.clone(),
+            scheduled,
+        },
+    );
+    let sink = batched_sink(app, &run_id);
+    let handle = match run::start(spec, sink) {
+        Ok(h) => Arc::new(h),
+        Err(e) => {
+            let mut failed = record.clone();
+            let _ = s.store.finish_run(
+                &mut failed,
+                &run::RunResult {
+                    status: run::RunStatus::Error,
+                    outputs: Map::new(),
+                    error: Some(format!("{e:#}")),
+                    traceback: None,
+                    hint: None,
+                    duration_ms: 0,
+                    guard: Vec::new(),
+                    cut: Default::default(),
+                },
+            );
+            let _ = app.emit("runs-changed", run_id);
+            return Err(e);
+        }
+    };
+    lock(&s.runs).insert(run_id.clone(), handle.clone());
+
+    // Record the result when the run ends, then tell the UI to refresh its lists.
+    let app2 = app.clone();
+    let mut finished = record.clone();
+    std::thread::spawn(move || {
+        while !handle.is_finished() {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let s = state(&app2);
+        // Drop the table's reference so this thread holds the only one, then collect.
+        lock(&s.runs).remove(&finished.id);
+        if let Ok(handle) = Arc::try_unwrap(handle) {
+            let result = handle.wait();
+            // Rare (disk full, a file held by an antivirus), and the user must hear of it:
+            // a guard stop that is not recorded only holds while the launcher stays open.
+            if let Err(e) = s.store.finish_run(&mut finished, &result) {
+                applog::write(&format!("a run could not be recorded: {e:#}"));
+                let _ = app2.emit("run-not-recorded", format!("{e:#}"));
             }
-            let s = state(&app2);
-            // Drop the table's reference so this thread holds the only one, then collect.
-            lock(&s.runs).remove(&finished.id);
-            if let Ok(handle) = Arc::try_unwrap(handle) {
-                let result = handle.wait();
-                // Rare (disk full, a file held by an antivirus), and the user must hear of it:
-                // a guard stop that is not recorded only holds while the launcher stays open.
-                if let Err(e) = s.store.finish_run(&mut finished, &result) {
-                    applog::write(&format!("a run could not be recorded: {e:#}"));
-                    let _ = app2.emit("run-not-recorded", format!("{e:#}"));
-                }
+            notify_finished(&app2, &finished.app_title, &result, scheduled);
+        }
+        let _ = app2.emit("runs-changed", finished.id.clone());
+        close_if_done(&app2);
+    });
+    Ok(record)
+}
+
+/// Whether the user is looking at the launcher: then its panel or a toast in the window says a
+/// run ended, and Windows need not.
+fn window_in_front(app: &AppHandle) -> bool {
+    app.get_webview_window("main").is_some_and(|w| {
+        w.is_visible().unwrap_or(false)
+            && !w.is_minimized().unwrap_or(false)
+            && w.is_focused().unwrap_or(false)
+    })
+}
+
+/// A Windows notification when a run ends while the launcher is not in front (P5): long runs
+/// are the ones people leave.
+fn notify_finished(app: &AppHandle, title: &str, result: &run::RunResult, scheduled: bool) {
+    if window_in_front(app) {
+        return;
+    }
+    let stopped = result.guard.iter().any(|g| g.action == "stop");
+    let (head, body) = if stopped {
+        (
+            format!("{title} was stopped by devstribution"),
+            "It did something apps should not do. Open devstribution to see what.".to_string(),
+        )
+    } else {
+        match result.status {
+            run::RunStatus::Ok => (
+                format!("{title} finished"),
+                format!(
+                    "{}Done in {}. Open devstribution for the results.",
+                    if scheduled { "Scheduled run. " } else { "" },
+                    human_duration(result.duration_ms)
+                ),
+            ),
+            run::RunStatus::Error => (
+                format!("{title} didn’t work"),
+                result
+                    .error
+                    .as_deref()
+                    .and_then(|e| e.lines().next())
+                    .map(|l| l.chars().take(180).collect())
+                    .unwrap_or_else(|| "It stopped with an error.".into()),
+            ),
+            run::RunStatus::Cancelled => (
+                format!("{title} was cancelled"),
+                "Stopped before the end.".to_string(),
+            ),
+            run::RunStatus::Running => return,
+        }
+    };
+    notify(app, &head, &body);
+}
+
+fn notify(app: &AppHandle, title: &str, body: &str) {
+    use tauri_plugin_notification::NotificationExt;
+    if let Err(e) = app.notification().builder().title(title).body(body).show() {
+        applog::write(&format!("a notification could not be shown: {e}"));
+    }
+}
+
+fn human_duration(ms: u64) -> String {
+    let s = ms / 1000;
+    match s {
+        0 => "under a second".into(),
+        1..=59 => format!("{s} s"),
+        60..=3599 => format!("{} min {} s", s / 60, s % 60),
+        _ => format!("{} h {} min", s / 3600, (s % 3600) / 60),
+    }
+}
+
+/// Started for a scheduled run with the window hidden: once nothing runs and the user has not
+/// opened the window, the launcher closes (the notification has said how it went).
+fn close_if_done(app: &AppHandle) {
+    let s = state(app);
+    if !s.background.load(Ordering::SeqCst) || !lock(&s.runs).is_empty() {
+        return;
+    }
+    if app
+        .get_webview_window("main")
+        .is_some_and(|w| w.is_visible().unwrap_or(false))
+    {
+        s.background.store(false, Ordering::SeqCst);
+        return;
+    }
+    // A moment for Windows to take the notification.
+    std::thread::sleep(Duration::from_secs(2));
+    if lock(&s.runs).is_empty() && s.background.load(Ordering::SeqCst) {
+        app.exit(0);
+    }
+}
+
+/// Runs an app at its scheduled time, with the inputs saved with the schedule, through the same
+/// checks as a run started by hand. What stops it is said in a notification: nobody is at the
+/// screen to read a message in the window.
+fn scheduled_run(app: &AppHandle, id: &str) {
+    let s = state(app);
+    applog::write(&format!("scheduled run of {id}"));
+    let refused = match (s.store.app(id), shell::schedule(&s.store.paths, id)) {
+        (Err(e), _) => Some((id.to_string(), format!("{e:#}"))),
+        (Ok(installed), None) => Some((
+            installed.manifest.title,
+            "it has no schedule any more.".into(),
+        )),
+        (Ok(installed), Some(schedule)) => {
+            let title = installed.manifest.title.clone();
+            match schedule_refusal(&s.store, installed.manifest.kind) {
+                Some(why) => Some((title, why)),
+                None => match begin_run(app, id, &schedule.inputs, true) {
+                    Ok(_) => None,
+                    Err(e) => Some((title, format!("{e:#}"))),
+                },
             }
-            let _ = app2.emit("runs-changed", finished.id.clone());
-        });
-        Ok(record)
+        }
+    };
+    if let Some((title, why)) = refused {
+        applog::write(&format!("the scheduled run of {id} did not start: {why}"));
+        notify(app, &format!("{title} did not run on schedule"), &why);
+        close_if_done(app);
+    }
+}
+
+#[tauri::command]
+async fn add_to_start(app: AppHandle, id: String) -> CmdResult<AppView> {
+    blocking(move || {
+        let store = &state(&app).store;
+        let installed = store.app(&id)?;
+        shell::add_shortcut(
+            &store.paths,
+            &id,
+            &installed.manifest.title,
+            installed.manifest.description.as_deref(),
+            installed.icon.as_deref(),
+        )?;
+        Ok(AppView::new(store.app(&id)?, store))
     })
     .await
+}
+
+#[tauri::command]
+async fn remove_from_start(app: AppHandle, id: String) -> CmdResult<AppView> {
+    blocking(move || {
+        let store = &state(&app).store;
+        shell::remove_shortcut(&store.paths, &id)?;
+        Ok(AppView::new(store.app(&id)?, store))
+    })
+    .await
+}
+
+/// Saves when the app runs on its own, with these inputs. Only the inputs the app declares
+/// are kept, and never a secret: those stay in the credential store.
+#[tauri::command]
+async fn set_schedule(
+    app: AppHandle,
+    id: String,
+    mut schedule: shell::Schedule,
+) -> CmdResult<AppView> {
+    blocking(move || {
+        let store = &state(&app).store;
+        let installed = store.app(&id)?;
+        if let Some(why) = schedule_refusal(store, installed.manifest.kind) {
+            anyhow::bail!(why);
+        }
+        schedule.inputs.retain(|name, _| {
+            installed.manifest.inputs.iter().any(|i| {
+                &i.name == name && i.kind != devstribution_core::manifest::InputType::Secret
+            })
+        });
+        shell::set_schedule(&store.paths, &id, &installed.manifest.title, schedule)?;
+        applog::write(&format!("{id} scheduled"));
+        Ok(AppView::new(store.app(&id)?, store))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn remove_schedule(app: AppHandle, id: String) -> CmdResult<AppView> {
+    blocking(move || {
+        let store = &state(&app).store;
+        shell::remove_schedule(&store.paths, &id)?;
+        Ok(AppView::new(store.app(&id)?, store))
+    })
+    .await
+}
+
+#[tauri::command]
+fn take_pending_app(app: AppHandle) -> Option<String> {
+    lock(&state(&app).pending_app).take()
 }
 
 #[tauri::command]
@@ -1086,25 +1354,53 @@ pub fn run() {
         forget_secrets();
         return;
     }
+    if std::env::args_os().any(|a| a == "--forget-windows") {
+        if let Ok(paths) = Paths::from_env() {
+            shell::forget_all(&paths);
+        }
+        return;
+    }
     let cwd = std::env::current_dir().unwrap_or_default();
-    let initial_files = dsapp_args(std::env::args_os().skip(1), &cwd);
+    let args: Vec<String> = std::env::args_os()
+        .filter_map(|a| a.into_string().ok())
+        .collect();
+    let launch = shell::app_args(&args);
+    let initial_files = if launch == shell::AppArgs::default() {
+        dsapp_args(std::env::args_os().skip(1), &cwd)
+    } else {
+        Vec::new()
+    };
 
     let result = tauri::Builder::default()
         // First: a second launch (double-click on another .dsapp) hands its files to this
         // window and exits before anything else happens.
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
-            let files = dsapp_args(
-                args.into_iter().skip(1).map(OsString::from),
-                Path::new(&cwd),
-            );
-            if !files.is_empty() {
-                let _ = app.emit("open-files", files);
+            let launch = shell::app_args(&args);
+            if let Some(id) = launch.scheduled {
+                // Task Scheduler, while the launcher is open: run it here, leave the window be.
+                let app = app.clone();
+                std::thread::spawn(move || scheduled_run(&app, &id));
+                return;
+            }
+            if let Some(id) = launch.open {
+                let _ = app.emit("open-app", id);
+            } else {
+                let files = dsapp_args(
+                    args.into_iter().skip(1).map(OsString::from),
+                    Path::new(&cwd),
+                );
+                if !files.is_empty() {
+                    let _ = app.emit("open-files", files);
+                }
             }
             if let Some(w) = app.get_webview_window("main") {
+                state(app).background.store(false, Ordering::SeqCst);
+                let _ = w.show();
                 let _ = w.unminimize();
                 let _ = w.set_focus();
             }
         }))
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -1116,7 +1412,22 @@ pub fn run() {
                     runs: Mutex::new(HashMap::new()),
                     pending_files: Mutex::new(initial_files),
                     update: Mutex::new(None),
+                    pending_app: Mutex::new(launch.open.clone()),
+                    background: AtomicBool::new(launch.scheduled.is_some()),
                 });
+                // The window starts hidden (tauri.conf.json): shown at once, unless Task
+                // Scheduler started the launcher for a run.
+                match &launch.scheduled {
+                    Some(id) => {
+                        let (handle, id) = (app.handle().clone(), id.clone());
+                        std::thread::spawn(move || scheduled_run(&handle, &id));
+                    }
+                    None => {
+                        if let Some(w) = app.get_webview_window("main") {
+                            w.show()?;
+                        }
+                    }
+                }
                 Ok(())
             }
             Err(e) => {
@@ -1165,6 +1476,11 @@ pub fn run() {
             check_app_updates,
             add_update_folder,
             remove_update_folder,
+            add_to_start,
+            remove_from_start,
+            set_schedule,
+            remove_schedule,
+            take_pending_app,
         ])
         .run(tauri::generate_context!());
     if let Err(e) = result {
@@ -1173,6 +1489,7 @@ pub fn run() {
     }
 }
 
+mod shell;
 mod table;
 
 #[cfg(test)]

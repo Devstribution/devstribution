@@ -47,6 +47,8 @@ empty key approves no one.
 | `MinLauncherVersion` | REG_SZ | Older launchers install and run nothing, and say why |
 | `LauncherUpdates` | REG_DWORD | `0`: the launcher neither looks for nor installs its own updates (for IT that deploys it) |
 | `UpdateFolder` | REG_SZ | Full path of a folder where you put new versions of apps: users are told of them (below) |
+| `PythonMirror` | REG_SZ | Where Python itself is downloaded from instead of GitHub, `https://…` or `file:///…` (below) |
+| `ScheduledRuns` | REG_DWORD | `1`: users may schedule runs of form apps (off by default in managed mode) |
 
 A registry value wins over the same setting in the policy file. The launcher reads the policy
 when it starts: after a change, users restart devstribution (or sign in again).
@@ -64,6 +66,8 @@ guard_report_only = []
 min_launcher_version = "0.2.0"
 launcher_updates = true
 update_folder = '\\fileserver\it\devstribution\apps'
+python_mirror = "https://artifactory.example.com/github/astral-sh/python-build-standalone/releases/download"
+scheduled_runs = false
 trust_folder = '\\fileserver\it\devstribution\trust'
 trust_files = ['\\fileserver\it\devstribution\extra\finance.trust']
 
@@ -119,6 +123,29 @@ approved author and has a higher version, and it passes every check again when t
 it. So unlike the policy's files, this folder may be writable by others. Files that do not
 qualify are ignored, and noted in `launcher.log`. If the folder cannot be read, Settings says so
 when the user presses **Check now**. Users can also add folders of their own, in Settings.
+
+## Networks that block downloads
+
+An app's Python and packages are downloaded when it is installed: Python from GitHub
+(`github.com`, `objects.githubusercontent.com`), packages from PyPI (`pypi.org`,
+`files.pythonhosted.org`). Where GitHub is blocked, set `PythonMirror` to a mirror of
+`https://github.com/astral-sh/python-build-standalone/releases/download` (an Artifactory or
+Nexus remote repository, or a folder: `file:///` paths work). uv checks each Python download
+against the hash built into it, so a mirror can make an install fail but cannot change what is
+installed.
+
+When a download fails, the message says which host could not be reached, why (the name was not
+found, the proxy refused, the certificate was not trusted, a proxy that wants a Windows login),
+and the proxy in use. "Copy diagnostics" in Settings has the proxy and the mirror too.
+
+## Scheduled runs
+
+Users can have a form app run on its own, every day, Monday to Friday or once a week, with the
+inputs they saved: Windows Task Scheduler starts the launcher for the run (a task named
+`devstribution <publisher> <app>`, for that user only), the run goes through the same checks and
+runtime guard as one started by hand, and a notification says how it went. In managed mode this
+is off unless `ScheduledRuns` is `1`. Turning it off later also stops the runs already
+scheduled: each says in a notification that it did not run.
 
 ## Rolling out
 
