@@ -50,6 +50,22 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
   for. "Copy diagnostics" has a Network section: the proxy (without its password) and where
   Python and packages come from.
 
+### Security
+
+- **"Open result" no longer opens documents that run code of their own.** Help files (`.chm`),
+  Excel add-ins (`.xll`, `.xlam`), Office files with macros (`.xlsm`, `.docm`, `.pptm` and the
+  rest), app installers (`.msix`, `.appinstaller`), troubleshooters, Remote Desktop and theme
+  files, and disk images are shown in their folder instead, like programs and scripts already
+  were. An app the guard keeps from starting programs could otherwise have left one as a result
+  for you to press.
+- **A package's signature is checked before anything in it is unpacked.** An unsigned package,
+  or one signed with another key than its publisher's, now writes nothing to disk, and only the
+  files its signed list names are unpacked. Before, such a package was refused only after it had
+  been unpacked, up to the 2 GB limit.
+- **The Excel preview has the same limits as packages**: a workbook over 256 MB, with more than
+  10,000 entries in its zip, or with more shared strings than a sheet could show is not shown,
+  so a file built to fill memory cannot slow the launcher down.
+
 ## [0.5.0] - 2026-11-06
 
 ### Added

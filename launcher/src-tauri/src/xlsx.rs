@@ -16,9 +16,22 @@ use crate::table::{COLUMNS, ROWS, TablePreview, clip};
 /// Bytes read from one part of the file once unpacked: a report is far smaller, and a file that
 /// unpacks to more is not worth the memory (or is built to fill it).
 const PART: u64 = 64 << 20;
+/// The workbook file itself, and the entries in its zip index: the index is read into memory
+/// before any part, so it is checked first (a workbook has a few dozen entries).
+const FILE: u64 = 256 << 20;
+const ENTRIES: u64 = 10_000;
+const INDEX: u64 = 4 << 20;
+/// Distinct strings kept: each costs memory even when empty, and 64 MB of `<si/>` is millions.
+const STRINGS: usize = 2_000_000;
 
 pub fn read(path: &Path) -> anyhow::Result<TablePreview> {
-    let file = File::open(path)?;
+    let mut file = File::open(path)?;
+    let len = file.metadata()?.len();
+    if len > FILE || !devstribution_core::package::zip_index_within(&mut file, len, ENTRIES, INDEX)?
+    {
+        anyhow::bail!("this workbook is too large to show here");
+    }
+    file.rewind()?;
     let mut zip =
         zip::ZipArchive::new(BufReader::new(file)).context("this is not an Excel (.xlsx) file")?;
     let workbook =
@@ -153,6 +166,9 @@ fn shared_strings(xml: &[u8]) -> anyhow::Result<Vec<String>> {
     let mut current = String::new();
     let (mut in_t, mut in_rph) = (false, false);
     loop {
+        if out.len() > STRINGS {
+            anyhow::bail!("this workbook is too large to show here");
+        }
         let event = reader.read_event()?;
         match &event {
             Event::Start(e) => match e.local_name().as_ref() {
@@ -560,6 +576,43 @@ mod tests {
         let p = tmp.path().join("r.xlsx");
         std::fs::write(&p, "Name,Amount\n").unwrap();
         assert!(read(&p).is_err());
+    }
+
+    /// A zip that lists more entries than a workbook ever has is refused before its index is
+    /// read; so are more shared strings than a sheet could show.
+    #[test]
+    fn workbooks_built_to_fill_memory() {
+        use std::io::Write;
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("many.xlsx");
+        let mut zip = zip::ZipWriter::new(File::create(&p).unwrap());
+        for i in 0..=ENTRIES {
+            zip.start_file(format!("{i}"), zip::write::SimpleFileOptions::default())
+                .unwrap();
+        }
+        zip.finish().unwrap();
+        let e = read(&p).unwrap_err().to_string();
+        assert!(e.contains("too large"), "{e}");
+
+        let p = tmp.path().join("strings.xlsx");
+        let mut zip = zip::ZipWriter::new(File::create(&p).unwrap());
+        zip.start_file(
+            "xl/sharedStrings.xml",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        zip.write_all(b"<sst>").unwrap();
+        for _ in 0..=STRINGS {
+            zip.write_all(b"<si/>").unwrap();
+        }
+        zip.write_all(b"</sst>").unwrap();
+        zip.finish().unwrap();
+        let strings = {
+            let mut archive = zip::ZipArchive::new(File::open(&p).unwrap()).unwrap();
+            part(&mut archive, "xl/sharedStrings.xml").unwrap().unwrap()
+        };
+        let e = shared_strings(&strings).unwrap_err().to_string();
+        assert!(e.contains("too large"), "{e}");
     }
 
     #[test]

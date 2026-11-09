@@ -108,6 +108,23 @@ fn open_result_opens_the_runs_results_only() {
         output_target(&rec, Some(&path_str(&r.script)), false).unwrap(),
         (r.script.clone(), true)
     );
+    // So is a document that runs code of its own: a help file, a workbook with macros.
+    for name in ["help.chm", "macros.XLSM", "addin.xll", "remote.rdp"] {
+        let file = r.out.join(name);
+        fs::write(&file, "x").unwrap();
+        let file = dunce::canonicalize(file).unwrap();
+        let rec = record(
+            &r.out,
+            vec![r.out.clone()],
+            json!({ "file": path_str(&file) }),
+        );
+        assert!(
+            output_target(&rec, Some(&path_str(&file)), false)
+                .unwrap()
+                .1,
+            "{name}"
+        );
+    }
 
     // A path the run did not return, even inside its folder.
     let other = r.out.join("other.txt");
