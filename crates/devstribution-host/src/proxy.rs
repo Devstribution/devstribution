@@ -99,6 +99,8 @@ pub enum Lookup {
 /// Picks the proxy for each host from `settings`, asking `lookup` (WinHTTP) when a script or
 /// automatic detection is on. A script that cannot be read or found falls back to the fixed
 /// proxy, as Windows does.
+// Called only by the Windows code; compiled everywhere so its tests run everywhere.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn decide(
     settings: &Settings,
     hosts: &[&str],
@@ -198,6 +200,8 @@ fn decide(
 /// The proxy for an `https://` address from a WinHTTP proxy list: `host:port` entries
 /// separated by `;` or spaces, each maybe `scheme=`-qualified. An `https=` entry wins, then
 /// one with no scheme; `http=`, `ftp=` and `socks=` entries are for other kinds of address.
+// Called only by the Windows code; compiled everywhere so its tests run everywhere.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn pick(list: &str) -> Option<String> {
     let entries: Vec<&str> = list
         .split([';', ' ', '\t', '\r', '\n'])
@@ -218,6 +222,8 @@ fn pick(list: &str) -> Option<String> {
 
 /// Whether `host` is in a WinHTTP bypass list: entries separated by `;`, `,` or spaces, `*`
 /// as a wildcard, `<local>` for names without a dot.
+// Called only by the Windows code; compiled everywhere so its tests run everywhere.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn bypassed(host: &str, list: Option<&str>) -> bool {
     let Some(list) = list else { return false };
     list.split([';', ',', ' ', '\t'])
@@ -234,6 +240,8 @@ fn bypassed(host: &str, list: Option<&str>) -> bool {
 }
 
 /// `*` matches any run of characters, anything else itself.
+// Called only by the Windows code; compiled everywhere so its tests run everywhere.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn wildcard(pattern: &str, text: &str) -> bool {
     let mut parts = pattern.split('*');
     let first = parts.next().unwrap_or_default();
