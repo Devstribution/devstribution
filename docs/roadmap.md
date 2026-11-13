@@ -40,19 +40,22 @@ N4 (run B1 and B2 on the stand-in) and N5 (signing), both on the maintainer's si
 **Tier 1: what the first company PC would likely trip on.** B1 cannot pass without these, so they
 come first; each is checked on the stand-in (N4).
 
-- ◐ **P1. The proxy Windows is set to.** uv, which downloads Python and the packages, reads the
+- ☑ **P1. The proxy Windows is set to.** uv, which downloads Python and the packages, reads the
   proxy from `HTTPS_PROXY` / `HTTP_PROXY`. Company PCs usually set it in Windows instead, often as
   an automatic configuration script (PAC) or WPAD, and set no variable: installs would then
-  likely fail with a network error. Done in the code: when no variable is set, the launcher asks
+  likely fail with a network error. Done: when no variable is set, the launcher asks
   Windows (WinHTTP, which runs the script or the detection) which proxy it would use for
-  files.pythonhosted.org and for github.com (or the Python mirror), and gives that to uv as
+  files.pythonhosted.org and for Python's hosts (releases.astral.sh, then GitHub; or the Python
+  mirror), and gives that to uv as
   `HTTPS_PROXY`, with the hosts that go direct in `NO_PROXY`; a script that cannot be read falls
   back to the fixed proxy, as Windows does. The update check does the same. "Copy diagnostics"
   and a failed download's message say which proxy was used and where it came from. Tested
-  against the real WinHTTP with a script served from the test itself. Left: N4 adds a PAC-only
-  proxy with no variable set, on the stand-in. A proxy that wants a Windows login (NTLM,
-  Kerberos) is still named in the error as such, since uv cannot log in to one.
-- ◐ **P2. The company's package mirror.** Many companies block pypi.org and serve packages from
+  against the real WinHTTP with a script served from the test itself, and on the stand-in (N4):
+  a standard user, a TLS-inspecting proxy given to Windows only by a PAC file, no variable set,
+  Python and packages downloaded through it; a PAC that names a proxy that is down fails and
+  names it. A proxy that wants a Windows login (NTLM, Kerberos) is still named in the error as
+  such, since uv cannot log in to one.
+- ☑ **P2. The company's package mirror.** Many companies block pypi.org and serve packages from
   their own mirror (Artifactory, Nexus). A policy value names it, and uv downloads from there.
   The signed lockfile's hashes still decide what installs, so a mirror cannot change a package;
   packages keep naming only PyPI (`lock::check_sources`). Done: `PackageIndex` (`https://`, no
@@ -60,8 +63,9 @@ come first; each is checked on the stand-in (N4).
   so with a mirror the lockfile is exported with its hashes and installed with
   `uv pip sync --require-hashes --no-build` from the mirror. Tested with real uv against a mirror
   served by the test: the package installs from it, and a file with other bytes is refused. The
-  proxy is asked for the mirror's host, and a failed download names the mirror. Left: an install
-  through an Artifactory-style mirror over HTTPS on the stand-in (N4).
+  proxy is asked for the mirror's host, and a failed download names the mirror. Checked on the
+  stand-in (N4) with PyPI blocked: pandas, openpyxl and numpy installed from a mirror over HTTPS,
+  and a mirror that is down gets "Ask your IT department to check the mirror at …".
 - ◐ **P3. Where Python comes from.** uv downloads Python from GitHub, which some companies block
   for downloads. A policy value names a mirror (uv's `python-install-mirror`), checked the same
   way. Done: `PythonMirror` (`https://` or `file:///`), shown in "Copy diagnostics". Left: an
