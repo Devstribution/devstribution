@@ -143,6 +143,9 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.target }}
       - name: Build
+        # The C runtime linked in: a clean Windows PC has no Visual C++ runtime to load.
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
         run: cargo build --release --locked -p devstribution-cli --target ${{ matrix.target }}
       - name: Package
         shell: bash

@@ -18,7 +18,7 @@ use devstribution_host::store::{
     Quarantine, RunRecord, Stats, Store, UpdateCheck,
 };
 use devstribution_host::zone::Origin;
-use devstribution_host::{Paths, applog, runner, secrets, uv};
+use devstribution_host::{Paths, applog, proxy, runner, secrets, uv};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -1255,7 +1255,22 @@ fn updates_allowed(store: &Store) -> CmdResult<()> {
 async fn check_update(app: AppHandle) -> CmdResult<Option<UpdateView>> {
     use tauri_plugin_updater::UpdaterExt;
     updates_allowed(&state(&app).store)?;
-    let found = app.updater().map_err(err)?.check().await.map_err(|e| {
+    // The updater reads `HTTPS_PROXY` and Windows' fixed proxy itself, not a setup script
+    // (PAC) or automatic detection: ask Windows, as an app's preparation does. The update
+    // found keeps this proxy for its download.
+    let proxy = tauri::async_runtime::spawn_blocking(|| proxy::for_hosts(&["github.com"]))
+        .await
+        .map_err(err)?;
+    let mut updater = app.updater_builder();
+    if let Some(url) = proxy
+        .proxy
+        .as_deref()
+        .and_then(|p| tauri::Url::parse(p).ok())
+    {
+        applog::write(&format!("update check through {}", proxy.shown));
+        updater = updater.proxy(url);
+    }
+    let found = updater.build().map_err(err)?.check().await.map_err(|e| {
         applog::write(&format!("update check failed: {e}"));
         format!(
             "Could not look for updates: {e}. Check the internet connection, or whether a \

@@ -17,6 +17,7 @@
 //! | `MinLauncherVersion` | REG_SZ | Older launchers install and run nothing |
 //! | `UpdateFolder` | REG_SZ | A folder IT puts new versions of apps in; users are told of them |
 //! | `PythonMirror` | REG_SZ | Where Python itself is downloaded from, instead of GitHub (`https://` or `file:///`) |
+//! | `PackageIndex` | REG_SZ | The PyPI mirror apps' packages are downloaded from, instead of PyPI (an `https://` simple index) |
 //! | `ScheduledRuns` | REG_DWORD | 1: users may schedule runs of form apps (off by default) |
 //!
 //! The policy file has the same settings in `snake_case`, plus `trust_files` and `[[authors]]`
@@ -71,6 +72,10 @@ pub struct Policy {
     /// uv checks each download against the hash built into it, so the mirror cannot change
     /// what is installed.
     pub python_mirror: Option<String>,
+    /// Replaces PyPI as the index apps' packages are downloaded from (a PyPI-compatible
+    /// simple index: Artifactory, Nexus, devpi). Every file must have the hash the signed
+    /// lockfile names, so the mirror cannot change what is installed.
+    pub package_index: Option<String>,
     /// Whether users may schedule runs (Task Scheduler). Off unless IT allows it: a scheduled
     /// run starts without anyone at the screen.
     pub scheduled_runs: bool,
@@ -81,6 +86,25 @@ pub struct Policy {
     /// missing from the list may only be out of sight. A file that was read and is wrong, or that
     /// users could change, does not count: IT has to fix those, and nobody is approved by them.
     pub authors_unreachable: bool,
+}
+
+/// What is wrong with a `PackageIndex` address, if anything. A login in it is refused: every
+/// user can read the policy, and the address is shown in "Copy diagnostics".
+fn package_index_problem(url: &str) -> Option<&'static str> {
+    let lower = url.to_ascii_lowercase();
+    let Some(rest) = lower.strip_prefix("https://") else {
+        return Some("is not an https:// address");
+    };
+    let host = rest.split('/').next().unwrap_or_default();
+    if host.is_empty() {
+        Some("names no host")
+    } else if host.contains('@') {
+        Some("has a login in it; the mirror must let users read it without one")
+    } else if url.contains(['?', '#', ' ', '\\']) {
+        Some("is not a plain address")
+    } else {
+        None
+    }
 }
 
 /// Whether reading a policy source failed for lack of access to it, not because of its content.
@@ -103,6 +127,7 @@ struct PolicyFile {
     launcher_updates: Option<bool>,
     update_folder: Option<PathBuf>,
     python_mirror: Option<String>,
+    package_index: Option<String>,
     scheduled_runs: Option<bool>,
     trust_folder: Option<PathBuf>,
     #[serde(default)]
@@ -227,6 +252,20 @@ impl Policy {
                     None
                 }
             });
+        let package_index = values
+            .string("PackageIndex")
+            .or(file.package_index)
+            .map(|m| m.trim().trim_end_matches('/').to_string())
+            .filter(|m| !m.is_empty())
+            .and_then(|m| match package_index_problem(&m) {
+                None => Some(m),
+                Some(why) => {
+                    problems.push(format!(
+                        "PackageIndex `{m}` {why}: packages are downloaded from PyPI"
+                    ));
+                    None
+                }
+            });
         let mut guard_report_only = file.guard_report_only;
         guard_report_only.extend(values.multi("GuardReportOnly").unwrap_or_default());
         guard_report_only.retain(|r| !r.trim().is_empty());
@@ -262,6 +301,7 @@ impl Policy {
                 .map(|s| PathBuf::from(s.trim()))
                 .or(file.update_folder),
             python_mirror,
+            package_index,
             scheduled_runs: values
                 .dword("ScheduledRuns")
                 .map(|v| v != 0)
@@ -997,6 +1037,39 @@ mod tests {
         );
         assert_eq!(p.python_mirror, None);
         assert_eq!(p.problems.len(), 1, "{:?}", p.problems);
+    }
+
+    #[test]
+    fn package_index() {
+        let p = Policy::from_values("test", &values(vec![]), &loader());
+        assert_eq!(p.package_index, None);
+        let p = Policy::from_values(
+            "test",
+            &values(vec![(
+                "PackageIndex",
+                Value::String(" https://art.corp/api/pypi/pypi/simple/ ".into()),
+            )]),
+            &loader(),
+        );
+        assert_eq!(
+            p.package_index.as_deref(),
+            Some("https://art.corp/api/pypi/pypi/simple")
+        );
+        assert!(p.problems.is_empty(), "{:?}", p.problems);
+        for bad in [
+            "http://art.corp/simple",
+            "https://me:pw@art.corp/simple",
+            "https:///simple",
+            "https://art.corp/simple?x=1",
+        ] {
+            let p = Policy::from_values(
+                "test",
+                &values(vec![("PackageIndex", Value::String(bad.into()))]),
+                &loader(),
+            );
+            assert_eq!(p.package_index, None, "{bad}");
+            assert_eq!(p.problems.len(), 1, "{bad}: {:?}", p.problems);
+        }
     }
 
     #[test]

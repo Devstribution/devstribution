@@ -40,32 +40,56 @@ N4 (run B1 and B2 on the stand-in) and N5 (signing), both on the maintainer's si
 **Tier 1: what the first company PC would likely trip on.** B1 cannot pass without these, so they
 come first; each is checked on the stand-in (N4).
 
-- ☐ **P1. The proxy Windows is set to.** uv, which downloads Python and the packages, reads the
+- ☑ **P1. The proxy Windows is set to.** uv, which downloads Python and the packages, reads the
   proxy from `HTTPS_PROXY` / `HTTP_PROXY`. Company PCs usually set it in Windows instead, often as
   an automatic configuration script (PAC) or WPAD, and set no variable: installs would then
-  likely fail with a network error (to confirm on the stand-in first). The launcher asks Windows (WinHTTP) which proxy it uses for the download hosts
-  and gives that to uv; a proxy that wants a Windows login (NTLM, Kerberos) is named in the error
-  as such, since uv cannot log in to one. The stand-in sets `HTTPS_PROXY`, so it would not show
-  this: N4 adds a PAC-only proxy with no variable set.
-- ☐ **P2. The company's package mirror.** Many companies block pypi.org and serve packages from
+  likely fail with a network error. Done: when no variable is set, the launcher asks
+  Windows (WinHTTP, which runs the script or the detection) which proxy it would use for
+  files.pythonhosted.org and for Python's hosts (releases.astral.sh, then GitHub; or the Python
+  mirror), and gives that to uv as
+  `HTTPS_PROXY`, with the hosts that go direct in `NO_PROXY`; a script that cannot be read falls
+  back to the fixed proxy, as Windows does. The update check does the same. "Copy diagnostics"
+  and a failed download's message say which proxy was used and where it came from. Tested
+  against the real WinHTTP with a script served from the test itself, and on the stand-in (N4):
+  a standard user, a TLS-inspecting proxy given to Windows only by a PAC file, no variable set,
+  Python downloaded through it, the mirror reached directly as the PAC said, and the installed
+  launcher's update check sent through it; a PAC that names a proxy that is down fails and
+  names it. A proxy that wants a Windows login (NTLM, Kerberos) is still named in the error as
+  such, since uv cannot log in to one.
+- ☑ **P2. The company's package mirror.** Many companies block pypi.org and serve packages from
   their own mirror (Artifactory, Nexus). A policy value names it, and uv downloads from there.
   The signed lockfile's hashes still decide what installs, so a mirror cannot change a package;
-  packages keep naming only PyPI (`lock::check_sources`).
-- ◐ **P3. Where Python comes from.** uv downloads Python from GitHub, which some companies block
-  for downloads. A policy value names a mirror (uv's `python-install-mirror`), checked the same
-  way. Done: `PythonMirror` (`https://` or `file:///`), shown in "Copy diagnostics". Left: an
-  install through a mirror on the stand-in (N4).
+  packages keep naming only PyPI (`lock::check_sources`). Done: `PackageIndex` (`https://`, no
+  login). `uv sync --frozen` downloads from the lockfile's own addresses whatever index is set,
+  so with a mirror the lockfile is exported with its hashes and installed with
+  `uv pip sync --require-hashes --no-build` from the mirror. Tested with real uv against a mirror
+  served by the test: the package installs from it, and a file with other bytes is refused. The
+  proxy is asked for the mirror's host, and a failed download names the mirror. Checked on the
+  stand-in (N4) with PyPI blocked: pandas, openpyxl and numpy installed from a mirror over HTTPS,
+  and a mirror that is down gets "Ask your IT department to check the mirror at …".
+- ☑ **P3. Where Python comes from.** uv downloads Python from releases.astral.sh, then GitHub,
+  which some companies block for downloads. A policy value names a mirror (uv's
+  `python-install-mirror`), checked the same way. Done: `PythonMirror` (`https://` or
+  `file:///`), shown in "Copy diagnostics". Checked on the stand-in (N4) with GitHub and
+  releases.astral.sh blocked: Python installs from the mirror, and a tampered Python on the
+  mirror is refused. Its message then blamed the connection; it now points at the mirror
+  (checked in a unit test, not yet on the stand-in).
 - ◐ **P4. The error for a failed download says what to ask IT for**: the host it could not
   reach, the proxy it used, and whether the certificate was the problem, in "Copy diagnostics"
   too. Done: read from uv's error lines by their error codes (Windows translates the words),
-  checked against uv 0.13's real output for a missing name, a proxy that refuses and a 404.
-  Left: a proxy that wants a login and an untrusted certificate, seen on the stand-in.
+  checked against uv 0.13's real output for a missing name, a proxy that refuses and a 404. Seen
+  on the stand-in (N4): a mirror that is down says to ask IT to check it, and a proxy that is
+  down is named with the PAC it came from. A damaged download and an AppLocker block got the
+  general message there; each now has its own (unit tests, not yet seen on the stand-in). Left:
+  those two on the stand-in, and a proxy that wants a login and an untrusted certificate.
 
 **Tier 2: a better product for the people who run apps.**
 
-- ◐ **P5. A notification when a run ends** while the window is not in front (a Windows toast:
-  "Report finished", "Report stopped"). Long runs are the ones people leave. Done; left: seen
-  from an installed build (a development build's toasts carry PowerShell's name).
+- ☑ **P5. A notification when a run ends** while the window is not in front (a Windows toast:
+  "Report finished", "Report stopped"). Long runs are the ones people leave. Done. On the
+  stand-in, an installed build's notification (from a scheduled run) reached the notification
+  centre under the launcher's own app ID; Windows held back the banner (Do Not Disturb or a
+  window in front), which is Windows' choice, not the launcher's.
 - ☐ **P6. Italian**, the language of the first users: the launcher's text in one catalogue
   (`design.md` keeps the wording rules), then Italian, picked from Windows' language. Other
   languages follow from the catalogue (was in C).
@@ -76,17 +100,22 @@ come first; each is checked on the stand-in (N4).
   table, as N7 did for CSV; PNG and JPEG results as a picture (was in C). Done: the first visible
   sheet, dates as dates and numbers to Excel's 15 digits, read by the launcher's own reader
   (checked on files written by openpyxl, XlsxWriter and pandas); a picture is recognised by its
-  bytes, and pressing it opens it. Left: seen in an installed build, on a workbook saved by Excel.
-- ◐ **P9. An app in the Start menu**: "Add to Start" in the panel's ⋯ menu makes a shortcut that
+  bytes, and pressing it opens it. Seen in an installed build on the stand-in, on a workbook
+  written by openpyxl. Left: a workbook saved by Excel itself, and a picture result in an
+  installed build.
+- ☑ **P9. An app in the Start menu**: "Add to Start" in the panel's ⋯ menu makes a shortcut that
   opens the launcher on that app; removed with the app. Done, in "devstribution apps" with the
-  app's icon (ICO, or PNG up to 256 px); the uninstaller removes them. Left: tried in an installed
-  build.
-- ◐ **P10. Runs on a schedule**: a form app with saved inputs runs daily or weekly (the weekly
+  app's icon (ICO, or PNG up to 256 px); the uninstaller removes them. Tried in an installed
+  build on the stand-in: the shortcut is made under "devstribution apps" and opens the launcher
+  on the app (removal by the uninstaller was not tried there).
+- ☑ **P10. Runs on a schedule**: a form app with saved inputs runs daily or weekly (the weekly
   report), through a Task Scheduler entry that starts the launcher, with the same guard, the
   results kept as for any run and a notification (P5). Off in managed mode unless the policy
   allows it. Done: every day, Monday to Friday or weekly, a missed time runs when the computer is
   next on, the launcher starts hidden and closes after the run (`ScheduledRuns` in managed mode).
-  The task registers as a standard user (checked). Left: a scheduled run of an installed build.
+  The task registers as a standard user (checked). An installed build on the stand-in, in
+  managed mode with `ScheduledRuns` = 1, ran hidden at the set time, notified and kept the
+  result.
 
 **Tier 3: for the people who write apps, and the reputation signing waits on (N5).**
 
@@ -136,11 +165,14 @@ Roughly in this order; N1 and N2 first, as they finish what 0.4.0 started and cl
   through its process handle, not a snapshot of every thread on the system. The app's code and
   its dependencies are compiled at install, so the first run of a pandas app takes 1.9 s, not
   4.1–4.7 s.
-- ◐ **N4. A stand-in for a company PC**, so B1 and B2 stop waiting for a company: ☑ a script
+- ☑ **N4. A stand-in for a company PC**, so B1 and B2 stop waiting for a company: a script
   that sets up a Windows VM (a standard account, AppLocker's default rules, mitmproxy as a
   TLS-inspecting proxy, trust folders on an SMB share, managed mode) and a checklist
-  ([`company-pc.md`](company-pc.md)). Left: run B1 and B2 there, time cold installs behind
-  the proxy, and a proxy set only in Windows (a PAC script, no `HTTPS_PROXY`: P1). A real company still confirms it later.
+  ([`company-pc.md`](company-pc.md)). Run on 13 November, with the proxy set only in Windows (a
+  PAC script, no `HTTPS_PROXY`: P1), package and Python mirrors, and PyPI, GitHub and
+  releases.astral.sh blocked: B1 and B2 there, and P1 to P5 and P8 to P10 (what each showed
+  is in its entry). An install of a pandas app from the mirrors, with AppLocker's path rules
+  on, took about 40 s. A real company still confirms it later.
 - ☐ **N5. Signing, both routes at once**: apply to SignPath Foundation (was A9) with 0.4.0 linked,
   and to Certum's open-source certificate, which checks who we are rather than the project's
   reputation. Whichever says yes first → B4.
@@ -181,11 +213,17 @@ All done by 28 October 2026 except A9, which is now N5:
 What has to hold before our signature goes on it. Open items first; the numbers stay as they are,
 as other documents refer to them.
 
-- ☐ **B1. Phase 0** of [`plan.md`](plan.md): install and run on a locked-down company PC (AppLocker or
+- ◐ **B1. Phase 0** of [`plan.md`](plan.md): install and run on a locked-down company PC (AppLocker or
   WDAC, a proxy with TLS inspection, no admin rights), uv behind the company proxy included. If
   uv or the runner fails there, it comes before everything else (section 3). First on the stand-in
-  (N4), then on a real one.
-- ☐ **B2. Managed mode checked on Windows**: the registry read, the permission check on a local
+  (N4), then on a real one. On the stand-in: AppLocker's default rules block the installer, the
+  launcher and Python in the user's folders, as expected; with path rules for the user's
+  devstribution and uv folders (and, for the test, its temporary folder) the launcher starts,
+  and a pandas app installs from the mirrors and its packages import; with DLL rules on,
+  Python exits 0xC0000364, so they need the same paths. Left: a real company PC.
+- ◐ **B2. Managed mode checked on Windows** (on the stand-in: the registry read, a trust folder
+  on an SMB share approving an author, an author not approved blocked with IT's contact, in the
+  machine-policy test and in the launcher; left: the folder permission cases below, and a real company PC): the registry read, the permission check on a local
   folder and on a network share, and the screens (section 10). The B10 review found the folder
   check never worked and fixed it, so this is the first real test of it: a trust folder users can
   change must show a problem and approve no one; one only administrators can change must work,

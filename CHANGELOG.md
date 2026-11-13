@@ -10,6 +10,29 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 
 ## [Unreleased]
 
+### Added
+
+- **The proxy Windows is set to**: when `HTTPS_PROXY` is not set, preparing an app asks Windows
+  which proxy it would use (a setup script (PAC), automatic detection (WPAD), or a fixed proxy
+  and its exceptions) and downloads Python and the packages through it. Checking for launcher
+  updates does the same. "Copy diagnostics" says which proxy is used and where it came from.
+- **The company's package mirror** (managed mode): the policy's `PackageIndex` names a PyPI
+  mirror (Artifactory, Nexus, devpi), and apps' packages are downloaded from it instead of PyPI.
+  Each file must still have the hash the signed lockfile names, so a mirror cannot change what
+  is installed. "Copy diagnostics" names it, and so does a failed download's message.
+
+### Fixed
+
+- **The CLI on a PC without the Visual C++ runtime**: the Windows `devstribution.exe` of a
+  release now carries the C runtime it needs, instead of failing to start on a clean PC.
+- **Python's download hosts**: uv now downloads Python from `releases.astral.sh` first, then
+  GitHub. The proxy is asked about those hosts, a failed download names them, and the managed
+  mode guide lists them for the network allowlist.
+- **Clearer messages when preparing an app fails**: a download that was not the expected file
+  (damaged or changed on the way, or on the mirror) says so and points at the company's mirror
+  when one is set. When AppLocker or WDAC stops Python from starting, the message says so and
+  names the folders IT has to allow, for programs and DLLs alike.
+
 ## [0.6.0] - 2026-11-09
 
 ### Added
