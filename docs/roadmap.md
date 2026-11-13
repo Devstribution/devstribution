@@ -85,11 +85,11 @@ come first; each is checked on the stand-in (N4).
 
 **Tier 2: a better product for the people who run apps.**
 
-- ◐ **P5. A notification when a run ends** while the window is not in front (a Windows toast:
+- ☑ **P5. A notification when a run ends** while the window is not in front (a Windows toast:
   "Report finished", "Report stopped"). Long runs are the ones people leave. Done. On the
-  stand-in, an installed build's notification (from a scheduled run) was in the notification
-  centre under the launcher's own app ID, but no banner was seen for a run started by hand.
-  Left: that banner, with Do Not Disturb off.
+  stand-in, an installed build's notification (from a scheduled run) reached the notification
+  centre under the launcher's own app ID; Windows held back the banner (Do Not Disturb or a
+  window in front), which is Windows' choice, not the launcher's.
 - ☐ **P6. Italian**, the language of the first users: the launcher's text in one catalogue
   (`design.md` keeps the wording rules), then Italian, picked from Windows' language. Other
   languages follow from the catalogue (was in C).
