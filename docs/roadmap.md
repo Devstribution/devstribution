@@ -4,16 +4,19 @@ The proof of concept works end to end (see the [changelog](../CHANGELOG.md) and 
 findings in [`report.md`](report.md)), and a first real app has been delivered with it. This is the work
 between that and a launcher we can sign and hand to people who will never read this repository.
 
-*Revised 9 November 2026*, after 0.5.0 (earlier: 5 November, after 0.4.0 and a technical
-assessment of performance and security).
+*Revised 13 November 2026*, for 0.7.0 (earlier: 9 November, after 0.5.0; 5 November, after
+0.4.0 and a technical assessment of performance and security).
 What blocks a signed 1.0 is no longer code: it is **evidence** (the launcher checked on a locked-down
 company PC and in managed mode) and **reputation** (SignPath Foundation wants a project with a
 "verifiable reputation", which a two-week-old repository with no outside users does not have yet).
 0.5.0 went after both and fixed what the assessment found; 0.6.0 makes the launcher ready
 for a company network and builds the reputation:
 
+- **0.7.0** (13 November): P1 and P2 (the proxy Windows is set to, and the company's package
+  mirror), checked with B1 and B2 on the stand-in company PC (N4), and the fixes those checks
+  found. What is left of 0.6.0's list (P6, P7, P13, Tier 4) goes on in 0.8.0.
 - **[0.6.0](#060-released-9-november)**: released with Tiers 2 and 3 mostly done and a security
-  review's fixes; what is left (P1, P2, P6, P7, P13, Tier 4) goes on in 0.7.0.
+  review's fixes; P1 and P2 went into 0.7.0.
 - **[0.5.0](#050-released-6-november)**: the assessment's findings, a stand-in for a company PC,
   signing applied for on both routes, and what the first outside users meet.
 - **[A. First public release](#a-first-public-release-done)**: done.
@@ -29,9 +32,9 @@ The numbered sections after the stages are the record per area. Earlier revision
 Released with P3, P4, P5, P8, P9, P10, P11, P12 and P14 done or nearly (each says what is left),
 and the fixes of the security review of 9 November ([`security.md`](security.md)): "Open result"
 no longer opens documents that run code, a package's signature is checked before anything is
-unpacked, and the Excel preview has the package's size limits. Not done, and carried to 0.7.0:
-P1 and P2 (the Windows proxy and the package mirror), P6 (Italian), P7 (several files in one
-input), P13 (example apps) and Tier 4.
+unpacked, and the Excel preview has the package's size limits. Not done then: P1 and P2
+(the Windows proxy and the package mirror, released in 0.7.0), and P6 (Italian), P7 (several
+files in one input), P13 (example apps) and Tier 4, carried to 0.8.0.
 
 *Proposed 9 November*, from a scan of the product after 0.5.0: what a company network, the
 people who run apps and the people who write them would run into next. Carried over from 0.5.0:
@@ -427,7 +430,11 @@ on 5 November, after it on 6 November:
 | pandas + openpyxl (10,000 rows to `.xlsx`) | 4.8 s → 7.2 s | 0.9 s → 3.2 s | 4.1–4.7 s → 1.9 s | 1.7 s → 1.4 s |
 
 - Installs now compile the app's code and its dependencies (0.7–2.4 s), which the first run did
-  before; a company proxy will be slower (timed in N4). The cold installs also vary with the
+  before; a company proxy will be slower (timed in N4).
+- 0.7.0, timed again on 13 November (it asks Windows for the proxy before each install): cold
+  installs 3.4, 4.2 and 7.5 s; warm 1.0, 1.4 and 3.5 s; first runs 0.45, 1.2 and 2.4 s; later
+  runs 0.19, 0.60 and 1.8 s. The proxy lookup adds no visible time on this PC; the later runs
+  of the two apps with packages are a little slower than on 6 November, not looked into yet. The cold installs also vary with the
   download.
 - Every run carries ~0.16 s before the app's code starts (Python itself starts in 35 ms); it was
   ~0.4 s before N3. The first run on a Python version not used before also compiles the
