@@ -1,6 +1,6 @@
 //! Preparing app environments with `uv`: wheels only, from the lockfile, outside the app folder.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, anyhow};
 use devstribution_core::manifest::Manifest;
 
+use crate::proxy::{self, hide_login};
 use crate::run::platform;
 
 static FIXED_UV: OnceLock<PathBuf> = OnceLock::new();
@@ -92,10 +93,62 @@ impl std::error::Error for Cancelled {}
 /// defaults (managed mode's policy).
 #[derive(Debug, Clone, Default)]
 pub struct Sources {
-    /// Replaces `https://github.com/astral-sh/python-build-standalone/releases/download`, where
-    /// uv downloads Python itself. uv checks every Python download against the hash built into
+    /// Replaces the python-build-standalone release downloads uv gets Python itself from
+    /// ([`PYTHON_HOSTS`]), laid out as `<mirror>/<release tag>/<file>`. uv checks every Python download against the hash built into
     /// it, so a mirror can make a download fail but cannot change what is installed.
     pub python_mirror: Option<String>,
+    /// Replaces PyPI as the index the app's packages are downloaded from: a PyPI-compatible
+    /// simple index (Artifactory, Nexus, devpi). The lockfile's SHA-256 hashes are required of
+    /// every file, so the mirror can make an install fail but cannot change what is installed.
+    pub package_index: Option<String>,
+}
+
+/// Where uv 0.13 downloads Python from when no mirror is set: releases.astral.sh first, then
+/// GitHub's release downloads if that fails.
+pub const PYTHON_HOSTS: &[&str] = &[
+    "releases.astral.sh",
+    "github.com",
+    "release-assets.githubusercontent.com",
+    "objects.githubusercontent.com",
+];
+
+/// The host of a mirror's address; `None` for a `file:///` one.
+fn host_of(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once("://")?;
+    if scheme.eq_ignore_ascii_case("file") {
+        return None;
+    }
+    let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let host = host.rsplit_once('@').map_or(host, |(_, h)| h);
+    let host = host
+        .split(':')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    (!host.is_empty()).then_some(host)
+}
+
+impl Sources {
+    /// The hosts an installed app's preparation downloads from: packages, then Python.
+    pub fn hosts(&self) -> Vec<String> {
+        let mut hosts = Vec::new();
+        match &self.package_index {
+            None => hosts.push("files.pythonhosted.org".to_string()),
+            Some(index) => hosts.extend(host_of(index)),
+        }
+        match &self.python_mirror {
+            None => hosts.extend(PYTHON_HOSTS.iter().map(|h| h.to_string())),
+            Some(mirror) => hosts.extend(host_of(mirror)),
+        }
+        hosts.dedup();
+        hosts
+    }
+
+    /// The proxy for these downloads: the environment's, else the one Windows would use.
+    pub fn proxy(&self) -> proxy::Choice {
+        let hosts = self.hosts();
+        proxy::for_hosts(&hosts.iter().map(String::as_str).collect::<Vec<_>>())
+    }
 }
 
 /// `uv sync` the app's locked dependencies into `env_dir`, reporting uv's progress lines.
@@ -109,12 +162,24 @@ pub fn sync(
     on_line: &mut dyn FnMut(&str),
     stop: &dyn Fn() -> bool,
 ) -> Result<()> {
+    if let (LockMode::Frozen, Some(index)) = (mode, &sources.package_index) {
+        return sync_from_mirror(app_dir, env_dir, index, sources, on_line, stop);
+    }
     let mut cmd = command();
     cmd.args(["sync", "--no-build", "--no-dev", "--no-install-project"])
         .args(["--color", "never", "--no-progress"])
         .current_dir(app_dir);
+    // `HTTPS_PROXY`, or else the proxy Windows would use (a setup script, automatic detection).
+    let proxy = match mode {
+        LockMode::Frozen => Some(sources.proxy()),
+        LockMode::Locked => None,
+    };
     match mode {
-        LockMode::Frozen => installed_app_settings(&mut cmd, app_dir)?,
+        LockMode::Frozen => {
+            cmd.arg("--frozen")
+                .args(["--python", &requires_python(app_dir)?]);
+            installed_app_settings(&mut cmd);
+        }
         // `devstribution dev` on the developer's own machine keeps their uv settings.
         LockMode::Locked => {
             cmd.arg("--locked")
@@ -126,10 +191,104 @@ pub fn sync(
     if let Some(mirror) = &sources.python_mirror {
         cmd.env("UV_PYTHON_INSTALL_MIRROR", mirror);
     }
-    supervise(cmd, on_line, stop, TIMEOUT).map_err(|e| match e.downcast::<Failed>() {
-        Ok(failed) => anyhow!(failed.explain(sources, &proxy_in_use())),
+    if let Some(proxy) = &proxy {
+        proxy.apply(&mut cmd);
+    }
+    let shown = proxy.map_or_else(proxy_in_use, |p| p.shown);
+    supervise(cmd, on_line, stop, TIMEOUT).map_err(|e| explained(e, sources, &shown))
+}
+
+/// The requirements file [`sync`] writes into an environment it installs from a mirror.
+pub const MIRROR_REQUIREMENTS: &str = "devstribution-requirements.txt";
+
+/// Installs the app's locked packages from the company's mirror. `uv sync --frozen` downloads
+/// from the addresses written in the lockfile (PyPI's) whatever index is set, so the lockfile
+/// is exported as a requirements file with every file's SHA-256 hash, and `uv pip sync`
+/// installs exactly that from the mirror's index: a file whose hash differs is refused, and so
+/// is anything that would have to be built.
+fn sync_from_mirror(
+    app_dir: &Path,
+    env_dir: &Path,
+    index: &str,
+    sources: &Sources,
+    on_line: &mut dyn FnMut(&str),
+    stop: &dyn Fn() -> bool,
+) -> Result<()> {
+    let proxy = sources.proxy();
+    let python = requires_python(app_dir)?;
+    let requirements = env_dir.join(MIRROR_REQUIREMENTS);
+    let uv = |args: &[&OsStr]| {
+        let mut cmd = command();
+        cmd.args(args)
+            .args(["--color", "never", "--no-progress"])
+            .current_dir(app_dir);
+        installed_app_settings(&mut cmd);
+        if let Some(mirror) = &sources.python_mirror {
+            cmd.env("UV_PYTHON_INSTALL_MIRROR", mirror);
+        }
+        proxy.apply(&mut cmd);
+        cmd
+    };
+    let run = |cmd: Command, on_line: &mut dyn FnMut(&str)| {
+        supervise(cmd, on_line, stop, TIMEOUT).map_err(|e| explained(e, sources, &proxy.shown))
+    };
+    let os = OsStr::new;
+
+    run(
+        uv(&[
+            os("venv"),
+            env_dir.as_os_str(),
+            os("--no-project"),
+            os("--allow-existing"),
+            os("--python"),
+            os(&python),
+        ]),
+        on_line,
+    )?;
+    run(
+        uv(&[
+            os("export"),
+            os("--frozen"),
+            os("--no-dev"),
+            os("--no-emit-project"),
+            os("--no-header"),
+            os("--format"),
+            os("requirements.txt"),
+            os("--output-file"),
+            requirements.as_os_str(),
+        ]),
+        &mut |_| {},
+    )?;
+    run(
+        uv(&[
+            os("pip"),
+            os("sync"),
+            requirements.as_os_str(),
+            os("--python"),
+            env_dir.as_os_str(),
+            os("--index-url"),
+            os(index),
+            os("--require-hashes"),
+            os("--no-build"),
+        ]),
+        on_line,
+    )
+}
+
+/// A failed uv explained for the user, when its lines say what failed.
+fn explained(e: anyhow::Error, sources: &Sources, proxy: &str) -> anyhow::Error {
+    match e.downcast::<Failed>() {
+        Ok(failed) => anyhow!(failed.explain(sources, proxy)),
         Err(e) => e,
-    })
+    }
+}
+
+/// The app's `requires-python`, from its manifest.
+fn requires_python(app_dir: &Path) -> Result<String> {
+    let pyproject = std::fs::read_to_string(app_dir.join("pyproject.toml"))
+        .context("reading the app's pyproject.toml")?;
+    let manifest = Manifest::parse(&pyproject)?;
+    Ok(manifest.requires_python.unwrap_or_else(|| ">=3.11".into()))
 }
 
 /// uv ended with an error; its last lines.
@@ -226,16 +385,54 @@ impl Failed {
     /// The message the user sees: what could not be downloaded, why, and what to ask IT for,
     /// then uv's own lines for IT.
     fn explain(&self, sources: &Sources, proxy: &str) -> String {
-        let (Some(cause), Some(host)) = (self.cause(), self.host()) else {
-            return self.to_string();
-        };
+        let lines = self.0.join("\n");
         let mirror_host = sources
             .python_mirror
             .as_deref()
             .and_then(|m| Failed(vec![m.to_string()]).host());
-        let what = if mirror_host.as_deref() == Some(host.as_str()) {
+        if self.not_started() {
+            return format!(
+                "Windows' application control (AppLocker or WDAC) blocked Python from starting. \
+                 devstribution keeps Python and each app's packages in your user folder, which \
+                 these rules usually close to programs. Ask your IT department to allow \
+                 devstribution's folders in your profile (%LOCALAPPDATA%\\devstribution, \
+                 %LOCALAPPDATA%\\dev.devstribution.launcher and %APPDATA%\\uv), for programs and \
+                 DLLs alike; the lines below name the file that was blocked.\n{lines}"
+            );
+        }
+        if let Some(damaged) = self.damaged() {
+            let ask = match (damaged, &mirror_host, sources.package_index.as_deref()) {
+                (Damaged::Python, Some(host), _) => {
+                    format!("Ask your IT department to check the Python mirror at {host}.")
+                }
+                (Damaged::Package, _, Some(index)) => format!(
+                    "Ask your IT department to check the package mirror at {}.",
+                    host_of(index).unwrap_or_else(|| index.to_string())
+                ),
+                _ => "Try again. If it happens again, something between this computer and the \
+                      internet (a proxy, antivirus) may be changing downloads: ask your IT \
+                      department."
+                    .to_string(),
+            };
+            let what = match damaged {
+                Damaged::Python => "Python",
+                Damaged::Package => "one of the app's packages",
+            };
+            return format!(
+                "The download of {what} was not the expected file (damaged or changed), so it \
+                 was refused and nothing was installed. {ask}\nProxy: {proxy}.\n{lines}"
+            );
+        }
+        let (Some(cause), Some(host)) = (self.cause(), self.host()) else {
+            return self.to_string();
+        };
+        let index_host = sources.package_index.as_deref().and_then(host_of);
+        let what = if index_host.as_deref() == Some(host.as_str()) {
+            "the package mirror your organisation set"
+        } else if mirror_host.as_deref() == Some(host.as_str()) {
             "the Python mirror your organisation set"
-        } else if host == "github.com" || host.ends_with(".githubusercontent.com") {
+        } else if PYTHON_HOSTS.contains(&host.as_str()) || host.ends_with(".githubusercontent.com")
+        {
             "Python itself"
         } else if host == "pypi.org" || host == "files.pythonhosted.org" {
             "the app's packages"
@@ -260,7 +457,9 @@ impl Failed {
             Cause::Missing => format!("{host} does not have the file: a mirror may be incomplete"),
         };
         let ask = match (cause, what) {
-            (Cause::Missing, _) | (_, "the Python mirror your organisation set") => {
+            (Cause::Missing, _)
+            | (_, "the Python mirror your organisation set")
+            | (_, "the package mirror your organisation set") => {
                 format!("Ask your IT department to check the mirror at {host}.")
             }
             (_, "Python itself") => format!(
@@ -269,14 +468,52 @@ impl Failed {
             ),
             _ => format!("Ask your IT department to allow downloads from {host}."),
         };
-        format!(
-            "Could not download {what} from {host}: {why}. {ask}\nProxy: {proxy}.\n{}",
-            self.0.join("\n")
-        )
+        format!("Could not download {what} from {host}: {why}. {ask}\nProxy: {proxy}.\n{lines}")
+    }
+
+    /// Whether Windows' application control (AppLocker, WDAC) kept Python, which uv puts in
+    /// the user's folders, from starting. Matched by code, as Windows translates the words:
+    /// `os error 1260` (ERROR_ACCESS_DISABLED_BY_POLICY) when uv starts Python, and the
+    /// STATUS_ACCESS_DISABLED_BY_POLICY_* exit codes (0xC0000361–0xC0000364) when a DLL rule
+    /// stops it while it loads.
+    fn not_started(&self) -> bool {
+        let text = self.0.join("\n").to_ascii_lowercase();
+        [
+            "os error 1260",
+            "0xc0000361",
+            "0xc0000362",
+            "0xc0000363",
+            "0xc0000364",
+        ]
+        .iter()
+        .any(|code| text.contains(code))
+    }
+
+    /// A download that arrived but is not the file uv expected: a hash that does not match, or
+    /// a Python archive that cannot be unpacked.
+    fn damaged(&self) -> Option<Damaged> {
+        let text = self.0.join("\n").to_ascii_lowercase();
+        if text.contains("failed to extract archive: cpython")
+            || (text.contains("hash mismatch") && text.contains("cpython"))
+        {
+            Some(Damaged::Python)
+        } else if text.contains("hash mismatch") {
+            Some(Damaged::Package)
+        } else {
+            None
+        }
     }
 }
 
-/// The proxy uv uses, as the user and IT may see it: credentials in the address are hidden.
+/// What [`Failed::damaged`] found damaged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Damaged {
+    Python,
+    Package,
+}
+
+/// The proxy uv uses from the environment, as the user and IT may see it: credentials in the
+/// address are hidden. [`Sources::proxy`] also asks Windows.
 pub fn proxy_in_use() -> String {
     let proxy = ["HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"]
         .into_iter()
@@ -284,19 +521,6 @@ pub fn proxy_in_use() -> String {
     match proxy {
         Some(p) => hide_login(p.trim()),
         None => "none set (HTTPS_PROXY)".into(),
-    }
-}
-
-fn hide_login(url: &str) -> String {
-    match url.split_once("://") {
-        Some((scheme, rest)) => match rest.split_once('@') {
-            Some((_, host)) => format!("{scheme}://…@{host}"),
-            None => url.to_string(),
-        },
-        None => match url.split_once('@') {
-            Some((_, host)) => format!("…@{host}"),
-            None => url.to_string(),
-        },
     }
 }
 
@@ -422,19 +646,9 @@ const KEPT_ENV: &[&str] = &[
 ///   keep working.
 ///
 /// The lockfile's sources were checked before (`lock::check_sources`): only wheels from PyPI.
-fn installed_app_settings(cmd: &mut Command, app_dir: &Path) -> Result<()> {
-    let pyproject = std::fs::read_to_string(app_dir.join("pyproject.toml"))
-        .context("reading the app's pyproject.toml")?;
-    let manifest = Manifest::parse(&pyproject)?;
-    let python = manifest.requires_python.as_deref().unwrap_or(">=3.11");
-    cmd.args([
-        "--frozen",
-        "--no-config",
-        "--managed-python",
-        "--system-certs",
-    ])
-    .args(["--python", python])
-    .env_clear();
+fn installed_app_settings(cmd: &mut Command) {
+    cmd.args(["--no-config", "--managed-python", "--system-certs"])
+        .env_clear();
     for (k, v) in std::env::vars_os() {
         if k.to_str()
             .is_some_and(|k| KEPT_ENV.iter().any(|kept| kept.eq_ignore_ascii_case(k)))
@@ -442,7 +656,6 @@ fn installed_app_settings(cmd: &mut Command, app_dir: &Path) -> Result<()> {
             cmd.env(k, v);
         }
     }
-    Ok(())
 }
 
 /// Compiles the app's code and its dependencies' into `cache` (the app's own bytecode folder,
@@ -583,6 +796,7 @@ mod tests {
 
         let mirror = Sources {
             python_mirror: Some("https://mirror.example.com/pbs".into()),
+            ..Default::default()
         };
         let missing = failed(NOT_FOUND);
         assert_eq!(missing.cause(), Some(Cause::Missing));
@@ -611,6 +825,111 @@ mod tests {
                 .explain(&none, "none")
                 .starts_with("preparing the Python environment failed")
         );
+    }
+
+    #[test]
+    fn python_from_releases_astral_sh_is_python_itself() {
+        let text = failed(
+            "  cause: Failed to download `https://releases.astral.sh/github/python-build-standalone/releases/download/20261013/cpython.tar.gz`
+  cause: Host sconosciuto. (os error 11001)",
+        )
+        .explain(&Sources::default(), "none");
+        assert!(
+            text.starts_with("Could not download Python itself from releases.astral.sh"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_damaged_download_points_at_the_mirror() {
+        // As uv 0.13 printed it for a Python on the mirror that was not the one it expected.
+        let tampered = failed(
+            "error: Failed to extract archive: cpython-3.15.0-20261013-x86_64-pc-windows-msvc-install_only_stripped.tar.gz
+  cause: Invalid tar file",
+        );
+        assert_eq!(tampered.damaged(), Some(Damaged::Python));
+        let mirror = Sources {
+            python_mirror: Some("https://mirror.corp.test:8443/pbs".into()),
+            ..Default::default()
+        };
+        let text = tampered.explain(&mirror, "none");
+        assert!(text.starts_with("The download of Python was not"), "{text}");
+        assert!(
+            text.contains("check the Python mirror at mirror.corp.test"),
+            "{text}"
+        );
+        assert!(text.contains("Invalid tar file"), "{text}");
+        let text = tampered.explain(&Sources::default(), "none");
+        assert!(text.contains("Try again"), "{text}");
+
+        let package = failed(
+            "error: Failed to download `pandas==2.3.0`
+  cause: Hash mismatch for `pandas==2.3.0`",
+        );
+        assert_eq!(package.damaged(), Some(Damaged::Package));
+        let index = Sources {
+            package_index: Some("https://art.corp/api/pypi/pypi/simple".into()),
+            ..Default::default()
+        };
+        let text = package.explain(&index, "none");
+        assert!(
+            text.starts_with("The download of one of the app's packages was not"),
+            "{text}"
+        );
+        assert!(
+            text.contains("check the package mirror at art.corp"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn application_control_says_what_to_allow() {
+        // uv starting Python (AppLocker EXE rules), and Python stopped by DLL rules.
+        for lines in [
+            "error: Failed to query Python interpreter at `C:\\Users\\dsuser\\AppData\\Roaming\\uv\\python\\cpython-3.15\\python.exe`
+  cause: Il programma è bloccato da criteri di gruppo. (os error 1260)",
+            "error: Querying Python at `C:\\x\\Scripts\\python.exe` failed with exit status exit code: 0xc0000364",
+        ] {
+            let blocked = failed(lines);
+            assert!(blocked.not_started(), "{lines}");
+            let text = blocked.explain(&Sources::default(), "none");
+            assert!(text.starts_with("Windows' application control"), "{text}");
+            assert!(text.contains("%APPDATA%\\uv"), "{text}");
+            assert!(text.contains("python.exe"), "the blocked file stays: {text}");
+        }
+        assert!(!failed(DNS).not_started());
+    }
+
+    #[test]
+    fn the_hosts_asked_for_a_proxy() {
+        let none = Sources::default();
+        assert_eq!(
+            none.hosts(),
+            [
+                "files.pythonhosted.org",
+                "releases.astral.sh",
+                "github.com",
+                "release-assets.githubusercontent.com",
+                "objects.githubusercontent.com"
+            ]
+        );
+        let mirror = |m: &str| Sources {
+            python_mirror: Some(m.into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            mirror("https://u:p@mirror.corp:8443/python/").hosts(),
+            ["files.pythonhosted.org", "mirror.corp"]
+        );
+        assert_eq!(
+            mirror("file:///D:/python").hosts(),
+            ["files.pythonhosted.org"]
+        );
+        let index = Sources {
+            package_index: Some("https://Art.corp/api/pypi/pypi/simple".into()),
+            python_mirror: Some("https://art.corp/pbs".into()),
+        };
+        assert_eq!(index.hosts(), ["art.corp"]);
     }
 
     #[test]

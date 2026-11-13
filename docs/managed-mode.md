@@ -48,6 +48,7 @@ empty key approves no one.
 | `LauncherUpdates` | REG_DWORD | `0`: the launcher neither looks for nor installs its own updates (for IT that deploys it) |
 | `UpdateFolder` | REG_SZ | Full path of a folder where you put new versions of apps: users are told of them (below) |
 | `PythonMirror` | REG_SZ | Where Python itself is downloaded from instead of GitHub, `https://…` or `file:///…` (below) |
+| `PackageIndex` | REG_SZ | The PyPI mirror apps' packages are downloaded from instead of PyPI, an `https://…` simple index (below) |
 | `ScheduledRuns` | REG_DWORD | `1`: users may schedule runs of form apps (off by default in managed mode) |
 
 A registry value wins over the same setting in the policy file. The launcher reads the policy
@@ -67,6 +68,7 @@ min_launcher_version = "0.2.0"
 launcher_updates = true
 update_folder = '\\fileserver\it\devstribution\apps'
 python_mirror = "https://artifactory.example.com/github/astral-sh/python-build-standalone/releases/download"
+package_index = "https://artifactory.example.com/api/pypi/pypi/simple"
 scheduled_runs = false
 trust_folder = '\\fileserver\it\devstribution\trust'
 trust_files = ['\\fileserver\it\devstribution\extra\finance.trust']
@@ -126,13 +128,25 @@ when the user presses **Check now**. Users can also add folders of their own, in
 
 ## Networks that block downloads
 
-An app's Python and packages are downloaded when it is installed: Python from GitHub
-(`github.com`, `objects.githubusercontent.com`), packages from PyPI (`pypi.org`,
-`files.pythonhosted.org`). Where GitHub is blocked, set `PythonMirror` to a mirror of
-`https://github.com/astral-sh/python-build-standalone/releases/download` (an Artifactory or
-Nexus remote repository, or a folder: `file:///` paths work). uv checks each Python download
+An app's Python and packages are downloaded when it is installed: Python from
+`releases.astral.sh`, falling back to GitHub (`github.com`,
+`release-assets.githubusercontent.com`), packages from PyPI (`pypi.org`,
+`files.pythonhosted.org`). Where these are blocked, set `PythonMirror` to a mirror of
+`https://github.com/astral-sh/python-build-standalone/releases/download`, laid out as
+`<release tag>/<file>` (an Artifactory or Nexus remote repository, or a folder: `file:///`
+paths work). uv checks each Python download
 against the hash built into it, so a mirror can make an install fail but cannot change what is
 installed.
+
+Where PyPI is blocked, set `PackageIndex` to your PyPI mirror's simple index (Artifactory:
+`https://<host>/api/pypi/<repository>/simple`; Nexus:
+`https://<host>/repository/<repository>/simple`; devpi: `https://<host>/<user>/<index>/+simple`).
+Every package then comes from there, whatever the app's lockfile names. The lockfile's SHA-256
+hash is still required of every file, and nothing is built from source, so a mirror can make an
+install fail but cannot change what is installed. The address must be `https://`, with no login
+in it: users must be able to read the mirror without one (every user can read the policy, and
+"Copy diagnostics" shows the address). A value that is not accepted is reported as a policy
+problem, and packages then come from PyPI.
 
 When a download fails, the message says which host could not be reached, why (the name was not
 found, the proxy refused, the certificate was not trusted, a proxy that wants a Windows login),

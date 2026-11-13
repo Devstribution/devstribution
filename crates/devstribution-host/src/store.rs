@@ -1392,6 +1392,7 @@ impl Store {
     pub fn sources(&self) -> uv::Sources {
         uv::Sources {
             python_mirror: self.policy.as_ref().and_then(|p| p.python_mirror.clone()),
+            package_index: self.policy.as_ref().and_then(|p| p.package_index.clone()),
         }
     }
 
@@ -2046,7 +2047,7 @@ impl Store {
         }
 
         out += "\nNetwork\n";
-        out += &format!("  proxy: {}\n", redact(&uv::proxy_in_use()));
+        out += &format!("  proxy: {}\n", redact(&self.sources().proxy().shown));
         out += &format!(
             "  Python from: {}\n",
             self.sources()
@@ -2054,7 +2055,13 @@ impl Store {
                 .as_deref()
                 .unwrap_or("GitHub (no mirror set)")
         );
-        out += "  packages from: PyPI\n";
+        out += &format!(
+            "  packages from: {}\n",
+            self.sources()
+                .package_index
+                .as_deref()
+                .unwrap_or("PyPI (no mirror set)")
+        );
 
         let j = self.journal_report();
         out += "\nJournal\n";

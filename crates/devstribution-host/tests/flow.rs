@@ -1012,3 +1012,52 @@ def run(name: str, ctx) -> dict:
     assert!(stop.detail.contains("curl"), "{}", stop.detail);
     assert!(started.elapsed() < std::time::Duration::from_secs(15));
 }
+
+/// On a test PC: installs the package named by DEVSTRIBUTION_TEST_MACHINE_DSAPP through the
+/// Store under the machine's own policy (registry), as the launcher does, then imports the
+/// modules named by DEVSTRIBUTION_TEST_MACHINE_IMPORT (comma-separated) with the app's Python.
+/// With `PackageIndex` set, the packages must come from that mirror.
+#[test]
+#[ignore = "needs a test PC with a policy set; see docs/company-pc.md"]
+fn installs_under_the_machine_policy() {
+    let dsapp = std::env::var("DEVSTRIBUTION_TEST_MACHINE_DSAPP").expect("package path");
+    let policy = Policy::from_system().expect("a policy set on this machine");
+    let tmp = tempfile::tempdir().unwrap();
+    let mut store = Store::open(Paths {
+        root: tmp.path().join("home"),
+    })
+    .unwrap();
+    store.set_policy(Some(policy));
+    let pending = store.inspect(Path::new(&dsapp)).unwrap();
+    // DEVSTRIBUTION_TEST_MACHINE_BLOCKED=1: the policy must refuse this package instead.
+    if std::env::var_os("DEVSTRIBUTION_TEST_MACHINE_BLOCKED").is_some() {
+        let blocked = pending.blocked.expect("blocked by the machine policy");
+        println!("blocked: {blocked:?}");
+        return;
+    }
+    assert!(pending.blocked.is_none(), "{:?}", pending.blocked);
+    store.install(&pending.token, &mut |_| {}).unwrap();
+
+    // envs\<namespace>\<app>\<hash>
+    let mut env = store.paths.envs();
+    for _ in 0..3 {
+        env = fs::read_dir(&env).unwrap().next().unwrap().unwrap().path();
+    }
+    assert!(env.join("pyvenv.cfg").is_file(), "{}", env.display());
+    let mirrored = env
+        .join(devstribution_host::uv::MIRROR_REQUIREMENTS)
+        .is_file();
+    println!("environment {}; from a mirror: {mirrored}", env.display());
+    for module in std::env::var("DEVSTRIBUTION_TEST_MACHINE_IMPORT")
+        .unwrap_or_default()
+        .split(',')
+        .filter(|m| !m.is_empty())
+    {
+        let out = std::process::Command::new(devstribution_host::uv::python_in(&env, false))
+            .args(["-c", &format!("import {module}; print({module}.__file__)")])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{module}: {out:?}");
+        println!("{module}: {}", String::from_utf8_lossy(&out.stdout).trim());
+    }
+}
