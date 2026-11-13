@@ -26,7 +26,7 @@ How a release is made: [`releasing.md`](releasing.md).
 | Committers and reviewers | [Members of the Devstribution organisation](https://github.com/orgs/Devstribution/people) with write access | Change the code; every change goes through a pull request |
 | Approvers | [Owners of the Devstribution organisation](https://github.com/orgs/Devstribution/people?query=role%3Aowner) | Tag a release and approve each signing request on SignPath |
 
-Today all three roles are [@edo-13](https://github.com/edo-13). Everyone with write access uses
+Today all three roles are [@OdGWB](https://github.com/OdGWB). Everyone with write access uses
 two-factor authentication.
 
 A signing request is approved only for a tag whose release workflow ran from `main` after CI
@@ -40,13 +40,19 @@ until you choose to send them to someone.
 
 It connects to other systems only to do what you asked:
 
-- **Installing an app** you chose: `uv` downloads the Python version the app needs from
-  [python-build-standalone](https://github.com/astral-sh/python-build-standalone) releases on
-  GitHub, and the app's dependencies from [PyPI](https://pypi.org) (`pypi.org`,
-  `files.pythonhosted.org`). Those services see the request like any download: see
+- **Installing an app** you chose: `uv` downloads the Python version the app needs, a
+  [python-build-standalone](https://github.com/astral-sh/python-build-standalone) release, from
+  Astral (`releases.astral.sh`) or, failing that, GitHub (`github.com`,
+  `release-assets.githubusercontent.com`), and the app's dependencies from
+  [PyPI](https://pypi.org) (`pypi.org`, `files.pythonhosted.org`). Those services see the request
+  like any download: see [Astral's](https://astral.sh/privacy-policy),
   [GitHub's](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement)
   and the [Python Software Foundation's](https://policies.python.org/pypi.org/Privacy-Notice/)
-  privacy policies.
+  privacy policies. In managed mode, IT can name its own mirrors instead
+  ([`managed-mode.md`](managed-mode.md), `PythonMirror` and `PackageIndex`); then these
+  downloads go to the company's mirrors only.
+- **Through your network's proxy**: downloads use the proxy set in `HTTPS_PROXY` or, if none, the
+  one Windows is set to (as a browser would), so that proxy sees which hosts are contacted.
 - **Running an app** you installed: the app is the author's program and may use the network as
   its package declares. The runtime guard blocks network use it did not declare
   ([`security.md`](security.md)). What the app sends is up to its author, not devstribution.

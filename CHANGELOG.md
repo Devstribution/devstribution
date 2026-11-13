@@ -10,6 +10,8 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-13
+
 ### Added
 
 - **The proxy Windows is set to**: when `HTTPS_PROXY` is not set, preparing an app asks Windows
@@ -362,7 +364,8 @@ warns before the installer runs, and it is not meant for company PCs yet.
 - Not yet tried on a locked-down company PC or behind a company proxy.
 - The launcher does not update itself: install a newer version over it.
 
-[Unreleased]: https://github.com/Devstribution/devstribution/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/Devstribution/devstribution/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/Devstribution/devstribution/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/Devstribution/devstribution/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Devstribution/devstribution/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Devstribution/devstribution/compare/v0.3.0...v0.4.0
