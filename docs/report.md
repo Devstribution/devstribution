@@ -115,7 +115,9 @@ Before the faster runs of 0.5.0 (5 November 2026) → after (6 November):
 
 Installs now compile the app and its dependencies, which the first run used to do. The guard
 costs no time in proportion to the work: the pandas job takes 1.3 s on its own and 1.4 s under
-devstribution. Behind a company proxy, installs will be slower: not timed yet (roadmap N4).
+devstribution. Timed again for 0.7.0 (13 November), the numbers are close to the right-hand
+ones (roadmap, section 9). On the stand-in company PC (roadmap N4), a pandas app installed from
+the company's mirrors in about 40 s, with Python already there.
 
 ## Still to check on Windows
 
