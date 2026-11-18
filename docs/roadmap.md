@@ -4,17 +4,20 @@ The proof of concept works end to end (see the [changelog](../CHANGELOG.md) and 
 findings in [`report.md`](report.md)), and a first real app has been delivered with it. This is the work
 between that and a launcher we can sign and hand to people who will never read this repository.
 
-*Revised 13 November 2026*, for 0.7.0 (earlier: 9 November, after 0.5.0; 5 November, after
-0.4.0 and a technical assessment of performance and security).
+*Revised 18 November 2026*, for 0.8.0 (earlier: 13 November, for 0.7.0; 9 November, after 0.5.0;
+5 November, after 0.4.0 and a technical assessment of performance and security).
 What blocks a signed 1.0 is no longer code: it is **evidence** (the launcher checked on a locked-down
 company PC and in managed mode) and **reputation** (SignPath Foundation wants a project with a
 "verifiable reputation", which a two-week-old repository with no outside users does not have yet).
 0.5.0 went after both and fixed what the assessment found; 0.6.0 makes the launcher ready
-for a company network and builds the reputation:
+for a company network and builds the reputation. From 0.8.0 each release takes one theme:
 
+- **0.8.0**: Tier 4 only, evidence for IT: the Windows Event Log and the bill of materials
+  `pack` writes. P6 (Italian), P7 (several files in one input) and P13 (example apps) wait for
+  releases of their own.
 - **0.7.0** (13 November): P1 and P2 (the proxy Windows is set to, and the company's package
   mirror), checked with B1 and B2 on the stand-in company PC (N4), and the fixes those checks
-  found. What is left of 0.6.0's list (P6, P7, P13, Tier 4) goes on in 0.8.0.
+  found. What was left of 0.6.0's list: Tier 4 went into 0.8.0; P6, P7 and P13 come later.
 - **[0.6.0](#060-released-9-november)**: released with Tiers 2 and 3 mostly done and a security
   review's fixes; P1 and P2 went into 0.7.0.
 - **[0.5.0](#050-released-6-november)**: the assessment's findings, a stand-in for a company PC,
@@ -34,7 +37,7 @@ and the fixes of the security review of 9 November ([`security.md`](security.md)
 no longer opens documents that run code, a package's signature is checked before anything is
 unpacked, and the Excel preview has the package's size limits. Not done then: P1 and P2
 (the Windows proxy and the package mirror, released in 0.7.0), and P6 (Italian), P7 (several
-files in one input), P13 (example apps) and Tier 4, carried to 0.8.0.
+files in one input), P13 (example apps) and Tier 4 (done in 0.8.0).
 
 *Proposed 9 November*, from a scan of the product after 0.5.0: what a company network, the
 people who run apps and the people who write them would run into next. Carried over from 0.5.0:
@@ -143,8 +146,9 @@ come first; each is checked on the stand-in (N4).
   where things stand, setup, the layout and what to know before changing code; the two pages are
   gone. Left: the issues themselves, on GitHub.
 
-**Tier 4: evidence for IT**, from C, as soon as a company evaluates (B1): Windows Event Log
-(runs, findings, quarantines) and an SBOM written by `pack`.
+☑ **Tier 4: evidence for IT** (0.8.0), from C: the Windows Event Log (installs, runs, what the
+guard did, quarantines; IDs and setup in [`managed-mode.md`](managed-mode.md#the-windows-event-log))
+and the bill of materials written by `pack`, beside the ones the Security page saves.
 
 ## 0.5.0 (released 6 November)
 
@@ -258,8 +262,8 @@ Done:
 
 ## C. After 1.0
 
-Wanted, not needed for 1.0. **AMSI** and the **Windows Event Log** move up to B as soon as a real
-company evaluates devstribution: IT asks for both.
+Wanted, not needed for 1.0. **AMSI** moves up to B as soon as a real company evaluates
+devstribution: IT asks for it. (The Windows Event Log, asked for with it, is in 0.8.0.)
 
 - **Scan** (section 5): AMSI; vulnerable (not malicious) versions, through an opt-in online check;
   unexpected binaries in wheels; reading more cleverly (names built from strings, download then
@@ -269,8 +273,8 @@ company evaluates devstribution: IT asks for both.
   approved".
 - **Revocation, the rest** ([`revocation.md`](revocation.md)): the `Devstribution/trust` repository
   with its offline keys, fetching the list, the policy values, two-of-three signing.
-- **Evidence for IT** (section 8): Windows Event Log; SBOM written by `pack` (Tier 4 of 0.6.0 as
-  soon as a company evaluates).
+- **Evidence for IT, the rest** (section 8): an event message file of our own, registered by a
+  per-machine install, so the source needs no script.
 - **Results shown in the launcher, the rest** (section 7): charts drawn by the launcher; other
   sheets of a workbook. Excel, images and several files moved to 0.6.0 (P7, P8).
 - **Launcher, smaller items** (section 7): Settings: stop trusting a publisher; languages after
@@ -414,8 +418,8 @@ as a table (N7). ◐ Uninstall easy to find: check with users. Open: Excel and i
 ☑ Security reviews before signing and again on 30 October (B10; repeat before each release that
 changes install, runs or the guard); `SECURITY.md` with private reporting; versioning and release
 notes; "Copy diagnostics"; docs for authors; fuzzing (B7); a performance and security assessment
-on 5 November (N2, N3); secret scanning with push protection and CodeQL (N8). Open: Windows
-Event Log and SBOM → C.
+on 5 November (N2, N3); secret scanning with push protection and CodeQL (N8). Windows Event Log
+and SBOMs (written by `pack`, saved from the Security page, attached to releases) in 0.8.0.
 
 ## 9. Performance
 

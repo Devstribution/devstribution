@@ -77,6 +77,15 @@ fn init_dev_pack_verify() {
         .assert()
         .success();
 
+    // The bill of materials goes next to the package, about the version just signed.
+    let bom: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(tmp.path().join("hello.sbom.cdx.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(bom["bomFormat"], "CycloneDX");
+    assert_eq!(bom["metadata"]["component"]["name"], "alice/hello");
+    assert_eq!(bom["metadata"]["component"]["hashes"][0]["alg"], "SHA-256");
+
     let scanned = cli(&home).arg("scan").arg(&pkg).output().unwrap();
     assert!(scanned.status.success());
     assert!(

@@ -56,6 +56,11 @@ outputs:
   package:
     description: The path of the .dsapp.
     value: ${{ steps.pack.outputs.package }}
+  sbom:
+    description: >-
+      The path of the app's bill of materials (CycloneDX JSON), written next to the .dsapp: what
+      it installs, for the IT department that evaluates it. Attach it to the release with it.
+    value: ${{ steps.pack.outputs.sbom }}
   id:
     description: The app's id (`namespace/app`).
     value: ${{ steps.pack.outputs.id }}
@@ -166,10 +171,12 @@ runs:
         fi
         # Exits with 1 when something looks like malware: better here than on a user's PC.
         "$DS" scan "$out"
-        # A Windows path on Windows runners, for the steps that are not bash.
-        if command -v cygpath > /dev/null; then out=$(cygpath -w "$out"); fi
+        sbom="${out%.dsapp}.sbom.cdx.json"
+        # Windows paths on Windows runners, for the steps that are not bash.
+        if command -v cygpath > /dev/null; then out=$(cygpath -w "$out"); sbom=$(cygpath -w "$sbom"); fi
         {
           echo "package=$out"
+          echo "sbom=$sbom"
           echo "id=$id"
           echo "version=$version"
         } >> "$GITHUB_OUTPUT"

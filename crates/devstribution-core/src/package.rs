@@ -297,6 +297,8 @@ pub struct PackResult {
     pub lock_warnings: Vec<String>,
     pub key_id: String,
     pub content_hash: String,
+    /// SHA-256 of `FILES.sha256`, in full: what a launcher records for the installed version.
+    pub content_sha256: String,
 }
 
 /// Builds and signs `<out>` from an app folder. All checks that do not need Python run here.
@@ -378,6 +380,7 @@ pub fn pack(app_dir: &Path, signer: &Signer, out: &Path) -> Result<PackResult> {
         lock_warnings: report.warnings,
         key_id: signer.key_id(),
         content_hash: content_hash(list_text.as_bytes()),
+        content_sha256: hex::encode(sha256(list_text.as_bytes())),
     })
 }
 

@@ -219,6 +219,11 @@ devstribution pack my-tool --list     # only shows which files would go in
 logs) unless `.dsappignore` leaves them out, or names them with `!path` because the app really
 ships them (a template, say). It never packs `.env` files, keys, `.venv` or `__pycache__`.
 
+Next to the package, `pack` writes its bill of materials, `my-tool-1.0.0.sbom.cdx.json`: every
+package `uv.lock` installs, with the hashes of its wheels and the dependencies between them, as
+CycloneDX JSON. Send it with the `.dsapp` to an IT department that wants to know what an app
+installs before anyone installs it; it is the same file the launcher's Security page saves.
+
 ### Packing in GitHub Actions
 
 When the app's code is on GitHub, a tag can pack, sign and release it, with no key on your PC:
@@ -245,7 +250,7 @@ jobs:
         with:
           persist-credentials: false
       - id: pack
-        uses: Devstribution/devstribution/actions/pack@v0.6.0
+        uses: Devstribution/devstribution/actions/pack@v0.8.0
         with:
           key: ${{ secrets.DEVSTRIBUTION_KEY }}
           key-password: ${{ secrets.DEVSTRIBUTION_KEY_PASSWORD }}
@@ -253,14 +258,15 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
           PACKAGE: ${{ steps.pack.outputs.package }}
-        run: gh release create "$GITHUB_REF_NAME" "$PACKAGE" --verify-tag --notes "Version ${GITHUB_REF_NAME#v}"
+          SBOM: ${{ steps.pack.outputs.sbom }}
+        run: gh release create "$GITHUB_REF_NAME" "$PACKAGE" "$SBOM" --verify-tag --notes "Version ${GITHUB_REF_NAME#v}"
 ```
 
-The action downloads the devstribution CLI released with the tag you use it at (`@v0.6.0`),
+The action downloads the devstribution CLI released with the tag you use it at (`@v0.8.0`),
 checks it against that release's checksums and their attestation, then runs `pack`, `verify` and
 `scan` on the app: a scan finding that looks like malware fails the job. The key is written to a
 file only for `pack` and deleted straight after, even when packing fails. Its outputs are
-`package` (the `.dsapp`), `id` and `version`; `app-dir` and `out-dir` say where the app is and
+`package` (the `.dsapp`), `sbom` (its bill of materials, from 0.8.0), `id` and `version`; `app-dir` and `out-dir` say where the app is and
 where the package goes (`dist`). It runs on `ubuntu-latest`, `windows-latest` and
 `macos-latest`.
 

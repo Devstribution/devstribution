@@ -152,7 +152,46 @@ pub fn pack(dir: &Path, key: Option<PathBuf>, out: Option<PathBuf>) -> Result<()
         say!("  left out: {}", result.excluded.join(", "));
     }
     say!("  {}", out.display());
+    let bom = write_bom(&app_dir, &out, &result)?;
+    say!("  {} (bill of materials)", bom.display());
     Ok(())
+}
+
+/// Writes the app's bill of materials next to the package: `<package>.sbom.cdx.json`, the same
+/// CycloneDX document the launcher's Security page saves for the installed app, so IT can read
+/// what an app installs before anyone installs it.
+fn write_bom(app_dir: &Path, out: &Path, result: &package::PackResult) -> Result<PathBuf> {
+    let lock = fs::read_to_string(app_dir.join("uv.lock")).context("reading uv.lock")?;
+    let m = &result.manifest;
+    let id = m.id.to_string();
+    let version = m.version.to_string();
+    let bom = devstribution_core::sbom::app_bom(
+        &devstribution_core::sbom::Subject {
+            id: &id,
+            title: &m.title,
+            version: &version,
+            namespace: &m.id.namespace,
+            key_id: &result.key_id,
+            content_sha256: &result.content_sha256,
+        },
+        &lock,
+        &devstribution_core::sbom::Tool {
+            name: "devstribution",
+            version: env!("CARGO_PKG_VERSION"),
+        },
+        &devstribution_host::time::rfc3339(devstribution_host::time::now_secs()),
+    );
+    let path = bom_path(out);
+    let text = serde_json::to_string_pretty(&bom)?
+        + "
+";
+    fs::write(&path, text).with_context(|| format!("writing {}", path.display()))?;
+    Ok(path)
+}
+
+/// `dist/my-tool-0.1.0.dsapp` → `dist/my-tool-0.1.0.sbom.cdx.json`.
+pub fn bom_path(package: &Path) -> PathBuf {
+    package.with_extension("sbom.cdx.json")
 }
 
 /// `pack --list`: what would go into the package, with no checks of the code and no signing.

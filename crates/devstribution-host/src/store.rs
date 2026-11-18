@@ -22,6 +22,7 @@ use devstribution_core::signing::{PublicKey, parse_public_key, public_key_base64
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+use crate::eventlog;
 use crate::guard::GuardHit;
 use crate::journal::{self, Journal};
 use crate::paths::Paths;
@@ -957,6 +958,44 @@ impl Store {
         if result.is_err() {
             let _ = fs::remove_dir_all(&stage);
         }
+        // The package's file name, not where it was: the folder is the user's.
+        let file = package_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        match &result {
+            Err(e) => eventlog::write(
+                eventlog::Level::Warning,
+                eventlog::id::REFUSED,
+                &eventlog::text(
+                    "devstribution refused a package.",
+                    &[
+                        ("Package", &file),
+                        (
+                            "Reason",
+                            &format!("{e:#}").replace(&package_path.display().to_string(), &file),
+                        ),
+                    ],
+                ),
+            ),
+            Ok(p) => {
+                if let Some(b) = &p.blocked {
+                    eventlog::write(
+                        eventlog::Level::Warning,
+                        eventlog::id::REFUSED,
+                        &eventlog::text(
+                            "Your organisation's policy does not allow this app.",
+                            &[
+                                ("App", &format!("{} {}", p.id, p.version)),
+                                ("Publisher key", &p.key_id),
+                                ("Package", &file),
+                                ("Reason", &b.reasons.join("; ")),
+                            ],
+                        ),
+                    );
+                }
+            }
+        }
         result
     }
 
@@ -1352,6 +1391,36 @@ impl Store {
                 }
             })?;
 
+        let previous = replaced.as_ref().map(|r| r.version.clone());
+        eventlog::write(
+            eventlog::Level::Info,
+            if previous.is_some() {
+                eventlog::id::UPDATED
+            } else {
+                eventlog::id::INSTALLED
+            },
+            &eventlog::text(
+                if previous.is_some() {
+                    "devstribution updated an app."
+                } else {
+                    "devstribution installed an app."
+                },
+                &[
+                    ("App", &format!("{} {}", pending.id, pending.version)),
+                    ("Previous version", previous.as_deref().unwrap_or("")),
+                    ("Publisher key", &pending.key_id),
+                    ("Content SHA-256", &pending.content_sha256),
+                    (
+                        "Approved by",
+                        if policy_approved {
+                            "your organisation's policy"
+                        } else {
+                            ""
+                        },
+                    ),
+                ],
+            ),
+        );
         if let Some(old) = replaced.filter(|r| r.content_hash != pending.content_hash) {
             let _ = fs::remove_dir_all(self.paths.app_dir(&id, &old.content_hash));
             let _ = fs::remove_dir_all(self.paths.env_dir(&id, &old.content_hash));
@@ -1376,12 +1445,23 @@ impl Store {
         }
         // Also what an older version declared, or when the manifest above could not be read.
         let _ = crate::secrets::delete_all(id);
-        self.update_state(|state| {
+        let removed = self.update_state(|state| {
             state
                 .apps
                 .remove(id)
                 .ok_or_else(|| anyhow!("`{id}` is not installed"))
         })?;
+        eventlog::write(
+            eventlog::Level::Info,
+            eventlog::id::UNINSTALLED,
+            &eventlog::text(
+                "devstribution uninstalled an app.",
+                &[
+                    ("App", &format!("{id} {}", removed.version)),
+                    ("Publisher key", &removed.key_id),
+                ],
+            ),
+        );
         let _ = fs::remove_dir_all(self.paths.apps().join(&app_id.namespace).join(&app_id.app));
         let _ = fs::remove_dir_all(self.paths.envs().join(&app_id.namespace).join(&app_id.app));
         let _ = fs::remove_dir_all(
@@ -1623,6 +1703,7 @@ impl Store {
                 .insert(record.app_id.clone(), quarantine);
             stop_unsaved = self.save_unsaved_stops().err();
         }
+        log_run(record);
         // The run is recorded even when the stop could not be: it says what the app did.
         let saved = self.save_run(record);
         // The journal is a record beside the run, not part of it: a run is never lost to it.
@@ -1713,20 +1794,44 @@ impl Store {
         }
         let _ = self.save_unsaved_stops();
         let unsaved = self.unsaved_stops().get(id).cloned();
-        self.update_state(|state| {
+        let released = self.update_state(|state| {
             let app = state
                 .apps
                 .get_mut(id)
                 .ok_or_else(|| anyhow!("`{id}` is not installed"))?;
-            if let Some(q) = app.quarantine.take().or(unsaved)
+            let q = app.quarantine.take().or(unsaved);
+            if let Some(q) = &q
                 && allow
                 && !app.guard_allow.contains(&q.hit.rule)
             {
-                app.guard_allow.push(q.hit.rule);
+                app.guard_allow.push(q.hit.rule.clone());
             }
-            Ok(())
+            Ok(q.map(|q| (q, app.version.clone())))
         })?;
         self.unsaved_stops().remove(id);
+        if let Some((q, version)) = released {
+            eventlog::write(
+                eventlog::Level::Warning,
+                if allow {
+                    eventlog::id::QUARANTINE_ALLOWED
+                } else {
+                    eventlog::id::QUARANTINE_RELEASED
+                },
+                &eventlog::text(
+                    if allow {
+                        "The user released an app held after a stop, and allowed what stopped it: \
+                         the rule now only reports for this app."
+                    } else {
+                        "The user released an app held after a stop: its next run is checked as before."
+                    },
+                    &[
+                        ("App", &format!("{id} {version}")),
+                        ("Rule", &q.hit.rule),
+                        ("Stopped run", &q.run_id),
+                    ],
+                ),
+            );
+        }
         self.app(id)
     }
 
@@ -2414,6 +2519,91 @@ fn icon_data_url(app_dir: &Path, manifest: &Manifest) -> Option<String> {
     }
     let b64 = base64::engine::general_purpose::STANDARD.encode(data);
     Some(format!("data:{mime};base64,{b64}"))
+}
+
+/// A run in the Event Log, then what the guard did in it: how it ended, never what it was
+/// given or what its error said.
+fn log_run(record: &RunRecord) {
+    let (level, id, what) = match record.status {
+        RunStatus::Ok => (eventlog::Level::Info, eventlog::id::RUN_OK, "An app ran."),
+        RunStatus::Error => (
+            eventlog::Level::Warning,
+            eventlog::id::RUN_FAILED,
+            "An app's run failed.",
+        ),
+        RunStatus::Cancelled => (
+            eventlog::Level::Info,
+            eventlog::id::RUN_CANCELLED,
+            "An app's run was cancelled.",
+        ),
+        RunStatus::Running => return,
+    };
+    let app = format!("{} {}", record.app_id, record.version);
+    let seconds = format!("{:.1} s", record.duration_ms as f64 / 1000.0);
+    let findings = record.guard.len().to_string();
+    eventlog::write(
+        level,
+        id,
+        &eventlog::text(
+            what,
+            &[
+                ("App", &app),
+                ("Run", &record.id),
+                ("Kind", &record.kind),
+                ("Duration", &seconds),
+                (
+                    "Guard findings",
+                    if record.guard.is_empty() {
+                        ""
+                    } else {
+                        &findings
+                    },
+                ),
+            ],
+        ),
+    );
+    for hit in &record.guard {
+        let (level, id, what) = match hit.action.as_str() {
+            "stop" => (
+                eventlog::Level::Error,
+                eventlog::id::GUARD_STOP,
+                "devstribution stopped a run, and holds the app until the user decides.",
+            ),
+            "block" => (
+                eventlog::Level::Warning,
+                eventlog::id::GUARD_BLOCK,
+                "devstribution blocked a call an app made; the run went on.",
+            ),
+            _ => (
+                eventlog::Level::Info,
+                eventlog::id::GUARD_REPORT,
+                "devstribution reported something an app did.",
+            ),
+        };
+        let mut detail = hit.detail.clone();
+        if detail.len() > 500 {
+            let mut end = 500;
+            while !detail.is_char_boundary(end) {
+                end -= 1;
+            }
+            detail.truncate(end);
+            detail.push('…');
+        }
+        eventlog::write(
+            level,
+            id,
+            &eventlog::text(
+                what,
+                &[
+                    ("App", &app),
+                    ("Run", &record.id),
+                    ("Rule", &hit.rule),
+                    ("What the app did", &format!("It {}", hit.message)),
+                    ("Detail", &detail),
+                ],
+            ),
+        );
+    }
 }
 
 #[cfg(test)]
