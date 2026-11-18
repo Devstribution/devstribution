@@ -12,8 +12,8 @@ company PC and in managed mode) and **reputation** (SignPath Foundation wants a 
 0.5.0 went after both and fixed what the assessment found; 0.6.0 makes the launcher ready
 for a company network and builds the reputation. From 0.8.0 each release takes one theme:
 
-- **0.8.0**: Tier 4 only, evidence for IT: the Windows Event Log and the bill of materials
-  `pack` writes. P6 (Italian), P7 (several files in one input) and P13 (example apps) wait for
+- **0.8.0** (18 November): Tier 4 only, evidence for IT: the Windows Event Log, the bills of
+  materials (written by `pack`, saved from the new Security page) and that page. P6 (Italian), P7 (several files in one input) and P13 (example apps) wait for
   releases of their own.
 - **0.7.0** (13 November): P1 and P2 (the proxy Windows is set to, and the company's package
   mirror), checked with B1 and B2 on the stand-in company PC (N4), and the fixes those checks
