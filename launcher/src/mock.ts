@@ -1,6 +1,6 @@
 // Demo backend for previewing the UI in a browser. Nothing here runs in the real launcher.
 
-import type { Api, AppView, JournalEntry, PendingInstall, Policy, RunEvent, RunRecord, ScheduleView, Settings, StepEvent, Stats, Trust, WhatsNew } from "./api";
+import type { Api, AppView, GuardEvent, SecurityView, JournalEntry, PendingInstall, Policy, RunEvent, RunRecord, ScheduleView, Settings, StepEvent, Stats, Trust, WhatsNew } from "./api";
 
 const now = () => Math.floor(Date.now() / 1000);
 const DAY = 86_400;
@@ -564,6 +564,25 @@ export function mockApi(): Api {
         ],
       };
     },
+    async security(): Promise<SecurityView> {
+      const s = await this.settings();
+      const events: GuardEvent[] = [];
+      for (const r of runs.slice(0, 200)) for (const g of r.guard ?? []) events.push({ ...g, run_id: r.id, app_id: r.app_id, app_title: r.app_title, version: r.version, at: r.started_at });
+      for (const a of apps) if (a.quarantine) events.push({ ...a.quarantine.hit, run_id: a.quarantine.run_id, app_id: a.id, app_title: a.title, version: a.version, at: a.quarantine.at });
+      const sap = apps.find((a) => a.id === "ops/sap-stock-check");
+      if (sap) events.push({ action: "block", rule: "network", message: "tried to reach a host its package does not declare", detail: "telemetry.example.net:443", run_id: "demo-blocked", app_id: sap.id, app_title: sap.title, version: sap.version, at: now() - 26 * 3600 });
+      events.sort((x, y) => y.at - x.at);
+      return {
+        version: s.version, mode: s.mode, policy: s.policy, publishers: s.publishers, revocations: s.revocations,
+        journal: await this.cleanupLog(),
+        events, runs_read: 200,
+        packages: Object.fromEntries(apps.map((a, i) => [a.id, a.kind === "gui" ? 0 : 3 + ((i * 7) % 19)])),
+        launcher_bom: { components: 313, rust: 308, npm: 4, programs: 1 },
+        log_file: s.log_file,
+      };
+    },
+    async saveAppSbom() { throw new Error("The browser demo cannot save files: in the launcher, this asks where to save the app’s bill of materials."); },
+    async saveLauncherSbom() { throw new Error("The browser demo cannot save files: in the launcher, this asks where to save devstribution’s bill of materials."); },
     async uninstallLauncher() { throw new Error("The browser demo has no uninstaller: in the launcher, this opens devstribution's own uninstaller."); },
     async takePendingFiles() { return []; },
     async takePendingApp() { return null; },

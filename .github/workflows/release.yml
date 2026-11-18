@@ -197,6 +197,10 @@ jobs:
         run: |
           python3 scripts/release.py latest-json "$TAG" dist/*-setup.exe --out dist/latest.json
           rm dist/*-setup.exe.sig
+      - name: Bill of materials (what the installer ships, the same file it carries)
+        env:
+          TAG: ${{ github.ref_name }}
+        run: cp SBOM.cdx.json "dist/devstribution-${TAG#v}-sbom.cdx.json"
       - name: Checksums
         working-directory: dist
         run: |

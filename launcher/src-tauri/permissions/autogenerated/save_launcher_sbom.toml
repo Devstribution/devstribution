@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-save-launcher-sbom"
+description = "Enables the save_launcher_sbom command without any pre-configured scope."
+commands.allow = ["save_launcher_sbom"]
+
+[[permission]]
+identifier = "deny-save-launcher-sbom"
+description = "Denies the save_launcher_sbom command without any pre-configured scope."
+commands.deny = ["save_launcher_sbom"]

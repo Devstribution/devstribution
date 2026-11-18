@@ -14,8 +14,8 @@ use devstribution_host::policy::{self, Policy, ScanDanger};
 use devstribution_host::revocations::{Imported, RevocationStatus, Revoked};
 use devstribution_host::run::{self, RunEvent};
 use devstribution_host::store::{
-    CleanupPlan, CleanupResult, InstallStep, InstalledApp, JournalReport, PendingInstall,
-    Quarantine, RunRecord, Stats, Store, UpdateCheck,
+    CleanupPlan, CleanupResult, GuardEvent, InstallStep, InstalledApp, JournalReport,
+    PendingInstall, Quarantine, RunRecord, Stats, Store, UpdateCheck,
 };
 use devstribution_host::zone::Origin;
 use devstribution_host::{Paths, applog, proxy, runner, secrets, uv};
@@ -1173,6 +1173,168 @@ async fn cleanup_log(app: AppHandle) -> CmdResult<JournalReport> {
     blocking(move || Ok(state(&app).store.journal_report())).await
 }
 
+/// The launcher's own bill of materials (`SBOM.cdx.json`, which the installer puts beside it),
+/// in a few numbers.
+#[derive(Serialize)]
+struct LauncherBom {
+    components: usize,
+    rust: usize,
+    npm: usize,
+    programs: usize,
+}
+
+/// Everything the Security page shows, in one call.
+#[derive(Serialize)]
+struct SecurityView {
+    version: &'static str,
+    mode: &'static str,
+    policy: Option<PolicyView>,
+    publishers: Vec<PinView>,
+    revocations: RevocationStatus,
+    journal: JournalReport,
+    /// What the runtime guard did in the latest runs, newest first.
+    events: Vec<GuardEvent>,
+    /// How many runs `events` looked through.
+    runs_read: usize,
+    /// Per installed app: the packages its `uv.lock` installs.
+    packages: HashMap<String, usize>,
+    /// `None` in a build without the file (a development build).
+    launcher_bom: Option<LauncherBom>,
+    log_file: String,
+}
+
+const SECURITY_RUNS: usize = 200;
+
+fn launcher_bom_file(app: &AppHandle) -> Option<PathBuf> {
+    let file = app
+        .path()
+        .resolve("SBOM.cdx.json", tauri::path::BaseDirectory::Resource)
+        .ok()?;
+    dunce::canonicalize(file).ok()
+}
+
+fn launcher_bom(app: &AppHandle) -> Option<LauncherBom> {
+    let text = std::fs::read_to_string(launcher_bom_file(app)?).ok()?;
+    let bom: Value = serde_json::from_str(&text).ok()?;
+    let purls: Vec<&str> = bom["components"]
+        .as_array()?
+        .iter()
+        .filter_map(|c| c["purl"].as_str())
+        .collect();
+    let count = |p: &str| purls.iter().filter(|u| u.starts_with(p)).count();
+    Some(LauncherBom {
+        components: purls.len(),
+        rust: count("pkg:cargo/"),
+        npm: count("pkg:npm/"),
+        programs: purls.len() - count("pkg:cargo/") - count("pkg:npm/"),
+    })
+}
+
+#[tauri::command]
+async fn security(app: AppHandle) -> CmdResult<SecurityView> {
+    blocking(move || {
+        let s = state(&app);
+        let packages = s
+            .store
+            .installed()?
+            .into_iter()
+            .map(|a| {
+                let lock =
+                    std::fs::read_to_string(a.app_dir.join(devstribution_core::package::UV_LOCK))
+                        .unwrap_or_default();
+                (a.record.id, devstribution_core::deps::packages(&lock).len())
+            })
+            .collect();
+        Ok(SecurityView {
+            version: env!("CARGO_PKG_VERSION"),
+            mode: if s.store.policy().is_some() {
+                "managed"
+            } else {
+                "free"
+            },
+            policy: s.store.policy().map(|p| PolicyView::new(p, &s.store)),
+            publishers: s
+                .store
+                .pins()?
+                .into_iter()
+                .map(|(namespace, p)| PinView {
+                    namespace,
+                    key_id: p.key_id,
+                    pinned_at: p.pinned_at,
+                    source: p.source,
+                })
+                .collect(),
+            revocations: s.store.revocation_status(),
+            journal: s.store.journal_report(),
+            events: s.store.guard_events(SECURITY_RUNS)?,
+            runs_read: SECURITY_RUNS,
+            packages,
+            launcher_bom: launcher_bom(&app),
+            log_file: s.store.paths.launcher_log().display().to_string(),
+        })
+    })
+    .await
+}
+
+/// Asks where to save `file_name` and writes `text` there, then shows it in the file manager.
+/// The backend asks, so the page cannot choose a path. Returns whether a file was written.
+fn save_json(app: &AppHandle, title: &str, file_name: &str, text: &str) -> anyhow::Result<bool> {
+    use tauri_plugin_dialog::DialogExt;
+    let Some(path) = app
+        .dialog()
+        .file()
+        .set_title(title)
+        .set_file_name(file_name)
+        .add_filter("CycloneDX bill of materials", &["json"])
+        .blocking_save_file()
+    else {
+        return Ok(false);
+    };
+    let path = path.into_path()?;
+    std::fs::write(&path, text)?;
+    app.opener().reveal_item_in_dir(&path)?;
+    Ok(true)
+}
+
+/// Saves an installed app's bill of materials (CycloneDX, from its `uv.lock`), for IT.
+#[tauri::command]
+async fn save_app_sbom(app: AppHandle, id: String) -> CmdResult<bool> {
+    blocking(move || {
+        let bom = state(&app).store.app_bom(&id, env!("CARGO_PKG_VERSION"))?;
+        let installed = state(&app).store.app(&id)?;
+        let name = format!(
+            "{}-{}-sbom.cdx.json",
+            id.replace('/', "-"),
+            installed.record.version
+        );
+        save_json(
+            &app,
+            "Save the app's bill of materials",
+            &name,
+            &serde_json::to_string_pretty(&bom)?,
+        )
+    })
+    .await
+}
+
+/// Saves a copy of the launcher's own bill of materials.
+#[tauri::command]
+async fn save_launcher_sbom(app: AppHandle) -> CmdResult<bool> {
+    blocking(move || {
+        let file = launcher_bom_file(&app).ok_or_else(|| {
+            anyhow::anyhow!("the bill of materials is not part of this build of devstribution")
+        })?;
+        let text = std::fs::read_to_string(file)?;
+        save_json(
+            &app,
+            "Save devstribution's bill of materials",
+            &format!("devstribution-{}-sbom.cdx.json", env!("CARGO_PKG_VERSION")),
+            &text,
+        )
+    })
+    .await
+}
+
 /// Opens the licences of what ships inside the launcher (the installer puts the file beside it).
 #[tauri::command]
 async fn open_notices(app: AppHandle) -> CmdResult<()> {
@@ -1556,6 +1718,9 @@ pub fn run() {
             cleanup_preview,
             cleanup_runs,
             cleanup_log,
+            security,
+            save_app_sbom,
+            save_launcher_sbom,
             diagnostics,
             set_secret,
             clear_secret,

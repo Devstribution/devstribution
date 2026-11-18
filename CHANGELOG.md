@@ -10,6 +10,19 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
 
 ## [Unreleased]
 
+### Added
+
+- **A Security page** in the launcher: what devstribution checks, on one page. At a glance: the
+  mode and the publishers or authors trusted, the runtime guard, revoked keys, and whether the run
+  journal adds up. Then each installed app with its publisher key, declared network and the rules
+  allowed after a stop; what the runtime guard stopped, blocked or reported in the latest runs;
+  and how to check that a download came from this project. Settings links to it.
+- **Bills of materials (SBOM)**: the Security page saves any installed app's bill of materials,
+  every package its lockfile installs with the hashes of its wheels and the dependencies between
+  them, as CycloneDX 1.6 JSON for IT's tools. devstribution's own (its Rust libraries, npm
+  packages and uv, with their licences and hashes) ships with the installer, can be saved from
+  the same page, and is attached to each release.
+
 ## [0.7.0] - 2026-11-13
 
 ### Added

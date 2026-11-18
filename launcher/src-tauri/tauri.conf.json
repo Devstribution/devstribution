@@ -54,7 +54,8 @@
       "binaries/uv"
     ],
     "resources": {
-      "../../THIRD-PARTY-NOTICES.txt": "THIRD-PARTY-NOTICES.txt"
+      "../../THIRD-PARTY-NOTICES.txt": "THIRD-PARTY-NOTICES.txt",
+      "../../SBOM.cdx.json": "SBOM.cdx.json"
     },
     "fileAssociations": [
       {

@@ -13,6 +13,7 @@ pub mod manifest;
 pub mod package;
 pub mod paths;
 pub mod revocation;
+pub mod sbom;
 pub mod scan;
 pub mod signing;
 pub mod trust;

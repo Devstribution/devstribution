@@ -47,6 +47,18 @@ pub fn stamp(secs: u64) -> String {
     )
 }
 
+/// `YYYY-MM-DDTHH:MM:SSZ` (UTC).
+pub fn rfc3339(secs: u64) -> String {
+    let rem = secs % 86_400;
+    format!(
+        "{}T{:02}:{:02}:{:02}Z",
+        date(secs),
+        rem / 3600,
+        rem % 3600 / 60,
+        rem % 60
+    )
+}
+
 /// Random lowercase hex, for tokens and folder names.
 pub fn random_hex(bytes: usize) -> String {
     let mut buf = vec![0u8; bytes];
@@ -63,5 +75,6 @@ mod tests {
         assert_eq!(date(0), "1970-01-01");
         assert_eq!(date(951_782_400), "2000-02-29");
         assert_eq!(stamp(1_792_612_800), "20261021-200000");
+        assert_eq!(rfc3339(1_792_612_800), "2026-10-21T20:00:00Z");
     }
 }
