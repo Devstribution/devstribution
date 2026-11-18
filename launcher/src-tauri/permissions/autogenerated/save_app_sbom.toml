@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-save-app-sbom"
+description = "Enables the save_app_sbom command without any pre-configured scope."
+commands.allow = ["save_app_sbom"]
+
+[[permission]]
+identifier = "deny-save-app-sbom"
+description = "Denies the save_app_sbom command without any pre-configured scope."
+commands.deny = ["save_app_sbom"]

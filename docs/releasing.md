@@ -26,9 +26,10 @@ behaviour, a patch (0.1.1) only fixes. The package format has its own number (fo
    `## [0.2.0] - <today>`, written for people who use devstribution, not for us. Update the links
    at the bottom.
 2. **Version.** `python scripts/release.py bump 0.2.0`, then `cargo update --workspace`.
-   Then `python scripts/third_party_notices.py`: it rewrites `THIRD-PARTY-NOTICES.txt`, which the
-   installer ships, for the dependency versions of this release (it needs a network connection).
-   Commit the file if it changed. Also `python scripts/update_dep_data.py`: it refreshes the lists
+   Then `python scripts/third_party_notices.py`: it rewrites `THIRD-PARTY-NOTICES.txt` and
+   `SBOM.cdx.json` (the launcher's bill of materials, which names the version), both shipped by
+   the installer, for the dependency versions of this release (it needs a network connection).
+   Commit both: the SBOM changes with every version. Also `python scripts/update_dep_data.py`: it refreshes the lists
    the dependency check bundles (malicious and popular PyPI packages), which go stale within
    weeks (it needs a network connection). Commit them if they changed.
    If the release changes how apps install or start, time it:
@@ -53,6 +54,7 @@ behaviour, a patch (0.1.1) only fixes. The package format has its own number (fo
 6. **Read the draft.** The workflow creates a *draft pre-release* with:
    - the installer `devstribution_<version>_x64-setup.exe`;
    - the CLI for Windows, Linux and macOS;
+   - `devstribution-<version>-sbom.cdx.json`, the launcher's bill of materials;
    - `SHA256SUMS.txt`;
    - the changelog section as notes, under a notice that the build is not signed.
 

@@ -14,7 +14,7 @@ use devstribution_core::diff::{self, AppDiff, AppFolder};
 use devstribution_core::files::{FilesList, sha256};
 use devstribution_core::manifest::{AppId, Kind, Manifest, Version};
 use devstribution_core::package::{
-    self, Limits, PYPROJECT, SignatureStatus, VerifiedPackage, VerifyOptions,
+    self, Limits, PYPROJECT, SignatureStatus, UV_LOCK, VerifiedPackage, VerifyOptions,
 };
 use devstribution_core::revocation::ListFiles;
 use devstribution_core::scan::{self, ScanReport};
@@ -313,6 +313,19 @@ pub struct JournalReport {
     pub missing: Vec<String>,
     /// The cleanups, newest first.
     pub cleanups: Vec<journal::Entry>,
+}
+
+/// One thing the runtime guard did during a run, for the security hub.
+#[derive(Debug, Clone, Serialize)]
+pub struct GuardEvent {
+    pub run_id: String,
+    pub app_id: String,
+    pub app_title: String,
+    pub version: String,
+    /// When the run started (unix seconds).
+    pub at: u64,
+    #[serde(flatten)]
+    pub hit: GuardHit,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1762,6 +1775,50 @@ impl Store {
         Ok(out)
     }
 
+    // -- security hub ------------------------------------------------------------------------
+
+    /// What the runtime guard did in the latest `runs` runs, newest first: one entry per hit.
+    pub fn guard_events(&self, runs: usize) -> Result<Vec<GuardEvent>> {
+        Ok(self
+            .runs(None, runs)?
+            .into_iter()
+            .flat_map(|r| {
+                r.guard.into_iter().map(move |hit| GuardEvent {
+                    run_id: r.id.clone(),
+                    app_id: r.app_id.clone(),
+                    app_title: r.app_title.clone(),
+                    version: r.version.clone(),
+                    at: r.started_at,
+                    hit,
+                })
+            })
+            .collect())
+    }
+
+    /// The installed app's software bill of materials (CycloneDX JSON), from its `uv.lock`.
+    pub fn app_bom(&self, id: &str, launcher_version: &str) -> Result<Value> {
+        let app = self.app(id)?;
+        let lock = fs::read_to_string(app.app_dir.join(UV_LOCK))
+            .with_context(|| format!("reading the lockfile of {id}"))?;
+        let version = app.record.version.clone();
+        Ok(devstribution_core::sbom::app_bom(
+            &devstribution_core::sbom::Subject {
+                id: &app.record.id,
+                title: &app.manifest.title,
+                version: &version,
+                namespace: &app.manifest.id.namespace,
+                key_id: &app.record.key_id,
+                content_sha256: &app.record.content_sha256,
+            },
+            &lock,
+            &devstribution_core::sbom::Tool {
+                name: "devstribution",
+                version: launcher_version,
+            },
+            &crate::time::rfc3339(now_secs()),
+        ))
+    }
+
     // -- cleanup -----------------------------------------------------------------------------
 
     fn journal(&self) -> Journal {
@@ -2450,6 +2507,39 @@ mod tests {
         };
         store.save_run(&record).unwrap();
         store.journal_run(id);
+    }
+
+    #[test]
+    fn guard_events_list_each_hit_newest_run_first() {
+        let (_dir, store) = store();
+        add_run(&store, "20261101-000000-aa", RunStatus::Ok, 100, 1);
+        add_run(&store, "20261102-000000-bb", RunStatus::Error, 200, 1);
+        let mut stopped = store.run("20261102-000000-bb").unwrap();
+        stopped.guard = vec![
+            GuardHit {
+                action: "observe".into(),
+                rule: "network".into(),
+                message: "used the network".into(),
+                detail: "example.com".into(),
+            },
+            GuardHit {
+                action: "stop".into(),
+                rule: "files".into(),
+                message: "wrote outside its folders".into(),
+                detail: "C:/x".into(),
+            },
+        ];
+        store.save_run(&stopped).unwrap();
+        let events = store.guard_events(50).unwrap();
+        assert_eq!(events.len(), 2);
+        assert!(
+            events
+                .iter()
+                .all(|e| e.run_id == "20261102-000000-bb" && e.at == 200)
+        );
+        assert_eq!(events[1].hit.action, "stop");
+        let json = serde_json::to_value(&events[1]).unwrap();
+        assert_eq!(json["rule"], "files", "the hit's fields are flattened");
     }
 
     #[test]

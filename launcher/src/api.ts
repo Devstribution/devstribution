@@ -364,6 +364,34 @@ export interface Settings {
   update_folders: string[];
 }
 
+/** What the runtime guard did in one run, for the Security page's log. */
+export interface GuardEvent extends GuardHit {
+  run_id: string;
+  app_id: string;
+  app_title: string;
+  version: string;
+  at: number;
+}
+
+/** Everything devstribution checks, in one place: the Security page. */
+export interface SecurityView {
+  version: string;
+  mode: "free" | "managed";
+  policy?: Policy | null;
+  publishers: Settings["publishers"];
+  revocations: RevocationStatus;
+  journal: JournalReport;
+  /** What the runtime guard did in the latest runs, newest first. */
+  events: GuardEvent[];
+  /** How many runs `events` looked through. */
+  runs_read: number;
+  /** Per installed app: the packages its uv.lock installs. */
+  packages: Record<string, number>;
+  /** What ships inside devstribution; null in a development build. */
+  launcher_bom?: { components: number; rust: number; npm: number; programs: number } | null;
+  log_file: string;
+}
+
 /** A newer version of an installed app, found in an update folder. */
 export interface AppUpdate {
   id: string;
@@ -439,6 +467,11 @@ export interface Api {
   setSecret(id: string, name: string, value: string): Promise<void>;
   clearSecret(id: string, name: string): Promise<void>;
   settings(): Promise<Settings>;
+  security(): Promise<SecurityView>;
+  /** Asks where to save the app's bill of materials (CycloneDX) and saves it. False if cancelled. */
+  saveAppSbom(id: string): Promise<boolean>;
+  /** The same for devstribution's own bill of materials. */
+  saveLauncherSbom(): Promise<boolean>;
   /** Starts devstribution's own uninstaller and closes the launcher. */
   uninstallLauncher(): Promise<void>;
   takePendingFiles(): Promise<string[]>;
@@ -536,6 +569,9 @@ async function tauriApi(): Promise<Api> {
     setSecret: (id, name, value) => invoke("set_secret", { id, name, value }),
     clearSecret: (id, name) => invoke("clear_secret", { id, name }),
     settings: () => invoke("settings"),
+    security: () => invoke("security"),
+    saveAppSbom: (id) => invoke("save_app_sbom", { id }),
+    saveLauncherSbom: () => invoke("save_launcher_sbom"),
     uninstallLauncher: () => invoke("uninstall_launcher"),
     takePendingFiles: () => invoke("take_pending_files"),
     takePendingApp: () => invoke("take_pending_app"),

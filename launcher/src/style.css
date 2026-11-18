@@ -737,13 +737,36 @@ kbd { font: inherit; font-size: var(--fs-xs); border: 1px solid var(--border-str
    9. NARROW WINDOWS
    ===================================================================================== */
 
+/* Security page */
+.sec-checks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-3); }
+.sec-check { display: flex; gap: 10px; padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-lg); }
+.sec-check .bi { flex: none; color: var(--success-text); }
+.sec-check.warn { border-color: var(--warning); }
+.sec-check.warn .bi { color: var(--warning-text); }
+.sec-check .t { font-weight: var(--fw-bold); font-size: var(--fs-sm); }
+.sec-check .s { font-size: var(--fs-xs); color: var(--text-2); margin-top: 2px; }
+.sec-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 18px; align-items: start; }
+.sec-apps, .sec-events { display: flex; flex-direction: column; }
+.sec-app, .sec-event { display: flex; align-items: center; gap: var(--sp-3); padding: 10px 0; border-top: 1px solid var(--border); }
+.sec-app:first-child, .sec-event:first-child { border-top: 0; }
+.sec-event { align-items: flex-start; }
+.sec-app .t { display: block; text-align: left; }
+.sec-tags { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+.nowrap { white-space: nowrap; }
+.sec-note { margin: -6px 0 var(--sp-2); }
+.mono.tiny { font-size: var(--fs-xs); }
+
 @media (max-width: 1100px) {
+  .sec-checks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sec-grid { grid-template-columns: minmax(0, 1fr); }
   .search-results { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .results { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dash { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 860px) {
+  .sec-checks { grid-template-columns: minmax(0, 1fr); }
+  .sec-app { flex-wrap: wrap; }
   .sidebar { flex-basis: 200px; }
   .shelves { grid-template-columns: minmax(0, 1fr); }
   .page { padding: 28px var(--sp-5) 110px; }

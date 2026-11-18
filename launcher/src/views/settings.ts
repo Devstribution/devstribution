@@ -1,8 +1,8 @@
-import { X, Check, Pipette, FolderOpen, FolderPlus, Trash2, ClipboardCopy, FileUp } from "lucide";
+import { X, Check, Pipette, FolderOpen, FolderPlus, Trash2, ClipboardCopy, FileUp, ShieldCheck } from "lucide";
 import type { Ctx } from "../main";
 import { openCleanup } from "./cleanup";
 import { checkForUpdate, openWhatsNew } from "./update";
-import type { Policy, Settings } from "../api";
+import type { Policy, RevocationStatus, Settings } from "../api";
 import { h, icon, clear, relTime, toast, errorText, copyText, trapFocus, keepFocus } from "../ui";
 import { ACCENTS, DEFAULT_LOOK, textOn, type Look, type Theme, type StatusColours } from "../look";
 
@@ -92,7 +92,11 @@ export function toggleSettings(ctx: Ctx) {
     ];
     pop.append(
       ...(s.policy ? managedGroups(s.policy) : free),
-      revocationsGroup(ctx, s),
+      h("div", { class: "settings-group" },
+        h("span", { class: "section-label" }, "Security"),
+        h("div", { class: "small soft-text" }, "What devstribution checks, what the runtime guard did, and the bill of materials of each app, on one page."),
+        h("button", { class: "btn small self-start", onclick: () => { close(); ctx.navigate("#/security"); } }, icon(ShieldCheck, 14), "Open Security")),
+      revocationsGroup(ctx, s.revocations),
       appUpdatesGroup(ctx, s),
       h("div", { class: "settings-group" },
         h("span", { class: "section-label" }, "Storage"),
@@ -175,8 +179,7 @@ function aboutGroup(ctx: Ctx, s: Settings) {
 }
 
 /** Revoked keys: which list is in use, publishers' statements, and an import by hand. */
-function revocationsGroup(ctx: Ctx, s: Settings) {
-  const r = s.revocations;
+export function revocationsGroup(ctx: Ctx, r: RevocationStatus) {
   const date = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
   const list = r.serial != null && r.issued && r.expires
     ? `Revocations known up to ${date(r.issued)} (list ${r.serial}, ${r.entries} ${r.entries === 1 ? "entry" : "entries"}${r.source === "bundled" ? ", came with devstribution" : ""}).`
@@ -231,7 +234,7 @@ function updates(ctx: Ctx, s: Settings) {
 }
 
 /** Managed mode: the policy IT set, and the authors it approves. */
-function managedGroups(p: Policy): HTMLElement[] {
+export function managedGroups(p: Policy): HTMLElement[] {
   const rules = [
     p.scan_danger === "refuse" ? "Packages whose code does things malware does are not installed." : "You decide about packages whose code does things malware does.",
     p.users_may_allow_guard_rules ? "You may let an app run past what devstribution stopped." : "Only IT can let an app run past what devstribution stopped.",

@@ -1,23 +1,65 @@
 # devstribution
 
-Writing code has become much faster, especially with coding agents. Sharing it with colleagues
-is often still the hard part: Python has to be installed, installers have to be built and signed,
-and IT, rightly, wants to know what runs on company PCs. **devstribution** is an attempt to make
-this easier. Python apps (tools, automations, proofs of concept) are shared as signed packages,
-and a single signed launcher checks, installs and runs them. Each app is trusted according to who
-published it, and the launcher checks that what you run is exactly what that publisher signed.
+**Your coding agent wrote a Python tool in an hour. devstribution gets it onto your colleagues'
+PCs the same afternoon: signed, checked, no admin rights, and IT can see what runs.**
 
-**Status: early pre-releases (0.x), Windows only.** The installer and the CLI are on the
-[releases page](https://github.com/Devstribution/devstribution/releases), good for trying it out but
-not yet for everyday use: the launcher is not code-signed (Windows SmartScreen warns when the
-installer starts), and a locked-down company PC and managed mode still need testing on real PCs
-(the [roadmap](docs/roadmap.md) has what comes before a signed 1.0). The design is
-in [docs/plan.md](docs/plan.md); the launcher's look (palette, type, components) in
-[docs/design.md](docs/design.md). What the platform protects against, and what it doesn't, is in
-[docs/security.md](docs/security.md). For IT departments: [docs/managed-mode.md](docs/managed-mode.md)
-explains how to allow only the authors you approve.
+You pack the tool into one signed `.dsapp` file. Colleagues install the devstribution launcher
+once, then double-click any `.dsapp`: the launcher checks who signed it and that nothing was
+changed, scans its code, sets up its own Python with [uv](https://docs.astral.sh/uv/), and runs
+it, with a form for its inputs instead of a terminal. Updates must come from the same publisher. A
+runtime guard stops an app that does what it did not declare, and IT can limit installs to the
+authors it approves and export a bill of materials (SBOM) of every app.
 
+<!-- P13: a short GIF here, from a double-clicked .dsapp to a finished run. -->
 ![The launcher: home with recent and most used apps](docs/images/home.png)
+
+### Compared with what you would do today
+
+| | Recipient needs | Signed and checked | Updates | What IT sees |
+|---|---|---|---|---|
+| Email a `.py` | Python and the right packages | No | Email it again | Nothing |
+| [PyInstaller](https://pyinstaller.org) or [Nuitka](https://nuitka.net) | Nothing: one `.exe` per app, Python inside | Only with your own code-signing certificate; unsigned executables often trip antivirus | Build and send a new `.exe` | An unknown `.exe` |
+| [Briefcase](https://briefcase.readthedocs.io) | An installer per app | Only with your own certificate | A new installer | An installer per app |
+| **devstribution** | The launcher, installed once, per user | Every package is signed with its author's key, checked and its code scanned before it installs | A newer `.dsapp`, accepted only from the same publisher; IT can point every PC at a shared folder | On each PC, nothing sent anywhere: who published each app, what it may do, what the guard stopped, and its SBOM |
+
+**Status: early pre-releases (0.x), Windows only.** Good for trying out, not yet for everyday use:
+the launcher itself is not code-signed yet (Windows SmartScreen warns when the installer starts),
+and a locked-down company PC and managed mode still need testing on real PCs. The
+[roadmap](docs/roadmap.md) has what comes before a signed 1.0. What the platform protects against,
+and what it doesn't: [docs/security.md](docs/security.md). For IT departments:
+[docs/managed-mode.md](docs/managed-mode.md). The design: [docs/plan.md](docs/plan.md) and
+[docs/design.md](docs/design.md).
+
+## Try it
+
+From the [latest release](https://github.com/Devstribution/devstribution/releases):
+
+1. **Run `devstribution_<version>_x64-setup.exe`.** It installs for your Windows user, without admin
+   rights. SmartScreen warns because it is not code-signed yet: "More info", then "Run anyway".
+2. **Unzip `devstribution-cli-<version>-x86_64-pc-windows-msvc.zip`** (macOS and Linux builds are
+   there too) and install [uv](https://docs.astral.sh/uv/getting-started/installation/). Then:
+
+```sh
+devstribution init my-tool --id yourname/my-tool      # a form app that passes every check
+devstribution dev my-tool -i name=Ada                # run it as the launcher would
+devstribution keygen --namespace yourname            # once: your publisher key
+devstribution pack my-tool                           # check, sign -> my-tool/dist/my-tool-0.1.0.dsapp
+```
+
+3. **Double-click `my-tool-0.1.0.dsapp`.** That file is what you send to colleagues.
+
+An app is an ordinary Python folder: `pyproject.toml` with a `[tool.devstribution]` section, a
+`uv.lock`, and the code. Point your coding agent at the `AGENTS.md` that `init` writes. The guide
+from `init` to a delivered `.dsapp`, including releasing from GitHub Actions with no key on your
+PC, is [docs/authors.md](docs/authors.md); see also `examples/`.
+
+To check that a download came from this repository's release workflow, with the
+[GitHub CLI](https://cli.github.com), in the folder you downloaded to:
+
+```sh
+gh attestation verify SHA256SUMS.txt --repo Devstribution/devstribution
+sha256sum --check --ignore-missing SHA256SUMS.txt
+```
 
 ## What exists today
 
@@ -27,7 +69,7 @@ work on devstribution itself, start with [CONTRIBUTING.md](CONTRIBUTING.md).
 
 | Part | Where |
 |---|---|
-| Launcher (Tauri): home, apps with filters, activity dashboard, install confirmation, app panel, settings; light and dark themes, a choice of accent colours, colour-blind safe status colours | `launcher/` |
+| Launcher (Tauri): home, apps with filters, activity dashboard, install confirmation, app panel, a Security page (checks, runtime guard log, bills of materials), settings; light and dark themes, a choice of accent colours, colour-blind safe status colours | `launcher/` |
 | Install store, uv environments, supervised runs, history, secrets | `crates/devstribution-host` |
 | Package format: manifest, `FILES.sha256`, minisign signatures, safe extraction, wheels-only check | `crates/devstribution-core` |
 | Developer CLI: `init`, `dev`, `pack`, `keygen`, `verify` | `crates/devstribution-cli` |
@@ -40,26 +82,15 @@ work on devstribution itself, start with [CONTRIBUTING.md](CONTRIBUTING.md).
 | **Apps** | **Activity** |
 | ![Apps](docs/images/apps.png) | ![Activity](docs/images/activity.png) |
 
-## Try it
+## Development
 
-You need [Rust](https://rustup.rs) and [uv](https://docs.astral.sh/uv/).
+You need [Rust](https://rustup.rs) and [uv](https://docs.astral.sh/uv/). The CLI from source:
 
 ```sh
 cargo install --path crates/devstribution-cli
-
-devstribution init my-tool --id yourname/my-tool      # a form app that passes every check
-devstribution dev my-tool -i name=Ada                # run it as the launcher would
-devstribution keygen --namespace yourname            # once: your publisher key
-devstribution pack my-tool                           # check, sign -> my-tool/dist/my-tool-0.1.0.dsapp
-devstribution verify my-tool/dist/my-tool-0.1.0.dsapp --key <keys folder>/yourname.pub
 ```
 
-An app is an ordinary Python folder: `pyproject.toml` with a `[tool.devstribution]` section,
-a `uv.lock`, and the code. The guide from `init` to a delivered `.dsapp` is
-[docs/authors.md](docs/authors.md); see also `examples/` and the `AGENTS.md` that `init` writes for
-coding agents.
-
-Run the launcher (needs Node 22+; on Linux also the WebKitGTK libraries listed in the CI workflow):
+The launcher (needs Node 22+; on Linux also the WebKitGTK libraries listed in the CI workflow):
 
 ```sh
 cd launcher
@@ -68,9 +99,7 @@ npm run sidecar        # puts your uv next to the launcher
 npx tauri dev
 ```
 
-`npm run dev` alone serves the UI in a browser with demo data.
-
-## Development
+`npm run dev` alone serves the UI in a browser with demo data. Tests:
 
 ```sh
 cargo test                                            # core, host (install and run with uv), CLI

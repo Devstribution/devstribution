@@ -1,12 +1,13 @@
 import "@fontsource-variable/manrope";
 import "./style.css";
 
-import { House, LayoutGrid, History, Settings as SettingsIcon, Upload, Play, ShieldAlert, RotateCw } from "lucide";
+import { House, LayoutGrid, History, ShieldCheck, Settings as SettingsIcon, Upload, Play, ShieldAlert, RotateCw } from "lucide";
 import { createApi, type Api, type AppUpdate, type AppView, type RunEvent, type RunResult, type UpdateCheck } from "./api";
 import { h, icon, appIcon, clear, fileName, toast, errorText } from "./ui";
 import { homeView } from "./views/home";
 import { appsView } from "./views/apps";
 import { activityView } from "./views/activity";
+import { securityView } from "./views/security";
 import { openAppPanel } from "./views/panel";
 import { toggleSettings } from "./views/settings";
 import { applyLook, cleanLook, onSystemThemeChange, type Look } from "./look";
@@ -121,7 +122,7 @@ async function boot() {
   });
 
   // ---------- shell ----------
-  const navItems: [string, string, typeof House][] = [["#/home", "Home", House], ["#/apps", "Apps", LayoutGrid], ["#/activity", "Activity", History]];
+  const navItems: [string, string, typeof House][] = [["#/home", "Home", House], ["#/apps", "Apps", LayoutGrid], ["#/activity", "Activity", History], ["#/security", "Security", ShieldCheck]];
   const appCount = h("span", { class: "count" });
   const liveDot = h("span", { class: "live-dot", hidden: true, title: "An app is running" });
   const nav = navItems.map(([hash, label, ic]) =>
@@ -235,7 +236,7 @@ async function boot() {
     }
     for (const b of nav) b.classList.toggle("active", b.dataset.hash === `#/${page}`);
     try {
-      const view = page === "apps" ? await appsView(ctx) : page === "activity" ? await activityView(ctx) : await homeView(ctx);
+      const view = page === "apps" ? await appsView(ctx) : page === "activity" ? await activityView(ctx) : page === "security" ? await securityView(ctx) : await homeView(ctx);
       if (seq !== renderSeq) { view.cleanup?.(); return; }
       current?.cleanup?.();
       current = view;
