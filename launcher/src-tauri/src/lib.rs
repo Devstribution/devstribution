@@ -1561,6 +1561,8 @@ fn restrict_dll_search() {}
 fn open_store() -> anyhow::Result<Store> {
     let paths = Paths::from_env()?;
     applog::init(paths.launcher_log());
+    // Evidence for IT: installs, runs, what the guard did (docs/it.md, "Event Log").
+    devstribution_host::eventlog::init();
     applog::write(&format!(
         "devstribution {} starting",
         env!("CARGO_PKG_VERSION")

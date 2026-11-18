@@ -22,6 +22,15 @@ How a release is made: [`docs/releasing.md`](docs/releasing.md).
   them, as CycloneDX 1.6 JSON for IT's tools. devstribution's own (its Rust libraries, npm
   packages and uv, with their licences and hashes) ships with the installer, can be saved from
   the same page, and is attached to each release.
+- **`pack` writes the bill of materials** next to the package (`my-tool-1.0.0.sbom.cdx.json`):
+  the same CycloneDX an installed app's is, so an author can attach it to a release and IT can
+  check it before anything is installed. The `pack` action gives its path as the `sbom` output.
+- **The Windows Event Log**: the launcher writes installs, updates, uninstalls, refused
+  packages, how each run ended, what the runtime guard stopped, blocked or reported, and
+  quarantines released, to the Application log (source `devstribution`), as the user who ran
+  it. Fixed event IDs for IT to forward and alert on, and how to register the source:
+  [`docs/managed-mode.md`](docs/managed-mode.md#the-windows-event-log). Nothing a run was given
+  is written.
 
 ## [0.7.0] - 2026-11-13
 

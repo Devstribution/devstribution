@@ -161,6 +161,52 @@ runtime guard as one started by hand, and a notification says how it went. In ma
 is off unless `ScheduledRuns` is `1`. Turning it off later also stops the runs already
 scheduled: each says in a notification that it did not run.
 
+## The Windows Event Log
+
+From 0.8.0 the launcher writes what it does to the **Application** log, source `devstribution`,
+as the user who ran it (the event's User is their SID), managed mode or not. Forward it with
+Windows Event Forwarding or the agent of your SIEM as you would any other source.
+
+| ID | Level | When |
+|---|---|---|
+| 100 | Information | An app was installed |
+| 101 | Information | An app was updated (the event names the previous version) |
+| 102 | Information | An app was uninstalled |
+| 110 | Warning | A package was refused (signature, scan, revoked key), or the policy does not allow the app |
+| 200 | Information | A run ended |
+| 201 | Warning | A run failed |
+| 202 | Information | A run was cancelled |
+| 300 | Error | The runtime guard stopped a run: the app is held until the user decides |
+| 301 | Warning | The runtime guard blocked a call; the run went on |
+| 302 | Information | The runtime guard reported something (a rule that only reports) |
+| 310 | Warning | The user released a held app; its next run is checked as before |
+| 311 | Warning | The user released a held app and allowed the rule that stopped it, for that app |
+
+Each event's text is a sentence, then lines such as `App: acme/tool 1.2.0`, `Publisher key:`,
+`Content SHA-256:` (the hash a bill of materials names), `Run:` (the run's folder in the
+launcher's data, with its record and journal line) and, for the guard, `Rule:` and what the app
+did. Events never hold what a run was given (inputs, secrets, the files the user chose) or the
+text of an app's error: they say what devstribution did, not what the user worked on. The run's
+own record has the rest. IDs 300 and 311 are the ones to alert on.
+
+**Register the source once per machine.** The launcher installs per user and cannot do it itself,
+since this takes an administrator. Without it the events are still written, but Event Viewer
+shows "The description for Event ID … cannot be found" above each one's text. As administrator,
+in Windows PowerShell (or as a startup script through Group Policy, or an Intune script):
+
+```powershell
+New-EventLog -LogName Application -Source devstribution
+```
+
+Use Windows PowerShell (`powershell.exe`, on every Windows), not PowerShell 7, which has no
+`New-EventLog`. It registers the .NET Framework's message file, which shows each event's text as
+it is. To read them
+before the source is registered, filter on the source in Event Viewer, or:
+
+```powershell
+Get-WinEvent -LogName Application | Where-Object ProviderName -eq devstribution
+```
+
 ## Rolling out
 
 1. Set `DryRun = 1` with the authors you know of. Nothing is refused; users see a note on the
