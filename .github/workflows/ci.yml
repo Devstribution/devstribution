@@ -108,9 +108,15 @@ jobs:
         run: |
           cargo install cargo-deny --locked
           cargo deny check
-      - name: npm audit
+      # What ships in the window fails on any moderate advisory. The build tools (Vite and what
+      # it pulls in) run only on our machines and in CI, on our own files, and their advisories
+      # can stay unfixed for weeks: they fail only when critical.
+      - name: npm audit (shipped packages)
         working-directory: launcher
-        run: npm audit --audit-level=moderate
+        run: npm audit --omit=dev --audit-level=moderate
+      - name: npm audit (build tools)
+        working-directory: launcher
+        run: npm audit --audit-level=critical
 
   examples:
     # The example apps go through what an author does: packed and signed with a throwaway key,
