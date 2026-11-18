@@ -1,9 +1,9 @@
 import "@fontsource-variable/manrope";
 import "./style.css";
 
-import { House, LayoutGrid, History, ShieldCheck, Settings as SettingsIcon, Upload, Play, ShieldAlert, RotateCw } from "lucide";
+import { House, LayoutGrid, History, Settings as SettingsIcon, Upload, Play, ShieldAlert, RotateCw } from "lucide";
 import { createApi, type Api, type AppUpdate, type AppView, type RunEvent, type RunResult, type UpdateCheck } from "./api";
-import { h, icon, appIcon, clear, fileName, toast, errorText } from "./ui";
+import { h, icon, appIcon, clear, fileName, toast, errorText, ShieldSword } from "./ui";
 import { homeView } from "./views/home";
 import { appsView } from "./views/apps";
 import { activityView } from "./views/activity";
@@ -122,7 +122,7 @@ async function boot() {
   });
 
   // ---------- shell ----------
-  const navItems: [string, string, typeof House][] = [["#/home", "Home", House], ["#/apps", "Apps", LayoutGrid], ["#/activity", "Activity", History], ["#/security", "Security", ShieldCheck]];
+  const navItems: [string, string, typeof House][] = [["#/home", "Home", House], ["#/apps", "Apps", LayoutGrid], ["#/activity", "Activity", History], ["#/security", "Security", ShieldSword]];
   const appCount = h("span", { class: "count" });
   const liveDot = h("span", { class: "live-dot", hidden: true, title: "An app is running" });
   const nav = navItems.map(([hash, label, ic]) =>
@@ -145,7 +145,9 @@ async function boot() {
   );
   const main = h("main", { class: "main" });
   const fab = h("button", { class: "fab", "aria-label": "Settings", title: "Settings", onclick: () => toggleSettings(ctx) }, icon(SettingsIcon, 22));
-  root.append(sidebar, main, fab);
+  // The Security page, one click away wherever the user is, next to Settings.
+  const securityFab = h("button", { class: "fab fab-security", "aria-label": "Security", title: "Security", onclick: () => ctx.navigate("#/security") }, icon(ShieldSword, 22));
+  root.append(sidebar, main, securityFab, fab);
 
   let apps: AppView[] = [];
   let appUpdates = new Map<string, AppUpdate>();
@@ -235,6 +237,7 @@ async function boot() {
       if (id) ctx.openApp(id);
     }
     for (const b of nav) b.classList.toggle("active", b.dataset.hash === `#/${page}`);
+    securityFab.classList.toggle("on", page === "security");
     try {
       const view = page === "apps" ? await appsView(ctx) : page === "activity" ? await activityView(ctx) : page === "security" ? await securityView(ctx) : await homeView(ctx);
       if (seq !== renderSeq) { view.cleanup?.(); return; }

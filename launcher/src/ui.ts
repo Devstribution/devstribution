@@ -4,6 +4,15 @@ import { createElement, type IconNode } from "lucide";
 import { CircleAlert, CircleCheck, Info, Loader, ShieldCheck, ShieldAlert, ShieldX, X } from "lucide";
 import type { RunStatus } from "./api";
 
+/** The Security page's icon: a shield with a sword across it. Lucide has none, so it is drawn
+ *  here on Lucide's grid (24 px, 2 px strokes, round caps) to sit with the other icons. */
+export const ShieldSword: IconNode = [
+  ["path", { d: "M16 11.5c-.4 3.6-3.1 5.4-5.3 6.3a1 1 0 0 1-.7 0C6.5 16.6 3.5 14.6 3.5 11V6a1 1 0 0 1 1-1c1.7 0 3.8-1 5.3-2.3a1 1 0 0 1 1.4 0c.6.5 1.3 1 2 1.4" }],
+  ["path", { d: "M21 3l-9.5 9.5" }],
+  ["path", { d: "M10 10l4 4" }],
+  ["path", { d: "M12 12l-3 3" }],
+];
+
 type Child = Node | string | number | null | undefined | false | Child[];
 type Attrs = Record<string, unknown> & { class?: string; style?: string };
 

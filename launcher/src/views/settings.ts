@@ -1,4 +1,4 @@
-import { X, Check, Pipette, FolderOpen, FolderPlus, Trash2, ClipboardCopy, FileUp, ShieldCheck } from "lucide";
+import { X, Check, Pipette, FolderOpen, FolderPlus, Trash2, ClipboardCopy, FileUp } from "lucide";
 import type { Ctx } from "../main";
 import { openCleanup } from "./cleanup";
 import { checkForUpdate, openWhatsNew } from "./update";
@@ -92,10 +92,6 @@ export function toggleSettings(ctx: Ctx) {
     ];
     pop.append(
       ...(s.policy ? managedGroups(s.policy) : free),
-      h("div", { class: "settings-group" },
-        h("span", { class: "section-label" }, "Security"),
-        h("div", { class: "small soft-text" }, "What devstribution checks, what the runtime guard did, and the bill of materials of each app, on one page."),
-        h("button", { class: "btn small self-start", onclick: () => { close(); ctx.navigate("#/security"); } }, icon(ShieldCheck, 14), "Open Security")),
       revocationsGroup(ctx, s.revocations),
       appUpdatesGroup(ctx, s),
       h("div", { class: "settings-group" },
