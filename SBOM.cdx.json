@@ -14,10 +14,10 @@
   },
   "component": {
    "type": "application",
-   "bom-ref": "pkg:github/Devstribution/devstribution@v0.8.0",
+   "bom-ref": "pkg:github/Devstribution/devstribution@v0.8.1",
    "name": "devstribution",
-   "version": "0.8.0",
-   "purl": "pkg:github/Devstribution/devstribution@v0.8.0",
+   "version": "0.8.1",
+   "purl": "pkg:github/Devstribution/devstribution@v0.8.1",
    "licenses": [
     {
      "expression": "MIT OR Apache-2.0"
